@@ -1,0 +1,5 @@
+# This repo tracks ONLY hand-authored Claude config under home/.claude/.
+# Everything else in a live ~/.claude is machine state — never commit it.
+*.bak-*
+*.bak
+.DS_Store

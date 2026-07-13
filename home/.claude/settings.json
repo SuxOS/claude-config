@@ -1,0 +1,84 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(npx wrangler *)",
+      "Bash(npm *)",
+      "Bash(curl *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(python3 *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(sed *)",
+      "Bash(awk *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(echo *)",
+      "Bash(printf *)",
+      "Bash(tar *)",
+      "Bash(node *)",
+      "WebFetch",
+      "WebSearch",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "enabledPlugins": {
+    "cloudflare@cloudflare": true,
+    "grafana-cloud-mcp@grafana-ai-marketplace": true
+  },
+  "extraKnownMarketplaces": {
+    "sux-local": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/colinxs/Code/sux-mcp"
+      },
+      "autoUpdate": true
+    },
+    "cloudflare": {
+      "source": {
+        "source": "github",
+        "repo": "cloudflare/skills"
+      },
+      "autoUpdate": true
+    },
+    "sux": {
+      "source": {
+        "source": "github",
+        "repo": "SuxOS/sux"
+      }
+    },
+    "grafana-ai-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "grafana/ai-marketplace"
+      },
+      "autoUpdate": true
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    }
+  },
+  "skipDangerousModePermissionPrompt": true,
+  "skipWorkflowUsageWarning": true,
+  "theme": "dark",
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, curl, ssh/scp, python3, node, grep/find/sed/awk/cat/ls/tar), including setting non-secret configuration",
+      "All MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian)",
+      "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and setting the user's own Cloudflare Worker config/secrets via wrangler"
+    ]
+  }
+}
