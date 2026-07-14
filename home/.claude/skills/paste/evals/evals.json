@@ -1,0 +1,23 @@
+{
+  "skill_name": "paste",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Can you write a quick note to my downstairs neighbor about moving their bike out of the shared hallway? I want to copy it straight into an email to them.",
+      "expected_output": "Plain text only — no markdown headers, bold/italic asterisks, or backtick code formatting. Reads like something typed directly into a Gmail compose box, with line breaks/blank lines for structure instead of markdown syntax.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I just finished a branch that adds retry logic with exponential backoff to our API client. Write the PR description — I'll paste it straight into GitHub.",
+      "expected_output": "Proper GitHub-flavored markdown: headers (## Summary, ## Test plan), a checklist for the test plan, appropriate use of bold/code spans. Markdown syntax should be present and correct, not stripped.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "give me a zsh function for my .zshrc that finds the 10 largest files under the current directory",
+      "expected_output": "A complete, runnable zsh function with no explanatory comments inside it (comments belong in the chat response, not the pasted code). Should be directly pasteable into .zshrc and usable via `source ~/.zshrc` with no edits needed.",
+      "files": []
+    }
+  ]
+}
