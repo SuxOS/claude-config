@@ -123,6 +123,13 @@ A quick pre-flight; don't reflexively do everything inline at full blast.
   add detail only where it earns its place.
 - **Return async when slow or parallel** → `fork!`. Long or fan-out work goes to a background
   agent/workflow so the conversation stays unblocked; report outcomes, not play-by-play.
+- **Delegation sets its own model — never inherit (rule #1, operationalized).** When you hand work
+  to a subagent/workflow (`fork!`, `Agent`, `Workflow`), explicitly set its `model=`/`effort=` to fit
+  *that task*, not the session's — a mechanical fork drops to `haiku`, a hard verify/judge/bug-hunt
+  fork bumps to top tier. The session model is the *orchestrator's*; children do not inherit it by
+  default — an unset `model:` is a silent inherit, which is the failure rule #1 names. A `bet?`/verify
+  fork especially wants a **fresh** model, not the one that produced the claim (same-model self-check
+  repeats the original blind spot). Stay in a cheap orchestrating model; spend the tier per-fork.
 - **Split the session when the workstream is distinct** → `fork!` (separate session). Unrelated or
   context-heavy work gets its own context — don't cram it here; context degrades under summarization.
 - **Dispatch picks *when/where*:** `cron!` later-recurring · `queue!` capture-for-later ·
