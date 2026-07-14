@@ -11,9 +11,22 @@ Count the trailing `?` (1–5): how wide and how many lenses.
 
 - **`/audit?`** — One careful pass for the obvious problems (correctness, glaring risk).
 - **`/audit???`** — Multi-lens: correctness, security, performance, error handling, resource leaks, dead code, test gaps — each considered deliberately across the surface.
-- **`/audit?????`** — Exhaustive. Fan out parallel reviewers, each owning a dimension and a slice; dedup and rank the union; adversarially re-check the high-severity findings (that's `bet?`) before reporting. Log any coverage you *didn't* reach — silent truncation reads as "all clear" when it isn't.
+- **`/audit?????`** — Exhaustive. Fan out parallel reviewers, each owning a dimension and a slice; dedup and rank the union; adversarially re-check the high-severity findings (that's `bet?`) before reporting. Log any coverage you *didn't* reach — silent truncation reads as "all clear" when it isn't. Score each finding 0–100 for confidence and drop anything below your bar (~80 at high count); kill the standard false positives up front — pre-existing issues the surface didn't introduce, anything a linter or type-checker already catches, pure style nits — so the list is signal, not a nit-wall burying the one real bug.
 
 More `?` buys breadth and independent perspectives, not lower confidence per finding. Rank by severity; a wall of nits buries the one that matters.
+
+## Named lenses — run focused, not one blurred pass
+
+Sweeping "for everything" at once misses the specific; each lens is a dedicated question, sharper than a general read. Pick the lenses the surface warrants; at high count fan them out in parallel, one owner each:
+
+- **correctness** — logic errors, wrong results, broken edges.
+- **security** — `/security-review`'s energy: injection, authz, secrets, unsafe input.
+- **silent-failure** — swallowed errors, bare/over-broad catches, missing logging, fallbacks that mask the fault. High-signal and easy to miss in a general pass.
+- **type-design** — do the types make illegal states unrepresentable, or are invariants held by convention? Weigh encapsulation / invariants / usefulness / enforcement.
+- **test-quality** — behavioral coverage and edges, not line count; a test that would actually catch the regression.
+- **comment-accuracy** — comments and docs that *lie* about the code (doc rot), not just missing ones.
+- **claude-md-compliance** — does the surface obey the project's CLAUDE.md (commands, patterns, conventions)? Treat CLAUDE.md as a first-class spec, and the file itself as an auditable surface (is it current, actionable, concise?).
+- plus perf, resource-leak, dead-code, dependency lenses as the surface needs.
 
 ## How to run it
 
