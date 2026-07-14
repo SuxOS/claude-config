@@ -3,3 +3,6 @@
 *.bak-*
 *.bak
 .DS_Store
+
+# skill-creator eval scratch
+home/.claude/skills/*-workspace/
