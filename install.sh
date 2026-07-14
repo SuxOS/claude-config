@@ -8,9 +8,23 @@ DEST="$HOME/.claude"
 
 mkdir -p "$DEST"
 
-for item in CLAUDE.md skills commands; do
+items=(CLAUDE.md)
+for entry in "$SRC"/*; do
+  name="$(basename "$entry")"
+  case "$name" in
+    settings.json) continue ;;
+    CLAUDE.md) continue ;;
+  esac
+  items+=("$name")
+done
+
+for item in "${items[@]}"; do
   src="$SRC/$item"
   dest="$DEST/$item"
+  if [ ! -e "$src" ]; then
+    echo "skipping $item — not found at $src" >&2
+    continue
+  fi
   if [ -L "$dest" ]; then
     rm "$dest"
   elif [ -e "$dest" ]; then

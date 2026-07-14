@@ -41,7 +41,7 @@
   comments from any snippet the user will paste elsewhere — the explanation belongs in your
   surrounding prose, not in the pasted artifact.
 
-## Verb grammar — the `.`/`?`/`!` skill family (go, wtf, bug, fix, audit, bet, explain, time, cron, fml, queue, fork, man)
+## Verb grammar — the `.`/`?`/`!` skill family (go, wtf, bug, fix, audit, bet, explain, time, cron, fml, queue, fork, man, develop, developer, drain, drainer, paste)
 These skills share one grammar; it governs every one of them, including any invoked bare.
 - **The mark is the face — an energy triad.** Same root, up to three faces:
   **`.` = inform** (show what is — read, passive, no work; produces a *display*) ·

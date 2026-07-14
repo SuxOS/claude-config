@@ -37,7 +37,7 @@ No mark **gates** (proposes what it'll do first); any `!` **produces**. The coun
 | Jam | Signal | Local fix |
 |---|---|---|
 | Merge queue stuck | PRs queued, not landing | diagnose failing required check; rebase/auto-update; re-enqueue |
-| Pool exhausted → `security-review` can't gate | required check never starts | surface the documented escape hatch (revert `security-review.yml` to `anthropic_api_key`) — **config change, ask first** |
+| Pool exhausted → `security-review` can't gate | required check never starts | verify `security-review.yml` uses `CLAUDE_CODE_OAUTH_TOKEN` (never `ANTHROPIC_API_KEY` — dead in SuxOS CI, $0 instant-error); if the pool itself is exhausted, escalate for more OAuth capacity — **config change, ask first** |
 | Orphaned `building` | issue `building` >2h, no PR | re-queue (`building`→`queued-for-build`); manual escalation of the reaper |
 | GH007 committer-email | push rejected on drain | fix committer identity, re-push |
 | Stale-worktree no-op | `git checkout` silently fails | prune the stale worktree, operate detached |
@@ -51,6 +51,7 @@ Any parallel or cross-repo local git work goes through isolated worktrees, per t
 - **Never `git checkout` a branch a worktree may hold** — silent no-op, not an error. Operate detached; push by explicit refspec (`git push origin HEAD:refs/heads/<branch>`).
 - **Verify committer identity before every push** — pre-empt the GH007 reject.
 - **Never touch the primary checkout's current branch.** GC orphaned scratch worktrees at start and end; cap concurrent worktrees at `min(cores−2)`.
+- **Reap `[gone]` branches worktree-first.** A branch marked `[gone]` (upstream deleted after merge) may still be held by a worktree. Find it (`git worktree list`), `git worktree remove --force` it, *then* `git branch -D` — deleting the branch first orphans the worktree, the silent-no-op failure mode this section already guards against. Fold into the start/end GC pass.
 
 ## Output
 
