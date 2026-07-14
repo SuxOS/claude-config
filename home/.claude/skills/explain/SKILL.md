@@ -26,6 +26,10 @@ More `?` buys depth and rigor of grounding, never more words for their own sake.
 
 Lead with the one-sentence essence, then the layered explanation at the requested depth, citing source (file/commit) so it's checkable. If understanding it revealed something *wrong*, flag it and hand to `bug?` or `fix!`.
 
+## Teaching mode (optional)
+
+When you want it to *teach as it goes* rather than just answer, ask for insight mode: thread short **★ Insight** call-outs (2–3 sentences) at the points where a design choice, trade-off, or gotcha is worth pausing on. Same depth, annotated — earns its place at `explain???`+ where the reasoning *is* the point. Off by default; it's an output style, not more investigation.
+
 ## Read-only
 
 `explain` teaches; it never changes the thing. Acting on the understanding is `go!`/`fix!`.

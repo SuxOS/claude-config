@@ -51,6 +51,7 @@ Any parallel or cross-repo local git work goes through isolated worktrees, per t
 - **Never `git checkout` a branch a worktree may hold** — silent no-op, not an error. Operate detached; push by explicit refspec (`git push origin HEAD:refs/heads/<branch>`).
 - **Verify committer identity before every push** — pre-empt the GH007 reject.
 - **Never touch the primary checkout's current branch.** GC orphaned scratch worktrees at start and end; cap concurrent worktrees at `min(cores−2)`.
+- **Reap `[gone]` branches worktree-first.** A branch marked `[gone]` (upstream deleted after merge) may still be held by a worktree. Find it (`git worktree list`), `git worktree remove --force` it, *then* `git branch -D` — deleting the branch first orphans the worktree, the silent-no-op failure mode this section already guards against. Fold into the start/end GC pass.
 
 ## Output
 
