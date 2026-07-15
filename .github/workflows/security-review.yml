@@ -1,0 +1,24 @@
+name: Security review
+
+# Every PR gets a focused SECURITY review before it can merge, hard-blocking on a
+# confirmed high/critical finding via `hold`. The reusable reviews the raw diff, so it
+# works on any repo shape (no build/package needed). ready_for_review is required — the
+# reusable skips draft PRs and GitHub counts a skipped required check as passing, so
+# omitting it would let a draft go ready+merge without the review re-running.
+# Reusable workflow: SuxOS/.github/.github/workflows/security-review.yml
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  security-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    uses: SuxOS/.github/.github/workflows/security-review.yml@main
+    with:
+      allowed-bots: "suxbot[bot]"
+    secrets: inherit
