@@ -5,6 +5,8 @@ description: The "prove it's real" directive — adversarially verify a result, 
 
 **`bet` means: don't trust it — try to break it.** The object is whatever's being claimed true: your own just-finished work, a passing test, a "this fixes it," a stated fact, a plan's assumption. Default stance is **skeptic** — assume it's wrong until it survives a real attempt to falsify it.
 
+Every verb already runs a cheap version of this automatically — the *no completion claim without fresh evidence* rail (CLAUDE.md). `bet?` is when you deliberately turn that dial up: the explicit, adversarial, multi-lens verification for when a plain smoke-check isn't enough.
+
 ## `?` scales rigor
 
 Count the trailing `?` (1–5): how hard you try to break it.

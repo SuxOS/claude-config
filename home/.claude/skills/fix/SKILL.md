@@ -18,9 +18,9 @@ More `!` fixes wider and deeper, never sloppier. Every level ends **verified**, 
 ## How to run it
 
 1. **Confirm the cause** — don't fix what you haven't localized. If the root isn't proven, that's `bug?` first.
-2. **Repair the root** — change the mechanism that's wrong, not just the visible symptom. Match surrounding code style.
-3. **Guard against regression** — add/adjust the test that would have caught it; at high `!`, cover the class.
-4. **Verify end-to-end** — exercise the actual flow and confirm fixed + nothing else broke. Hand to `bet?` if confidence matters.
+2. **Write the failing test first** — the test that *would have caught it*, before the fix. Run it, watch it fail for the right reason (red) — a test that passes before you've touched anything proves nothing. This is the regression guard, written up front; at high `!`, cover the sibling cases and the class.
+3. **Repair the root** — change the mechanism that's wrong, not just the visible symptom, until the test goes green. Minimal change to pass; match surrounding code style; refactor only once green.
+4. **Verify end-to-end** — exercise the actual flow and confirm fixed + nothing else broke. Never claim fixed without having just watched it pass (the completion-verification rail). Hand to `bet?` if confidence matters.
 
 ## Output
 

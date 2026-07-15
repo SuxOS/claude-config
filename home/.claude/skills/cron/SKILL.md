@@ -21,8 +21,6 @@ Count the trailing `!` (1–5): how ambitious the automation.
 - **`/cron!!!`** — A real routine: sensible cadence, failure handling, a clear report each run.
 - **`/cron!!!!!`** — A standing automation: the full loop — trigger, do, verify, report, self-heal — wired to survive and to alert when it can't.
 
-More `!` buys a more capable, more autonomous standing job, not a riskier one.
-
 ## How to run it
 
 1. **Pin the *when* and the *what*** — exact cadence/time (convert relative → absolute; mind the timezone) and the precise action each run takes.

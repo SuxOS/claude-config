@@ -20,10 +20,14 @@ More `?` buys more falsification effort, not more guessing. A hypothesis you hav
 
 ## How to run it
 
-1. **Reproduce first** — a bug you can't trigger you can't fix. Get the minimal reliable repro before theorizing.
-2. **Bisect the search space** — in code (bisect/blame), in data (which input), in state (which precondition). Halve, don't wander.
-3. **Prove the mechanism** — not just *where* it fails but *why*: the exact state/input that trips it. Confirm by making it appear and disappear on command.
+**Iron rule: no fix before a reproduced root cause.** A hunt that jumps to editing has skipped the job.
+
+1. **Reproduce first** — a bug you can't trigger you can't fix. Get the minimal reliable repro before theorizing. Read the actual error; check the recent change; instrument component boundaries and trace the data flow *backward* to the source.
+2. **Bisect the search space** — in code (bisect/blame), in data (which input), in state (which precondition). Halve, don't wander. Find a *working* comparison case and list every difference from the broken one.
+3. **Prove the mechanism** — not just *where* it fails but *why*: the exact state/input that trips it. Test **one hypothesis at a time**, changing one variable, and confirm before moving on — never bundle guesses. Confirm by making it appear and disappear on command.
 4. **Diagnose, don't patch** — `bug?` ends at a proven root cause and repro; the repair is `fix!`.
+
+**Three strikes → step back.** If three fixes have failed, stop trying a fourth — the model of the system is wrong. Question the architecture/assumptions, not the patch. (A durable root cause worth remembering → write it to `memory/`.)
 
 ## Output
 

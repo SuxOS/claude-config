@@ -25,7 +25,7 @@ Flags (also order-free): `--dry` preview what would change, write nothing · `--
 
 **Set the adverbs per task; a high count is not "everything maxed."** A high-stakes prod change reads as `model=top verify=adversarial risk=low`. A big mechanical sweep reads as `model=cheap parallel=wide assume=high speed=fast`. A gnarly bug reads as `effort=max tokens=deep parallel=1`. Read the chunk, set the axes — the count just picks the default before you override. Low → conservative, ask when materially unsure; high → decide and move.
 
-A high count never lowers the quality bar — it buys *more capability and more autonomy*, not sloppiness. Whatever you decide without asking, you **log as an assumption** the user can veto after the fact — that's the trade for not stopping.
+Whatever you decide without asking, you **log as an assumption** the user can veto after the fact — that's the trade for not stopping.
 
 ## How to run it
 

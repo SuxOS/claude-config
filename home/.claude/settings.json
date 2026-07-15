@@ -31,16 +31,30 @@
   },
   "enabledPlugins": {
     "cloudflare@cloudflare": true,
-    "grafana-cloud-mcp@grafana-ai-marketplace": true
+    "grafana-cloud-mcp@grafana-ai-marketplace": true,
+    "code-simplifier@claude-plugins-official": false,
+    "commit-commands@claude-plugins-official": false,
+    "feature-dev@claude-plugins-official": false,
+    "mcp-server-dev@claude-plugins-official": false,
+    "frontend-design@claude-plugins-official": false,
+    "hookify@claude-plugins-official": false,
+    "mcp-tunnels@claude-plugins-official": false,
+    "plugin-dev@claude-plugins-official": false,
+    "playground@claude-plugins-official": false,
+    "pr-review-toolkit@claude-plugins-official": false,
+    "project-artifact@claude-plugins-official": false,
+    "skill-creator@claude-plugins-official": false,
+    "ralph-loop@claude-plugins-official": false,
+    "learning-output-style@claude-plugins-official": false,
+    "explanatory-output-style@claude-plugins-official": false,
+    "superpowers@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "chrome-devtools-mcp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
-    "sux-local": {
-      "source": {
-        "source": "directory",
-        "path": "/Users/colinxs/Code/sux-mcp"
-      },
-      "autoUpdate": true
-    },
     "cloudflare": {
       "source": {
         "source": "github",
@@ -52,7 +66,8 @@
       "source": {
         "source": "github",
         "repo": "SuxOS/sux"
-      }
+      },
+      "autoUpdate": true
     },
     "grafana-ai-marketplace": {
       "source": {
@@ -70,7 +85,7 @@
   },
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
-  "theme": "dark",
+  "theme": "dark-daltonized",
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
   "autoMode": {

@@ -1,9 +1,9 @@
 ---
 name: drain
-description: The domain-agnostic backlog-drain verb — find the highest-value doable item in ANY backlog (a Downloads folder, a Dropbox Inbox, a mail queue, a notes vault, a research reading list, the `/queue` backlog) and take it end-to-end, as **one bounded burst**, then return. Act family; sibling of `/develop`, which is the same pattern narrowed to git/PR. Bare/no-args self-scopes to whatever backlog is in context ("just sort it out"); a hint scopes what, the `!` count + adverbs scope how hard and how wide. Its looping sibling `/drainer` runs bursts until dry. Use whenever the "develop" pattern applies outside a git repo — "/drain", "clear out my downloads", "work through the inbox", "sort this folder", "drain the queue", "the backlog's piling up", "file these away".
+description: The domain-agnostic backlog-drain verb — find the highest-value doable item in ANY backlog (a Downloads folder, a Dropbox Inbox, a mail queue, a notes vault, a research reading list, the `/queue` backlog) and take it end-to-end, as **one bounded burst**, then return. Act family; sibling of `/develop`, which is the same pattern narrowed to git/PR. Bare/no-args self-scopes to whatever backlog is in context ("just sort it out"); a hint scopes what, the `!` count + adverbs scope how hard and how wide. Add `--loop` to keep clearing bursts until the pile's empty. Use whenever the "develop" pattern applies outside a git repo — "/drain", "clear out my downloads", "work through the inbox", "sort this folder", "keep sorting until it's clear", "drain the queue", "the backlog's piling up", "file these away".
 ---
 
-**`drain` means: find the backlog and clear the highest-value slice of it, end-to-end** — no ceremony. `develop` is this exact pattern with the domain pinned to git (branch → code → verify → PR). `drain` is the general case: the object is any pile of undifferentiated stuff that needs sorting, filing, answering, or discarding-into-order — a folder, an inbox, a mail queue, a stack of open questions. It runs **one burst** then hands the thread back. To keep going until the pile is empty, that's the looping sibling `/drainer` (this verb in a `while (not dry)`).
+**`drain` means: find the backlog and clear the highest-value slice of it, end-to-end** — no ceremony. `develop` is this exact pattern with the domain pinned to git (branch → code → verify → PR). `drain` is the general case: the object is any pile of undifferentiated stuff that needs sorting, filing, answering, or discarding-into-order — a folder, an inbox, a mail queue, a stack of open questions. It runs **one burst** then hands the thread back. To keep going until the pile is empty, add `--loop` (this verb in a bounded `while (not dry)`; see Loop mode below).
 
 ## Why a separate verb from `develop`
 
@@ -28,7 +28,7 @@ No mark **gates** (proposes what it'll do first, especially before any file move
 - **`/drain`** (bare) — self-scope: look at what's obviously piling up in context (a folder just discussed, an open inbox), pick the top doable unit, **propose it, then act on your ok**.
 - **`drain!`** — pick and clear one unit, here, now. Skip the gate.
 - **`drain!!!`** — clear a whole cluster: dedupe, file the obvious cases, fan out independent sub-piles (a batch of files can go through pattern-classification concurrently; a batch of emails cannot — use judgment, don't force parallelism where the items aren't independent).
-- **`drain!!!!!`** — full sweep of everything currently backlogged in the domain, in one bounded pass. (Repeat-until-dry across *sessions* is `/drainer`.)
+- **`drain!!!!!`** — full sweep of everything currently backlogged in the domain, in one bounded pass. (Repeat-until-dry is `--loop`; see below.)
 
 **Hint = the noun**: `drain! ~/Downloads` · `drain! the Dropbox Inbox` · `drain! my unread mail`. **Adverbs tune the rest** — `risk=` (how bold the moves — deleting vs. just relocating), `verify=` (spot-check the result vs. `bet?` it), `parallel=`. `--dry` shows the plan and touches nothing · `--suggest` proposes + recommends · `--force` skips the soft gate (hard rails still hold).
 
@@ -36,9 +36,19 @@ No mark **gates** (proposes what it'll do first, especially before any file move
 
 1. **Identify the backlog and its existing taxonomy.** Don't invent a new filing scheme if one already exists (an INDEX.md, a folder structure, a labeling convention) — extend it. If none exists and the pile is nontrivial, propose one before moving anything.
 2. **Prefer deterministic sorting over per-item judgment calls** (cardinal rule #2) — checksum-dedup against a known-good archive, pattern-match by extension/filename, before falling back to reading content one file at a time.
-3. **Size to one burst.** Take the highest-value slice that fits in one session; overflow is for `/drainer` or `fork!`, not a churning context.
+3. **Size to one burst.** Take the highest-value slice that fits in one session; overflow is for `--loop` or `fork!`, not a churning context.
 4. **Act, reversibly.** Moves, not deletes — see Rails below. Never guess on anything that touches credentials, legal/medical/financial documents, or another person's data; flag and ask rather than filing on assumption.
 5. **Verify + hand back.** Spot-check that things landed where the taxonomy says (`bet?` at higher rigor if the batch was large or the content sensitive).
+
+## Loop mode (`--loop`) — keep draining until dry
+
+`--loop` runs `drain` bursts back-to-back until the pile's empty, instead of one-and-returning — the old `/drainer` verb, now a mode. `drain --loop ~/Downloads` clears a folder; `drain --loop @nightly` is the standing scheduled sweep.
+
+- **Always bounded — an unbounded loop is a bug.** Declare the stop condition: **loop-until-dry** (K=2 empty passes, default — for a finite pile) · **time/budget cap** (for backlogs that regenerate, like mail, where "dry" never truly happens) · **`@cadence`** (each firing one bounded pass — regular small drains beat one heroic sweep) · **manual halt**.
+- **Background/scheduled is home** — `fork!` for a big one-time sweep, `@nightly` for the standing role (persisting a schedule asks first). The `loop` builtin is the in-session mechanism; `time!` the wall-clock-bounded cousin.
+- **Self-heal, don't stall.** If a pass hits something it can't resolve alone (ambiguous file, taxonomy gap, sensitive content needing a human call), flag it and continue past it — don't wedge the whole loop on one item. Re-check the taxonomy between passes so a vetoed filing decision isn't repeated.
+- **Report a drain summary:** `[DRAINED: <n items over p passes>|DRY|CAPPED: <bound>|HALTED|BLOCKED: <needs a human>]`.
+- **Extra rail:** a long unattended loop makes whatever it touches (disk, a shared inbox, API rate limits) the scarce resource — the bound is mandatory, and hitting a limit is stop-and-surface, never "push through."
 
 ## Output
 
@@ -51,8 +61,8 @@ At higher count, follow with an **Assumptions** list (self-scoped picks and any 
 ## Hand off
 
 - Git repo, branch/PR shape → `/develop` (this verb's code-specific sibling).
-- Keep clearing until the pile's empty → `/drainer`.
-- Recurring/unattended → `/cron! /drain @nightly` or `/drainer @nightly` (persisting a schedule asks first).
+- Keep clearing until the pile's empty → `--loop`.
+- Recurring/unattended → `drain --loop @nightly ~/Downloads` (persisting a schedule asks first).
 - Don't block the thread → `fork!`.
 - Just capture one item without acting → `/queue!`.
 - Prove a big sort actually landed right → `bet?`.
