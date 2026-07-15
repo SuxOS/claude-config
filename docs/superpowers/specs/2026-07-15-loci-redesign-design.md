@@ -180,7 +180,7 @@ not something a skill sniffs at runtime. This replaces the old flat `bot` block 
 `/etc/passwd` + "which user the daemon runs as": any tool that acts as or attributes to
 an identity (`dispatch` to cloud, `work`'s commit/land, `sync`) reads it here.
 
-One truth, read by the locus detector, all five skills, and the control-panel. No
+One truth, read by the locus detector, every skill, and the control-panel. No
 second copy anywhere. The `pipeline` block **points at** the loops (hosted in `.github`);
 it does not enumerate workflow files — that list lives in `SuxOS/.github` and is not
 duplicated here (which is why the old `cloud_workflows: [fixer, triage, issue-build]` was
@@ -234,7 +234,7 @@ resolves the parked doc — worth updating it to point here.)
 visual face of `orient` (three-loop + local health) + `dispatch` (seed/hold/toggle the
 loops). Made multi-org aware via the new fabric. Kept, not rebuilt.
 
-**WORKFLOW.md** — fully rewritten: the three loci (the map) → the five skills (what you
+**WORKFLOW.md** — fully rewritten: the three loci (the map) → the skills (what you
 drive) → the per-locus loop → fabric/rails as substrate → setup state. No punctuation
 grammar anywhere.
 
@@ -242,7 +242,7 @@ grammar anywhere.
 DSL and the per-verb family notes) is **removed and replaced**. It currently *mandates*
 the punctuation the skills are dropping, so leaving it makes the cardinal-rules file
 contradict the skills. Replacement: keep the 10 cardinal rules and the dev-speed
-tactics; swap the grammar section for a short "loci + five skills" section pointing at
+tactics; swap the grammar section for a short "loci + skills" section pointing at
 WORKFLOW.md. This is required scope, not optional.
 
 ## Non-goals
