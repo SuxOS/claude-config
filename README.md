@@ -30,8 +30,8 @@ tracked here.
 ## Setup on a new machine
 
 ```
-git clone git@github.com:SuxOS/claude-config.git ~/Code/claude-config
-~/Code/claude-config/install.sh
+git clone git@github.com:SuxOS/claude-config.git ~/Code/SuxOS/claude-config
+~/Code/SuxOS/claude-config/install.sh
 ```
 
 `install.sh` is idempotent — safe to re-run after pulling changes.
