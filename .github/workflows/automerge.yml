@@ -1,0 +1,30 @@
+name: Auto-merge
+
+# Enables GitHub NATIVE auto-merge on eligible, trusted-author PRs; never force-merges.
+# Uses pull_request_target (base-repo context, write token) but never checks out PR code
+# — only reads the event payload and calls the API. required-gates is overridden to this
+# repo's real check names (shellcheck + security-review); the reusable's default names a
+# Worker "npm audit & SBOM" gate that doesn't exist here. The main-branch ruleset must
+# actually require these same checks or the reusable refuses to arm (it verifies the
+# ruleset first, so an auto-merge can't win the race against fast CI as an advisory check).
+# Reusable workflow: SuxOS/.github/.github/workflows/automerge.yml
+
+on:
+  pull_request_target:
+    types: [opened, reopened, ready_for_review, synchronize, labeled, unlabeled, edited]
+  pull_request_review:
+    types: [submitted]
+  check_suite:
+    types: [completed]
+
+jobs:
+  enable-automerge:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: SuxOS/.github/.github/workflows/automerge.yml@main
+    with:
+      required-gates: |
+        shellcheck
+        security-review
+    secrets: inherit

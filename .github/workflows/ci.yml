@@ -1,0 +1,40 @@
+name: CI
+
+# Repo-local CI gate for claude-config. This repo ships no Node package (dotfiles +
+# shell + docs), so the shared SuxOS/.github ci.yml reusable — which hard-runs `npm ci`
+# — can't be used here; it would fail on the missing package.json. Instead we run the
+# check that actually fits this repo's content: shellcheck over every tracked shell
+# script. Named `shellcheck` so the main-branch ruleset can require it as the auto-merge
+# gate (same role "Type-check & build" plays for the Worker repos). Mirrors the pattern
+# .github itself uses (self-check.yml / actionlint) for a repo with no app to build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: shellcheck tracked shell scripts
+        run: |
+          set -euo pipefail
+          # git-tracked *.sh only — never the gitignored .claude/worktrees copies.
+          mapfile -t files < <(git ls-files '*.sh')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no tracked shell scripts to check"; exit 0
+          fi
+          printf 'checking: %s\n' "${files[@]}"
+          shellcheck "${files[@]}"
