@@ -1,70 +1,76 @@
-# Next session — org-wide autonomous loop
+# Next session — zero-question org autonomy
 
-What to type next session, and the plan it drives. Two phases: **get to a clean synced
-state**, then **run the steady-state audit→issue→build loop**.
+Everything from the loci redesign + three-loop reconciliation is **merged to `main`
+org-wide** (`.github`, `claude-config`, `sux`, `sux-fileops`, `suxrouter`). The pipeline is
+**live** (`CLAUDE_CODE_OAUTH_TOKEN` + bot App secrets set) and **scheduled** — it runs and
+makes progress on its own crons, credit-bounded. This doc is how to drive it hands-off.
 
-## The one command to start
+## The one command — paste this, expect zero questions
 
-Open a session in `~/Code` (workspace locus) and type:
-
-```
-orient the whole org, then get everything to a clean synced state: land the open
-reconciliation PRs, prune anything stale/dead, and report what's left before we loop.
-```
-
-`orient` at workspace locus reads the fabric, walks every org's clones, and reports what's
-off. Then `work`/`dispatch` clear it.
-
-## Phase A — reach a clean synced state (one-time)
-
-Started this session; finish it next:
-
-1. **Land the reconciliation PRs** (in dependency order):
-   - `SuxOS/.github#155` (draft) — smoke-test one caller via `workflow_dispatch`, then mark
-     ready so it merges. **This must land first** — the caller repos pin `@main`.
-   - Then the caller PRs (`sux`/`suxrouter`/`sux-fileops`, `reconcile/loci-pipeline`) and
-     `claude-config#16`. Un-draft the caller PRs once #155 is on `main`.
-   - Restart Claude Code after `claude-config#16` lands so the new skills load.
-2. **Prune stale/dead** — the audits already removed the big items (dead callers, old
-   pipeline copies, control-panel). Next: sweep each repo with `orient` for leftover stale
-   labels, docs, dead code; `work` or `dispatch` (file issues) to clear.
-3. **Repo-wide ops** (operator-specified — fill these in):
-   - **Visibility check** — confirm every repo's intended public/private state; branch
-     protection armed where `automerge` needs it.
-   - **Renames** — any repo/label/branch renames to normalize.
-   - **New repos** — scaffold + add to `fabric.json` `orgs.<org>.repos` + a caller-stub set
-     (`scripts/scaffold-caller.sh` in `.github`).
-   - **Refactor to lib** — extract the shared code into a library repo; wire consumers.
-4. **Sync to main** — everything green-merged; `orient` reports zero drift; clean worktrees.
-
-## Phase B — steady-state loop (the while-true)
-
-Once clean, this is the ongoing org-management loop. It's just the tools + the pipeline:
+Open a session in `~/Code` and paste:
 
 ```
-while not interrupted:
-    orient each repo (fan out — one audit lens per repo)      # see what's off / worth doing
-    dispatch: file the findings as issues                     # seed the pipeline's build loop
-    → the .github three loops build + merge them autonomously  # collate-build / green-merge / red-rebase
-    report progress; fix org-level problems with work/dispatch
-    optionally: propose feature suggestions as issues
+Full autonomy, zero questions — decide and log, don't ask. Reconcile everything org- and
+local-dir-wide, fully sync local with cloud (pull every repo's main, prune anything stale
+or dead you find), then run the exhaustive loop: orient every repo, file the worthwhile
+findings as issues for the pipeline to build, and keep the pipeline healthy. Make real,
+meaningful progress — do not blow the budget on busywork. Bound it: stop if the throttle
+goes red or you hit 2 empty passes. Monitor spend the whole time and pull the kill switch
+(below) if credits run away. Report progress as you go; I'm signing off.
 ```
 
-In tool terms: **`orient` (audit each repo) → `dispatch` (file issues) → the three-loop
-pipeline builds/merges → `orient` again (progress + new drift)**. The pipeline is the
-engine; `orient`/`dispatch` are the operator's loop over it. Kick it off with:
+This is deliberately self-contained: it grants autonomy (no gate), scopes the work
+(reconcile → sync → loop), sets the quality bar (real progress, not busywork), bounds it
+(red throttle / 2 empty passes), and names the kill switch. The tools won't stop to ask.
+
+## What "the exhaustive loop" actually is
+
+It's already the architecture — you don't babysit it:
 
 ```
-run the org loop: orient every repo, file the worthwhile findings as issues for the
-pipeline to build, report progress, and keep going until the backlog's dry or I stop you.
+fixer (daily cron)  ─proposes issues→  issue-build (4×/day)  ─builds PRs→  automerge (on green)
+        ▲                                                                        │
+        └──────── pr-watch / pr-auto-update / pr-unstick keep PRs moving ────────┘
 ```
 
-Keep it **bounded** (a pass count, a time cap, or manual halt — an unbounded loop is a
-bug), run it in the background if it's long, and let the pipeline do the building while the
-thread stays free.
+`orient` + `dispatch` from your session are the *operator's overlay* on this: `orient`
+finds cross-repo work the scheduled `fixer` misses; `dispatch` files it as issues (seeds
+the same build loop) or holds/steers the pipeline. To seed a burst now instead of waiting
+for the cron: `gh workflow run fixer.yml --repo SuxOS/<repo>`.
 
-## Guardrails (unchanged)
+## Monitoring & the kill switch (credit safety — already built)
+
+`budget-governor.yml` (runs every 6h) rolls up trailing-7-day runner minutes as a spend
+**proxy** and writes a green/yellow/red **throttle** into an "Autonomy throttle" issue per
+repo. `check-throttle` makes expensive Claude workloads **skip at red** — so spend stops
+before a blowout without disabling anything. Fail-open (a governor outage never stalls
+merges).
+
+- **See spend:** the org-wide "Autonomy throttle" report issue in `SuxOS/.github`, and
+  per-repo throttle issues. Calibrate the proxy against claude.ai's usage page
+  (`SuxOS/.github/docs/design/budget-and-cadence.md`).
+- **Hard stop (manual kill switch):** set a repo's "Autonomy throttle" issue body to
+  `level: red` and add the `throttle-manual` label — the governor won't override it, and
+  every scheduled Claude workload defers. To fully halt a loop:
+  `gh workflow disable <fixer|issue-build|pr-unstick>.yml --repo SuxOS/<repo>` (re-enable
+  with `enable`).
+- **Tunable knobs** (in `SuxOS/.github`, for stability/efficiency):
+  - `budget-governor.yml` env: `OPUS_BUDGET_MIN` (900), `TOTAL_BUDGET_MIN` (6000),
+    `YELLOW_FRACTION` (0.75), governor cadence (`13 */6 * * *` — tighten for faster
+    reaction overnight).
+  - caller cadences: `fixer` (daily), `issue-build` (`7 2,8,14,20`), `pr-unstick` (daily).
+  - `issue-build` `MAX_CLUSTERS` (throughput cap); `claude-autofix` `max-attempts` (6).
+  Tune from observed spend: red too often → widen budgets or slow cadence; idle with
+  backlog → tighten cadence or raise `MAX_CLUSTERS`.
+
+## Guardrails (unchanged, hold under full autonomy)
 
 - Tier A (irreversible/destructive, secret egress) never auto-runs — human hands only.
-- Everything else ships and rolls back; `hold` parks any PR.
-- Nothing merges the org-wide `.github` change without a smoke test first (§6).
+- Everything else ships and rolls back; `hold` parks any PR; a red throttle stops spend.
+- The org-wide `.github` pipeline change already landed behind its consumer smoke checks.
+
+## Local housekeeping when you start
+
+- `git -C <each repo> checkout main && git pull` (the reconcile/redesign branches are
+  merged + deleted remotely). Restart Claude Code once so the new `orient`/`work`/`dispatch`
+  skills load from the merged `claude-config`.
