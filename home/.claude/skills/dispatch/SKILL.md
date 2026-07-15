@@ -35,18 +35,35 @@ Read it from the fabric's `orgs.<org>.pipeline` (repo = `.github`, loops =
 
 ## Control — the stop / surgery / reenable flow
 
+The loop *names* (`collate-build`/`green-merge`/`red-rebase`) are conceptual — the real,
+disable-able cron/trigger workflows live **in the repo you're doing surgery on**
+(`<org>/<r>`), not in `<org>/.github`. `.github` only hosts the reusable `workflow_call`
+*library* definitions (plain `issue-build.yml`/`automerge.yml`/`fixer.yml` there have no
+schedule of their own) plus its own self-contained pipeline for `.github`'s own repo
+(`self-issue-build.yml`/`self-automerge.yml`/`self-fixer.yml`). Map loop → real file(s):
+
+| Loop | File(s) in `<org>/<r>` | If `<r>` is `.github` itself |
+|---|---|---|
+| collate-build | `issue-build.yml` (+ `fixer.yml` to stop new proposals too) | `self-issue-build.yml` (+ `self-fixer.yml`) |
+| green-merge | `automerge.yml` (+ `pr-drain.yml` reconcile backstop) | `self-automerge.yml` |
+| red-rebase | `pr-auto-update.yml` (+ `pr-unstick.yml`, `claude-autofix.yml`) | n/a — `.github` has no red-rebase loop of its own |
+
+Not every repo has every file yet (e.g. `claude-config` has no `pr-auto-update`/`pr-drain`/
+`pr-unstick`) — confirm with `gh workflow list --repo <org>/<r>` before disabling.
+
 The exact sequence for "stop the remote workflows, do local surgery, then reenable":
 
-1. **Stop** — `hold` the PRs that must not move + disable the loop crons:
+1. **Stop** — `hold` the PRs that must not move + disable the relevant loop file(s) in the
+   repo you're operating on:
    ```
    gh pr edit <n> --repo <org>/<r> --add-label hold
-   gh workflow disable <loop>.yml --repo <org>/.github
+   gh workflow disable issue-build.yml --repo <org>/<r>
    ```
 2. **Surgery** — do the local work (`work`), land it.
-3. **Reenable** — remove the holds + re-enable the crons:
+3. **Reenable** — remove the holds + re-enable the same file(s):
    ```
    gh pr edit <n> --repo <org>/<r> --remove-label hold
-   gh workflow enable <loop>.yml --repo <org>/.github
+   gh workflow enable issue-build.yml --repo <org>/<r>
    ```
 
 Other controls: **requeue** a `needs-human` PR (remove the label so `pr-unstick` retries),
