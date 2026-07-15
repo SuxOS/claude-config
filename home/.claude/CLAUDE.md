@@ -59,3 +59,16 @@ Plain English is the whole surface — no marks, counts, or adverbs. "carefully 
 flaky auth tests across all repos" is a complete instruction. `~/.claude/fabric.json` is
 the one declared truth (workspace root, orgs, repos, the pipeline pointer); the cloud
 pipeline lives in `SuxOS/.github` and is never duplicated here.
+
+**One recognized exception: scope operators.** Across every skill, `scope <op> <value>`
+modifies the tool's *default* self-scope (its normal locus-derived resolution — e.g.
+`work`'s "survey every clone in the org, pick the top unit") instead of replacing it with
+free text:
+- `scope+=X` — add X to the default scope (union)
+- `scope-=X` — remove X from the default scope (exclusion)
+- `scope=X` — set scope to exactly X (override, default doesn't apply)
+`work org scope-=automation` means: this org's normal self-scope, minus anything
+automation/pipeline-related — NOT "scope := automation" (that would need `scope=automation`).
+Free-text hints (`work the flaky auth tests`) are still the norm everywhere else; this one
+grammar exists because include/exclude is genuinely ambiguous in prose and worth a fixed
+notation instead of guessing.

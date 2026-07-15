@@ -29,6 +29,10 @@ no LLM, no inference:
 That resolution *is* the scope — say it in the header. Fall back to cwd-inference only when
 the fabric is absent; say so when you're guessing.
 
+**Scope operators** (`scope+=X` / `scope-=X` / `scope=X`, see root `CLAUDE.md`) modify that
+default: `+=` adds X to the survey, `-=` excludes X, `=` replaces the locus resolution with
+X outright. State the effective scope after applying the operator in the report header.
+
 ## Step 1 — run the dimensions (fan out; each self-filters to signal)
 
 The dimensions are independent — run them concurrently. Each reference file owns its own

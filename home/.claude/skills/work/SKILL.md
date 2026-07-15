@@ -22,6 +22,10 @@ to the autonomous `.github` pipeline instead (build-while-away), use `dispatch`.
 - **Keep going until dry** (a whole backlog, "keep shipping"): run bursts back-to-back,
   **bounded** — declare the stop up front (2 empty passes, a time cap, or manual halt). An
   unbounded loop is a bug. Self-heal between passes; a jam drops to recovery, then resumes.
+- **Scope operators** (`scope+=X` / `scope-=X` / `scope=X`, see root `CLAUDE.md`) act on the
+  bare self-scope above: `+=` unions X in, `-=` excludes X from the survey/pick, `=`
+  replaces self-scope entirely with X. `work org scope-=automation` = the org's normal
+  survey-every-clone-pick-top-unit, with automation/pipeline work excluded from candidates.
 
 ## How to run it
 
