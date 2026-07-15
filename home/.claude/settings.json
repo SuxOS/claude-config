@@ -32,27 +32,33 @@
   "enabledPlugins": {
     "cloudflare@cloudflare": true,
     "grafana-cloud-mcp@grafana-ai-marketplace": true,
-    "code-simplifier@claude-plugins-official": false,
-    "commit-commands@claude-plugins-official": false,
-    "feature-dev@claude-plugins-official": false,
-    "mcp-server-dev@claude-plugins-official": false,
-    "frontend-design@claude-plugins-official": false,
-    "hookify@claude-plugins-official": false,
+    "commit-commands@claude-plugins-official": true,
+    "mcp-server-dev@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "hookify@claude-plugins-official": true,
     "mcp-tunnels@claude-plugins-official": false,
-    "plugin-dev@claude-plugins-official": false,
-    "playground@claude-plugins-official": false,
-    "pr-review-toolkit@claude-plugins-official": false,
-    "project-artifact@claude-plugins-official": false,
-    "skill-creator@claude-plugins-official": false,
+    "plugin-dev@claude-plugins-official": true,
+    "playground@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "project-artifact@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
     "ralph-loop@claude-plugins-official": false,
     "learning-output-style@claude-plugins-official": false,
-    "explanatory-output-style@claude-plugins-official": false,
     "superpowers@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
-    "playwright@claude-plugins-official": true,
+    "playwright@claude-plugins-official": false,
     "security-guidance@claude-plugins-official": true,
-    "chrome-devtools-mcp@claude-plugins-official": true
+    "chrome-devtools-mcp@claude-plugins-official": true,
+    "sux@sux": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "agent-sdk-dev@claude-plugins-official": false,
+    "claude-code-setup@claude-plugins-official": false,
+    "github@claude-plugins-official": true,
+    "semgrep@claude-plugins-official": true,
+    "session-report@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "cloudflare": {
@@ -94,6 +100,16 @@
       "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, curl, ssh/scp, python3, node, grep/find/sed/awk/cat/ls/tar), including setting non-secret configuration",
       "All MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian)",
       "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and setting the user's own Cloudflare Worker config/secrets via wrangler"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/require-delegation-model.py" }
+        ]
+      }
     ]
   }
 }
