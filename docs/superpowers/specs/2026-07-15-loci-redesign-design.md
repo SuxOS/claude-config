@@ -39,7 +39,7 @@ to a subset of repos.
 ├── SuxOS/                ← org        (where you live; maps to a GitHub org)
 │   ├── sux/  suxrouter/  ← repo       (focused dev / surgery)
 │   └── claude-config/
-└── Life/                 ← org
+└── colinxs/              ← org        (renamed from Life; matches GitHub org)
 ```
 
 | Locus | Path shape | What you do | Session character |
@@ -53,7 +53,30 @@ Skills do not each reimplement scope. A single **deterministic locus detector**
 skill calls. Centralizing it is what keeps five small skills from each re-growing their
 own "am I at org or repo?" branching.
 
-## The five skills (radical cut, zero punctuation)
+## Organizing metaphor: skills are CLI tools for Claude
+
+The design spine is Unix. A skill is a tool on Claude's PATH; the cardinal rules are the
+shell. This is what makes the radical cut principled instead of arbitrary, and it sorts
+every skill — present and future — into one of two families:
+
+- **Locus tools** — cwd-sensitive, act on the workspace/org/repo tree (like `git`,
+  `make`, `find`, `ls`): `orient`, `work`, `dispatch`, `sync`, `verify`.
+- **Filters** — orthogonal, transform an output/stream regardless of locus (like
+  `paste`, `sort`, `grep`, `jq`): `paste`, and room for more.
+
+Unix principles *are* the spec, and each resolves a design question:
+
+| Unix | Here |
+|---|---|
+| do one thing well | the radical cut — one skill = one tool |
+| composable | chain in a session: `orient` → `work` → `verify` |
+| job control (`nohup`/`bg`/`jobs`/`kill`/`fg`) | `dispatch` — launch **and** stop/resume/cancel remote+background work |
+| `--help` / `man` / `which` | discovery is self-describing (skill descriptions = man pages); no ceremony verb |
+| `paste`, `sort` are coreutils | filters are a real class, not an exception |
+| exit codes / `$?` | `verify` — did it *actually* succeed |
+| PATH + man pages | skill descriptions for triggering; WORKFLOW.md as the intro(1) |
+
+## The skills (radical cut, zero punctuation)
 
 Intensity and scope come from plain English + the detected locus — never from marks.
 
@@ -64,19 +87,29 @@ Intensity and scope come from plain English + the detected locus — never from 
    (branch → code → verify → land). Self-heals when git is jammed.
    - repo → focused; org → survey all repos, worktree, land.
    - Absorbs: `develop`, `drain`, `go`, `fix`, `bug`, `fml`.
-3. **`dispatch`** — hand work elsewhere: background session, cloud pipeline
-   (fixer/triage/issue-build), schedule, or queue-for-later.
+3. **`dispatch`** — **job control** for dispatched/remote/background work, both
+   directions: launch (background session, cloud pipeline fixer/triage/issue-build,
+   schedule, queue) *and* list / stop / pause / resume / cancel. The `nohup`+`jobs`+
+   `kill`+`fg` of the fabric.
    - Absorbs: `fork`, `cron`, `queue`.
-4. **`verify`** — prove it actually works by exercising it end-to-end.
+4. **`verify`** — prove it actually works by exercising it end-to-end (the `$?` check).
    - Absorbs: `bet`. Aligns with the existing built-in `verify` skill.
-5. **`sync`** — workspace-only: reconcile `Life ↔ SuxOS`, pull/push clones, keep
+5. **`sync`** — workspace-only: reconcile `colinxs ↔ SuxOS`, pull/push clones, keep
    `fabric.json` true.
+
+**Filter (orthogonal, not a locus tool):**
+
+6. **`paste`** — format output for its destination (email/Slack/GitHub/terminal),
+   selecting register per target. Locus-agnostic; a coreutil, kept.
 
 **Deleted:** every other verb skill and all `.`/`?`/`!` marks, counts, adverbs.
 
-Locus → primary skills: workspace → `sync` (+ `orient`); org → `orient` + `dispatch`;
-repo → `work` + `verify`. All of `orient`/`work`/`dispatch`/`verify` run at every locus,
-scoped by the detector; `sync` is workspace-specific.
+Locus → primary tools: workspace → `sync` (+ `orient`); org → `orient` + `dispatch`;
+repo → `work` + `verify`. `orient`/`work`/`dispatch`/`verify` run at every locus, scoped
+by the detector; `sync` is workspace-specific; `paste` runs anywhere.
+
+**Discovery** ("how would I do X with these skills") needs no verb — the skill
+descriptions are the man pages and WORKFLOW.md is the intro. Ask in plain English.
 
 ## Substrate
 
@@ -86,8 +119,8 @@ scoped by the detector; `sync` is workspace-specific.
 {
   "workspace_root": "~/Code",
   "orgs": {
-    "SuxOS": { "github": "SuxOS",  "repos": ["sux", "sux-fileops", "suxrouter", "claude-config"], "cloud_workflows": ["fixer.yml", "triage.yml", "issue-build.yml"] },
-    "Life":  { "github": "colinxs", "repos": [] }
+    "SuxOS":   { "github": "SuxOS",   "repos": ["sux", "sux-fileops", "suxrouter", "claude-config"], "cloud_workflows": ["fixer.yml", "triage.yml", "issue-build.yml"] },
+    "colinxs": { "github": "colinxs", "repos": [] }
   },
   "bot": { "account": "bot@colinxs.com", "config_dir": "~/.claude-bot" }
 }
@@ -127,6 +160,6 @@ WORKFLOW.md. This is required scope, not optional.
 
 ## Open questions
 
-- `Life` org's repo list is currently empty (no clones under `~/Code/Life`); seed it
-  when repos land there.
+- `colinxs` org dir exists (renamed from `Life`) but has no clones yet; repo list starts
+  empty and gets seeded as repos land there.
 - (none outstanding)
