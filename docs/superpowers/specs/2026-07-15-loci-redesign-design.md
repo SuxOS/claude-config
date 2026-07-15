@@ -32,6 +32,40 @@ to a subset of repos.
 - Radical cut: a **few loci-aware skills**, not a verb zoo.
 - Rewrite `WORKFLOW.md` full scope.
 
+## Grounding sentence (shared with the cloud pipeline)
+
+The `.github` three-loop-pipeline design states the frame this redesign also inherits
+verbatim:
+
+> a **self-hosted autonomy pipeline for one operator (Colin), on private repos, with the
+> operator nearby to fix things, and high trust in the agent.**
+
+Everything falls out of that sentence: high trust + operator-nearby justifies the radical
+cut and the no-ceremony surface; private + reversible justifies **ship-and-roll-back** as
+the default (cardinal rule #4); the one real residual risk is **prompt injection via
+content the agent reads**, defended by *scoping what a tool can do after reading untrusted
+text*, never by author-trust theater.
+
+## Reconciliation with the cloud three-loop pipeline
+
+`SuxOS/.github/docs/design/three-loop-pipeline.md` is the **authoritative** model of the
+cloud fabric; this spec adapts to it (not the reverse). Consequences woven through the
+sections below:
+
+- The cloud pipeline is **not** `fixer`/`triage`/`issue-build`. `triage.yml` is deleted;
+  the real shape is **three continuous cron loops** + nightly safety nets:
+  1. **collate & build** — `fixer` proposes → `issue-build` verifies (binary
+     buildable/needs-human) + clusters (file/concept/time) + always builds ≥1.
+  2. **green → merge** — GitHub native auto-merge; eligibility is `not-draft AND
+     not-hold`; branch-protection required checks are the real gate.
+  3. **red/behind → rebase → autofix → needs-human → unstick** — `pr-auto-update`
+     (cheap, uncapped) → `claude-autofix` (capped) → `needs-human` → `pr-unstick` (daily,
+     cooldown+cycle-capped free retries).
+  Safety nets: `deep-audit` (nightly), `org-consistency` (weekly), `security-review`
+  (per-PR, advisory), `budget-governor` (spend control).
+- **One security model across local and cloud** — see Substrate → Rails.
+- **The parked local-vs-cloud fork is dissolved** — see Substrate → local ↔ cloud.
+
 ## The locus model (the spine)
 
 ```
@@ -87,11 +121,15 @@ Intensity and scope come from plain English + the detected locus — never from 
    (branch → code → verify → land). Self-heals when git is jammed.
    - repo → focused; org → survey all repos, worktree, land.
    - Absorbs: `develop`, `drain`, `go`, `fix`, `bug`, `fml`.
-3. **`dispatch`** — **job control** for dispatched/remote/background work, both
-   directions: launch (background session, cloud pipeline fixer/triage/issue-build,
-   schedule, queue) *and* list / stop / pause / resume / cancel. The `nohup`+`jobs`+
-   `kill`+`fg` of the fabric.
-   - Absorbs: `fork`, `cron`, `queue`.
+3. **`dispatch`** — **job control** over the cloud three-loop pipeline and background
+   work, both directions (`nohup`+`jobs`+`kill`+`fg` of the fabric):
+   - **launch** — file issues (seed Loop 1), open PRs (enter Loops 2–3), spawn a
+     background session, schedule a cron, queue-for-later.
+   - **stop / pause** — apply `hold` (the one cloud write-gate) + disable loop crons.
+   - **resume** — remove `hold` + re-enable crons.
+   - **list / cancel** — show in-flight loop state; close a PR/issue.
+   - Absorbs: `fork`, `cron`, `queue`. "Stop remote workflows, do surgery, reenable"
+     is literally `dispatch(hold+disable) → work → dispatch(unhold+enable)`.
 4. **`verify`** — prove it actually works by exercising it end-to-end (the `$?` check).
    - Absorbs: `bet`. Aligns with the existing built-in `verify` skill.
 5. **`sync`** — workspace-only: reconcile `colinxs ↔ SuxOS`, pull/push clones, keep
@@ -119,7 +157,8 @@ descriptions are the man pages and WORKFLOW.md is the intro. Ask in plain Englis
 {
   "workspace_root": "~/Code",
   "orgs": {
-    "SuxOS":   { "github": "SuxOS",   "repos": ["sux", "sux-fileops", "suxrouter", "claude-config"], "cloud_workflows": ["fixer.yml", "triage.yml", "issue-build.yml"] },
+    "SuxOS":   { "github": "SuxOS",   "repos": ["sux", "sux-fileops", "suxrouter", "claude-config", ".github"],
+                 "pipeline": { "repo": ".github", "loops": ["collate-build", "green-merge", "red-rebase"] } },
     "colinxs": { "github": "colinxs", "repos": [] }
   },
   "accounts": {
@@ -142,18 +181,58 @@ not something a skill sniffs at runtime. This replaces the old flat `bot` block 
 an identity (`dispatch` to cloud, `work`'s commit/land, `sync`) reads it here.
 
 One truth, read by the locus detector, all five skills, and the control-panel. No
-second copy anywhere.
+second copy anywhere. The `pipeline` block **points at** the loops (hosted in `.github`);
+it does not enumerate workflow files — that list lives in `SuxOS/.github` and is not
+duplicated here (which is why the old `cloud_workflows: [fixer, triage, issue-build]` was
+both a duplication and stale once `triage.yml` was deleted). `loops` names the three loops
+so `dispatch` has routing targets without re-encoding `.github`'s file set.
 
 **Locus detector** — a tiny deterministic helper (stdlib only, no LLM). Input: cwd +
 fabric. Output: `{locus: workspace|org|repo, org: <name|null>, repos: [...in scope],
 surface: desktop|cli|cloud-workflows, account: human|bot}`. Shared by every skill.
 
-**Rails** (`hooks/`) — unchanged. `require-delegation-model` (live),
-`verify-completion-claim` (built, off by default). Cardinal rules as code.
+**Rails** (`hooks/`) — the **local expression of the one security model shared with the
+cloud pipeline**. That model (from `three-loop-pipeline.md` §2) is two tiers + one label,
+and it governs local `work` and the cloud loops identically:
+
+- **Tier A — hard block, no LLM, human hands only.** Irreversible/destructive writes
+  (force-push to `main`, branch/tag/repo deletion, history rewrite, dropping prod data),
+  persistent secret exposure (secret that *survives* in git history / a comment / committed
+  logs), PHI/PII egress. Enforced by *mechanism* — branch protection + restricted tokens +
+  Safe Outputs in cloud; the hard rails locally. This is cardinal rule #4's "irreversible
+  needs an explicit yes," stated as an enforced boundary.
+- **Tier B — advisory, ship-and-roll-back (the default for everything else).** Red CI,
+  missing verdict, high-blast diff, unverified issue, stale branch, a secret briefly
+  visible in an *ephemeral* log. None block; they ship, get watched, and roll back if
+  wrong. This is cardinal rule #4's "bias to reversible action."
+- **`hold`** — the single manual+automatic cloud write-gate ("no automation touches this
+  PR"), applied only by a CONFIRMED critical/high security finding or by the operator.
+  `dispatch` is how the operator applies/removes it.
+
+The existing hooks are the local Tier-B rails: `require-delegation-model` (live),
+`verify-completion-claim` (built, off). Nothing new to add — YAGNI — but they are now
+*documented as* the local half of a model whose cloud half is enforced in `.github`.
+
+**local ↔ cloud — the parked fork, dissolved.**
+`.github/docs/design/local-vs-cloud-autonomy-model.md` parks an open question: should
+`develop` default local-first, cloud-first, or two-co-equal-modes? The loci model
+*dissolves* it rather than picking a side. There is no global default mode because there
+are two independent things running at once:
+
+- **The operator works locally, in-thread** — locus = wherever cwd is. `work`/`verify` at
+  repo or org locus. This is hands-on, watched, worktree-isolated.
+- **The three loops run continuously in the cloud** — crons, bot account, always churning
+  whatever has been filed, whether the operator or the bot filed it.
+
+They are not competing modes; they are the *operator* and the *substrate*. `dispatch`
+seeds the loops (file issues / open PRs) and controls them (`hold`, cron toggle);
+`orient @org` monitors what they did. Both always run, sharing the one security model. So
+"default locus" is a non-question: your locus is your cwd; the pipeline just runs. (This
+resolves the parked doc — worth updating it to point here.)
 
 **Control-panel** (`tools/control-panel/`) — reframed as the **org-locus cockpit**: the
-visual face of `orient` (health across repos) + `dispatch` (fire local/cloud jobs).
-Made multi-org aware via the new fabric. Kept, not rebuilt.
+visual face of `orient` (three-loop + local health) + `dispatch` (seed/hold/toggle the
+loops). Made multi-org aware via the new fabric. Kept, not rebuilt.
 
 **WORKFLOW.md** — fully rewritten: the three loci (the map) → the five skills (what you
 drive) → the per-locus loop → fabric/rails as substrate → setup state. No punctuation
@@ -169,12 +248,20 @@ WORKFLOW.md. This is required scope, not optional.
 ## Non-goals
 
 - No new hooks (YAGNI — the two existing rails suffice).
-- No rebuild of the cloud pipeline (`fixer`/`triage`/`issue-build` commands stay;
-  `dispatch` routes to them).
+- **No rebuild of the cloud pipeline.** The three-loop pipeline in `SuxOS/.github` is
+  authoritative and stays as-is; this redesign only *consumes* it (dispatch seeds/controls
+  it, orient monitors it, fabric points at it). `claude-config` never re-encodes the loop
+  logic or the workflow file list.
 - No session-state persistence in fabric — sessions are runtime, not declared truth.
 
 ## Open questions
 
 - `colinxs` org dir exists (renamed from `Life`) but has no clones yet; repo list starts
   empty and gets seeded as repos land there.
-- (none outstanding)
+- The three-loop pipeline's Phases 1–3 are shipped-but-not-exercised-live (per its §6).
+  `claude-config`'s `dispatch`/`orient` should be built against its *documented* contract
+  (`hold`, `needs-human`, native auto-merge, the loop crons), and smoke-tested once a real
+  PR exercises the pipeline — not blocked on it.
+- Worth a one-line update to `.github/docs/design/local-vs-cloud-autonomy-model.md`
+  pointing at this spec's "local ↔ cloud dissolved" resolution (separate repo, separate
+  commit).
