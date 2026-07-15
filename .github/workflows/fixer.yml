@@ -7,7 +7,7 @@ name: Fixer
 
 on:
   schedule:
-    - cron: "*/15 * * * *" # TEMP: every 15min for today only (2026-07-15), then revert to 2x/week
+    - cron: "13 9 * * *" # feat proposer: 1/day (bug-drain push keeps issue-build/pr-sweeps at 15min)
   workflow_dispatch:
 
 jobs:
