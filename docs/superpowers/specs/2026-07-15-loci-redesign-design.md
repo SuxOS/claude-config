@@ -110,6 +110,43 @@ Unix principles *are* the spec, and each resolves a design question:
 | exit codes / `$?` | `verify` — did it *actually* succeed |
 | PATH + man pages | skill descriptions for triggering; WORKFLOW.md as the intro(1) |
 
+## Core framework — five layers, almost pure composition
+
+The whole system is five layers, each tiny, each the *only* copy of its concern. The
+design's power is that the tools carry no domain logic — they carry locus-awareness and
+routing, and delegate every heavy lift to machinery that already exists.
+
+1. **One declared truth — `fabric.json`.** `workspace_root`, `orgs{repos, pipeline}`,
+   `accounts`, `surfaces`. Everything reads it; nothing hardcodes a second copy.
+2. **One primitive — the locus detector.** Deterministic (`cwd + fabric →
+   {locus, org, repos, surface, account}`), no LLM. Every tool's first call.
+3. **A few thin loci tools that route, never reimplement.** `orient` `work` `dispatch`
+   `verify` `sync` + the `paste` filter. Each detects locus, then hands the real work to
+   borrowed machinery (see the delegation map).
+4. **One security model — Tier A / Tier B / `hold`.** Shared local + cloud (Substrate →
+   Rails).
+5. **Authored by the domain-skill pattern, test-first** (`AUTHORING.md`): a spine that
+   never grows (resolve scope → run dimensions → synthesize → report) + pluggable pieces
+   that earn their place only from an observed miss.
+
+### Don't reimplement — the delegation map
+
+Cross-referenced against installed skills, plugins, built-ins, and `.github`. Each tool's
+own code is just the locus-aware routing; the rest is reuse:
+
+| Tool | Its own job (locus-aware) | Delegates the heavy lift to |
+|---|---|---|
+| **orient** | survey the locus, report only what's *off* | domain-skill dimensions (`gh`/`git`, script-free); built-in `code-review`/`security-review` for a deep pass |
+| **work** | pick + take one unit end-to-end | superpowers `brainstorming` → `writing-plans` → `test-driven-development` / `systematic-debugging`; `using-git-worktrees`; then `verify` |
+| **dispatch** | route off-thread + control the loops | built-in `schedule` (cron) & `loop`; `.github` pipeline via `gh` (`hold`, cron toggle, file issues/PRs); `Agent`/`fork` for background sessions |
+| **verify** | prove it works by exercising it | the built-in **`verify`** skill — extend/point at it, do **not** duplicate |
+| **sync** | reconcile orgs + clones | plain `git` (deterministic, rule #2) |
+| **paste** | format output for its destination | self-contained (already correct); kept verbatim |
+
+The rule this encodes is already in CLAUDE.md ("delegate to built-ins already installed —
+don't reimplement them"). The loci tools are the *locus-aware front end* to tools that
+exist; they add scope-detection and routing, nothing more.
+
 ## The skills (radical cut, zero punctuation)
 
 Intensity and scope come from plain English + the detected locus — never from marks.
@@ -238,12 +275,50 @@ loops). Made multi-org aware via the new fabric. Kept, not rebuilt.
 drive) → the per-locus loop → fabric/rails as substrate → setup state. No punctuation
 grammar anywhere.
 
-**CLAUDE.md** — the "verb grammar" section (the entire `.`/`?`/`!` mood/count/adverb
-DSL and the per-verb family notes) is **removed and replaced**. It currently *mandates*
-the punctuation the skills are dropping, so leaving it makes the cardinal-rules file
-contradict the skills. Replacement: keep the 10 cardinal rules and the dev-speed
-tactics; swap the grammar section for a short "loci + skills" section pointing at
-WORKFLOW.md. This is required scope, not optional.
+**CLAUDE.md** — audited. The 10 cardinal rules (lines 1–27) and 6 dev-speed tactics
+(28–43) are **kept nearly verbatim** — they're already "less is more," universal, and the
+`.github` grounding sentence *validates* them (rule #4 = ship-and-roll-back). The
+~150-line "verb grammar" section (44→end) is **deleted** and replaced by a short "loci +
+skills" pointer to WORKFLOW.md. It currently *mandates* the punctuation the skills drop,
+so leaving it makes the cardinal-rules file contradict the skills. Net: 193 lines → ~55.
+
+**AUTHORING.md** — rewritten, not deleted. Its two genuinely load-bearing pieces **stay**:
+(a) *test-before-you-write* (a skill/dimension earns its place only from an observed
+miss), and (b) the *domain-skill pattern* (spine + pluggable dimensions) — which is
+exactly what the loci tools, `orient` especially, now are. The verb-family scaffolding
+(the mark/count-dial section, the verb skeleton) is dropped with the grammar.
+
+**`commands/{fixer,triage,issue-build}.md`** — **deleted.** They are divergent local
+copies of the *old* pipeline: they still encode `confidence:high/medium/low`,
+confidence-purity, `triaged`, `queued-for-build` — the exact machinery the authoritative
+`.github` three-loop redesign removed (`triage.yml` deleted; `issue-build` rewritten to
+binary + always-build-≥1). Keeping them is a second, drifting copy of a pipeline whose one
+source of truth is `.github` (rule: one source of truth). A local propose→build, if ever
+wanted, is `work` at org locus (survey → build), not a stale mirror of the cloud loops.
+`dispatch` reaches the real pipeline via `gh`.
+
+## Migration inventory — full cross-reference
+
+Every artifact in `home/.claude/` + `tools/`, and its fate. This is the implementation
+surface.
+
+| Artifact | Fate | Note |
+|---|---|---|
+| `skills/{go,wtf,fix,bug,time,fml,man,explain,audit,bet,cron,queue,fork,drain,develop,org-watch}` | **delete** | content folds into the five loci tools; ceremony verbs just die |
+| `skills/orient` (new) | **born** | domain-skill pattern; absorbs `wtf`/`org-watch`/`explain`/`man`; reuses `org-watch`'s spine + `references/{github,local}.md` |
+| `skills/work` (new) | **born** | absorbs `develop`/`drain`/`go`/`fix`/`bug`/`fml`; delegates to superpowers TDD/plans + worktrees |
+| `skills/dispatch` (new) | **born** | absorbs `fork`/`cron`/`queue`; job-control over `.github` loops via `gh` |
+| `skills/sync` (new) | **born** | workspace-only; plain `git` |
+| `skills/verify` (new, thin) | **born** | points at the built-in `verify` skill; absorbs `bet` |
+| `skills/paste` | **keep** | orthogonal filter; already correct |
+| `skills/AUTHORING.md` | **rewrite** | keep test-first + domain-skill pattern; drop verb-family scaffolding |
+| `commands/{fixer,triage,issue-build}.md` | **delete** | stale copies of the old pipeline (confidence tiers/purity) that `.github` removed |
+| `hooks/{require-delegation-model,verify-completion-claim}.py` | **keep** | the local Tier-B rails; documented as half of the shared security model |
+| `CLAUDE.md` | **trim** | keep 10 rules + 6 tactics; delete the 150-line grammar; 193→~55 lines |
+| `fabric.json` | **rewrite** | single-org → workspace-with-orgs + `accounts`/`surfaces` + `pipeline` pointer |
+| `fabric` locus detector (new) | **born** | the one shared primitive; deterministic |
+| `tools/control-panel/` | **adapt** | multi-org aware; the org-locus cockpit (orient + dispatch face) |
+| `WORKFLOW.md` | **rewrite** | loci → skills → per-locus loop → substrate → setup |
 
 ## Non-goals
 
