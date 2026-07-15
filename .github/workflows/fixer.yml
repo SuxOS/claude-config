@@ -7,7 +7,7 @@ name: Fixer
 
 on:
   schedule:
-    - cron: "13 9 * * 2,5" # 2x/week (Tue+Fri), off-minute; low-activity config repo
+    - cron: "*/15 * * * *" # TEMP: every 15min for today only (2026-07-15), then revert to 2x/week
   workflow_dispatch:
 
 jobs:
