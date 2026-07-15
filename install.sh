@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Symlinks this repo's tracked config into ~/.claude. Idempotent.
+# On conflict with a pre-existing non-symlink, backs it up (*.bak-<epoch>) then links.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,15 +27,32 @@ for item in "${items[@]}"; do
     continue
   fi
   if [ -L "$dest" ]; then
+    current="$(readlink "$dest")"
+    if [ "$current" = "$src" ]; then
+      echo "ok: $dest already -> $src"
+      continue
+    fi
+    echo "repointing symlink $dest (was -> $current)" >&2
     rm "$dest"
   elif [ -e "$dest" ]; then
-    echo "refusing to overwrite non-symlink $dest — move it aside first" >&2
-    exit 1
+    backup="$dest.bak-$(date +%s)"
+    echo "backing up existing $dest -> $backup" >&2
+    mv "$dest" "$backup"
   fi
   ln -s "$src" "$dest"
   echo "linked: $dest -> $src"
 done
 
-echo
-echo "settings.json is NOT symlinked (Claude Code rewrites it in place)."
-echo "Reference copy at $SRC/settings.json — diff/merge manually as needed."
+# settings.json is copied, not symlinked (Claude Code rewrites it in place).
+settings_src="$SRC/settings.json"
+settings_dest="$DEST/settings.json"
+if [ -e "$settings_dest" ]; then
+  echo
+  echo "settings.json already exists at $settings_dest — not overwritten."
+  echo "Reference copy at $settings_src — diff/merge manually as needed."
+elif [ -e "$settings_src" ]; then
+  cp -n "$settings_src" "$settings_dest"
+  echo
+  echo "copied: $settings_dest (from reference $settings_src)"
+  echo "settings.json is copied, not symlinked — Claude Code rewrites it in place."
+fi
