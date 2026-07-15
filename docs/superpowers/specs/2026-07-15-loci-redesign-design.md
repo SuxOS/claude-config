@@ -122,16 +122,31 @@ descriptions are the man pages and WORKFLOW.md is the intro. Ask in plain Englis
     "SuxOS":   { "github": "SuxOS",   "repos": ["sux", "sux-fileops", "suxrouter", "claude-config"], "cloud_workflows": ["fixer.yml", "triage.yml", "issue-build.yml"] },
     "colinxs": { "github": "colinxs", "repos": [] }
   },
-  "bot": { "account": "bot@colinxs.com", "config_dir": "~/.claude-bot" }
+  "accounts": {
+    "human": { "email": "m@colinxs.com" },
+    "bot":   { "email": "claude@colinxs.com", "config_dir": "~/.claude-bot" }
+  },
+  "surfaces": {
+    "desktop":         { "account": "human" },
+    "cli":             { "account": "bot" },
+    "cloud-workflows": { "account": "bot" }
+  }
 }
 ```
+
+**Identity is per-surface** — the fact that Desktop runs as the human (`m@colinxs.com`)
+while CLI and cloud-workflows run as the bot (`claude@colinxs.com`) is declared truth,
+not something a skill sniffs at runtime. This replaces the old flat `bot` block (whose
+`bot@colinxs.com` / `claude@colinxs.com` values were stale). In CLI-tool terms it's
+`/etc/passwd` + "which user the daemon runs as": any tool that acts as or attributes to
+an identity (`dispatch` to cloud, `work`'s commit/land, `sync`) reads it here.
 
 One truth, read by the locus detector, all five skills, and the control-panel. No
 second copy anywhere.
 
 **Locus detector** — a tiny deterministic helper (stdlib only, no LLM). Input: cwd +
-fabric. Output: `{locus: workspace|org|repo, org: <name|null>, repos: [...in scope]}`.
-Shared by every skill.
+fabric. Output: `{locus: workspace|org|repo, org: <name|null>, repos: [...in scope],
+surface: desktop|cli|cloud-workflows, account: human|bot}`. Shared by every skill.
 
 **Rails** (`hooks/`) — unchanged. `require-delegation-model` (live),
 `verify-completion-claim` (built, off by default). Cardinal rules as code.
