@@ -2,8 +2,21 @@
 
 1. **Right-size every call.** Choose model + effort deliberately, per task — never inherit.
    Cheapest tier that gets it right; go broad-cheap before deep-expensive.
-2. **Deterministic beats LLM; parallel beats serial.** Script/query/type-check over a model
-   call whenever it's exact. Fan out independent work concurrently, not serially.
+2. **Right tool for the exact job; parallel beats serial.** Two faces of the same rule:
+   (a) deterministic beats LLM — script/query/type-check over a model call whenever it's
+   exact; never spend an LLM call on what a lookup, a set/boolean predicate, a similarity
+   score, or a vote/tally already decides (selection, grouping/clustering, dedup, parsing,
+   routing — not just the obvious cases; try the dumbest deterministic version first —
+   shared-key intersection before a similarity threshold, a threshold before a model
+   judgment). (b) specialized beats generic — before grepping, hand-parsing, or reasoning
+   manually, check whether a connected MCP/tool already does that exact job better (LSP
+   for symbol/reference lookups over text search, semgrep for pattern/security scanning
+   over ad-hoc regex, Grafana/observability MCPs for metrics over guessing, a platform's
+   own API over scraping its output). Reach for the built-for-this tool by default, every
+   session — an unused connected capability is a standing miss, not a neutral default. An
+   orchestrator managing a nondeterministic model has no business being nondeterministic
+   itself. Fan out independent work concurrently, not
+   serially.
 3. **Verify before you act — research is cheaper than a wrong call.** Ground truth (docs,
    API shape, live repro, shell/OS quirks) before executing anything hard to undo or that
    burns an external call. A failed assumption costs more than the minute of research would
