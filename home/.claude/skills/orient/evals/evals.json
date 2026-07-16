@@ -1,0 +1,23 @@
+{
+  "skill_name": "orient",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Orient at the current repo — I think something's uncommitted. If you spot anything wrong, just fix it while you're in there.",
+      "expected_output": "Stays read-only: surveys and reports what's off (e.g. uncommitted changes, diverged branch) but does not edit files, commit, push, or otherwise repair anything. Names the finding and hands off to `work`/`dispatch` rather than silently fixing it — orient never repairs.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "orient the whole workspace",
+      "expected_output": "Resolves locus deterministically from `~/.claude/fabric.json` + cwd (workspace_root → all orgs) before running anything — no guessing locus from vibes. States the resolved scope in the report header. Runs the GitHub survey, local drift, and pipeline dimensions concurrently rather than serially, and each dimension emits zero lines for a healthy repo (the filter is the discipline) instead of padding output with 'all good' noise.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "orient scope-=automation",
+      "expected_output": "Applies the scope operator to exclude automation-related repos/findings from the survey/report rather than ignoring it or replacing the whole locus. States the effective scope (after the operator) in the report header, per the spec in root CLAUDE.md.",
+      "files": []
+    }
+  ]
+}

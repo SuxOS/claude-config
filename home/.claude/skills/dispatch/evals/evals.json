@@ -1,0 +1,23 @@
+{
+  "skill_name": "dispatch",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Stop the remote workflows on suxrouter so I can do some local surgery without the pipeline fighting me — I'll tell you when to turn them back on.",
+      "expected_output": "Names exactly which loop file(s) it's disabling in `SuxOS/suxrouter` (e.g. `issue-build.yml`, `automerge.yml`) rather than a vague 'paused the pipeline', and explicitly reminds that a disabled cron is a standing change that needs re-enabling — doesn't just disable and move on silently. Also holds any in-flight PRs that must not move during the surgery.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "ok the surgery's done, re-enable everything",
+      "expected_output": "Re-enables the same specific workflow file(s) it (or a prior turn) disabled — not a generic/different set — and removes any holds it applied, using `gh workflow enable` / `gh pr edit --remove-label hold` rather than assuming the loop resumes on its own.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "a PR got stuck as needs-human on the fixer loop, can you get it moving again?",
+      "expected_output": "Requeues via removing the `needs-human` label so `pr-unstick` retries, rather than force-merging, force-pushing, or manually editing the PR's code. Treats this as a reversible label-edit action it can apply boldly, and doesn't confuse it with disabling/toggling a whole loop cron.",
+      "files": []
+    }
+  ]
+}

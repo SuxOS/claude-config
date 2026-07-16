@@ -28,7 +28,8 @@ WORKFLOW.md       the development loop — start here
 The tools are organized by **locus** (workspace ⊃ org ⊃ repo), not by a punctuation
 grammar: `orient` (see), `work` (do), `dispatch` (send to the autonomous `.github`
 pipeline), `paste` (format). The cloud pipeline itself lives in `SuxOS/.github` and is
-never duplicated here — `fabric.json`'s `pipeline` only points at it.
+never duplicated here — `fabric.json`'s `pipeline` only points at it. (One recognized
+exception: the `scope+=X`/`scope-=X`/`scope=X` operators — see `~/.claude/CLAUDE.md`.)
 
 `~/.claude/CLAUDE.md`, `~/.claude/skills`, and `~/.claude/fabric.json` are symlinks
 into this repo, so edits made live (by Claude or by hand) land directly in git —
