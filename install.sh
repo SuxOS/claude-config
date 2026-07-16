@@ -9,6 +9,8 @@ DEST="$HOME/.claude"
 
 mkdir -p "$DEST"
 
+[ -e "$SRC/CLAUDE.md" ] || { echo "fatal: $SRC/CLAUDE.md not found" >&2; exit 1; }
+
 items=(CLAUDE.md)
 for entry in "$SRC"/*; do
   name="$(basename "$entry")"

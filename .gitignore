@@ -6,3 +6,6 @@
 
 # skill-creator eval scratch
 home/.claude/skills/*-workspace/
+
+# Claude Code worktrees created under the repo root — never commit nested checkouts.
+.claude/worktrees/

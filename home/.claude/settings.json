@@ -3,7 +3,13 @@
     "allow": [
       "Bash(git *)",
       "Bash(gh *)",
-      "Bash(npx wrangler *)",
+      "Bash(npx wrangler tail*)",
+      "Bash(npx wrangler deployments list*)",
+      "Bash(npx wrangler whoami*)",
+      "Bash(npx wrangler kv key get*)",
+      "Bash(npx wrangler kv key list*)",
+      "Bash(npx wrangler r2 object get*)",
+      "Bash(npx wrangler r2 bucket list*)",
       "Bash(npm *)",
       "Bash(curl *)",
       "Bash(ssh *)",
@@ -26,6 +32,15 @@
       "Write",
       "Glob",
       "Grep"
+    ],
+    "deny": [
+      "Bash(npx wrangler deploy*)",
+      "Bash(npx wrangler secret put*)",
+      "Bash(npx wrangler *delete*)",
+      "Bash(npx wrangler kv key put*)",
+      "Bash(npx wrangler kv namespace delete*)",
+      "Bash(npx wrangler r2 bucket delete*)",
+      "Bash(npx wrangler r2 object delete*)"
     ],
     "defaultMode": "bypassPermissions"
   },
@@ -97,9 +112,10 @@
   "autoMode": {
     "allow": [
       "$defaults",
-      "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, curl, ssh/scp, python3, node, grep/find/sed/awk/cat/ls/tar), including setting non-secret configuration",
+      "Any read-only or standard developer shell command (git, gh, npm/npx, curl, ssh/scp, python3, node, grep/find/sed/awk/cat/ls/tar), including setting non-secret configuration",
+      "Read-only wrangler inspection (tail, deployments list, whoami, kv/r2 get/list) — never deploy, secret put, or delete, which require explicit confirmation",
       "All MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian)",
-      "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and setting the user's own Cloudflare Worker config/secrets via wrangler"
+      "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches"
     ]
   },
   "hooks": {
