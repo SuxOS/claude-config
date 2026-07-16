@@ -26,7 +26,8 @@ The tools detect which locus you're in from your cwd and adapt. You never say it
 - **`paste`** — format output for wherever it's going (email/Slack/GitHub/terminal).
 
 That's it. No marks, no counts, no adverbs. "carefully work the flaky auth tests across all
-repos" is a complete instruction.
+repos" is a complete instruction. (One recognized exception: the `scope+=X`/`scope-=X`/
+`scope=X` operators that modify a tool's default self-scope — see `~/.claude/CLAUDE.md`.)
 
 ## The loop
 
