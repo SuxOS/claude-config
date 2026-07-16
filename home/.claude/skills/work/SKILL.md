@@ -47,8 +47,9 @@ to the autonomous `.github` pipeline instead (build-while-away), use `dispatch`.
    goes through `systematic-debugging`, not guesses. Chase root causes; exhaustive where
    cheap, scoped by difficulty.
 4. **Verify.** Exercise the change with the built-in `verify` skill — never claim shipped
-   without watching the checks pass (a hook enforces this; regression tests earn the name
-   only red-green verified). For a high-stakes change, `verify` adversarially.
+   without watching the checks pass (this is self-enforced discipline, not a hook — no Stop
+   hook is wired, see `hooks/README.md`; regression tests earn the name only red-green
+   verified). For a high-stakes change, `verify` adversarially.
 5. **Land.** With checks green, offer the exits — don't pick silently:
    **push + open PR** (the default; the PR then enters the `.github` loops:
    green→merge, red→rebase/autofix) · **merge locally** · **keep the branch** · **discard**.
