@@ -3,10 +3,12 @@ name: CI
 # Repo-local CI gate for claude-config. This repo ships no Node package (dotfiles +
 # shell + docs), so the shared SuxOS/.github ci.yml reusable — which hard-runs `npm ci`
 # — can't be used here; it would fail on the missing package.json. Instead we run the
-# check that actually fits this repo's content: shellcheck over every tracked shell
-# script. Named `shellcheck` so the main-branch ruleset can require it as the auto-merge
-# gate (same role "Type-check & build" plays for the Worker repos). Mirrors the pattern
-# .github itself uses (self-check.yml / actionlint) for a repo with no app to build.
+# checks that actually fit this repo's content, ALL inside one job named `shellcheck`
+# (see the job comment): shellcheck over every tracked shell script PLUS the config-integrity
+# linters (settings / hooks / json / evals). Named `shellcheck` so the main-branch ruleset
+# can require the whole suite as the auto-merge gate (same role "Type-check & build" plays for
+# the Worker repos). Mirrors the pattern .github itself uses (self-check.yml / actionlint) for
+# a repo with no app to build.
 
 on:
   push:
@@ -21,6 +23,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The single REQUIRED auto-merge gate. Named `shellcheck` because that is the check name the
+  # main-branch ruleset requires (see automerge.yml) — but it runs the repo's FULL integrity suite,
+  # not just shellcheck. The settings-lint / hooks-test / json-validate / evals-lint checks used to
+  # be separate ADVISORY jobs that native auto-merge ignored (it only waits on ruleset-required
+  # checks), so a PR could break settings.json, corrupt a hook's exit contract, or ship malformed
+  # JSON and still auto-merge on a green shellcheck+security-review — exactly the fail-silent class
+  # these checks exist to catch (#122). Folding them into this one required job hard-blocks merge
+  # with ZERO ruleset change — the code-only path around the needs-human ruleset edit (#92).
+  #
+  # NAMING SMELL, accepted deliberately: this job does more than shellcheck. The clean alternative —
+  # an umbrella job renamed to e.g. `config-integrity` — needs a paired main-branch ruleset edit to
+  # require the new name, which is the needs-human step #92 was routed to; an autonomous code-only
+  # builder can't land that. When a human makes that ruleset edit, split these back into named jobs
+  # and require each. Until then: KEEP THEM FOLDED HERE — splitting them back into standalone jobs
+  # silently un-gates them (see CLAUDE.md). Each integrity step uses `if: ${{ !cancelled() }}` so
+  # every check still runs and reports even when an earlier one fails (full signal in one CI run).
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
@@ -39,52 +57,25 @@ jobs:
           printf 'checking: %s\n' "${files[@]}"
           shellcheck "${files[@]}"
 
-  # Lints home/.claude/settings.json for permission rules that fail OPEN with no Claude Code
-  # warning (unnamespaced MCP denies, argument-constraining Bash denies, allow/deny overlaps) —
-  # the traps settings.README.md documents, now an enforced gate instead of a manual checklist
-  # (#82). NOTE: to make this a hard auto-merge gate, add `settings-lint` to the main-branch
-  # ruleset's required checks AND to automerge.yml's required-gates (the reusable refuses to arm
-  # unless the ruleset requires the same names) — until then it runs advisory on every PR.
-  settings-lint:
-    name: settings-lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
+      # settings-lint (was an advisory job): lints home/.claude/settings.json for permission rules
+      # that fail OPEN with no Claude Code warning (unnamespaced MCP denies, argument-constraining
+      # Bash denies, allow/deny overlaps) — the traps settings.README.md documents (#82).
       - name: lint settings.json permission rules
+        if: ${{ !cancelled() }}
         run: python3 .github/scripts/lint-settings.py
 
-  # Verifies the Python hooks under home/.claude/hooks/ the way `shellcheck` verifies the *.sh
-  # scripts: byte-compiles every tracked *.py (syntax/import regressions) and asserts each live
-  # hook's documented exit-code contract (2 = block, 0 = allow) against synthetic hook-input JSON
-  # — e.g. the subagent_type=fork exemption and the stop_hook_active self-limit. Without this a
-  # broken hook merges silently and only surfaces at runtime as a wedged session or a neutered
-  # gate (#40, #41). Advisory until added to the ruleset + automerge.yml required-gates in lockstep.
-  hooks-test:
-    name: hooks-test
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
+      # hooks-test (was advisory): byte-compiles every tracked *.py and asserts each live hook's
+      # documented exit-code contract (2 = block, 0 = allow) against synthetic hook-input JSON, so a
+      # broken hook can't merge silently as a wedged session or a neutered gate (#40, #41).
       - name: compile and exercise the Python hooks
+        if: ${{ !cancelled() }}
         run: bash tests/test_hooks.sh
 
-  # settings.json, fabric.json, and the skill evals.json files are the repo's most load-bearing
-  # artifacts — edited by hand and by autonomous agents (the fixer/issue-build pipeline) — and a
-  # malformed one fails silently: Claude Code just ignores/rejects it with nothing here to catch
-  # it before merge (#65). Cheap, mechanical: every tracked *.json must parse. Advisory until
-  # added to the main-branch ruleset AND automerge.yml required-gates in lockstep (same as
-  # settings-lint/hooks-test above).
-  json-validate:
-    name: json-validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
+      # json-validate (was advisory): settings.json, fabric.json, and the skill evals.json files are
+      # hand- and agent-edited and fail silently when malformed — Claude Code just ignores/rejects
+      # them. Every tracked *.json must parse (#65).
       - name: validate tracked JSON files parse
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           mapfile -t files < <(git ls-files '*.json')
@@ -107,21 +98,10 @@ jobs:
           fi
           echo "all tracked JSON files parse"
 
-  # The skill eval fixtures (home/.claude/skills/*/evals/evals.json) encode AUTHORING.md's one
-  # governing rule — no skill (or edit) without a failing test first — as {prompt, expected_output}
-  # pressure scenarios. json-validate above proves they *parse*; this proves they are still a usable
-  # test corpus: each eval has a non-empty prompt and a non-empty expected_output (a graded target
-  # that can actually fail), ids are unique, and skill_name matches its directory. Without it a
-  # hand- or agent-authored eval (#21/#61 keep adding them) can go structurally inert and nothing
-  # catches it. Deterministic first rail of the "run each skill against its evals and grade" harness
-  # (#95). Advisory until added to the main-branch ruleset AND automerge.yml required-gates in
-  # lockstep (same as settings-lint/hooks-test/json-validate above).
-  evals-lint:
-    name: evals-lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
+      # evals-lint (was advisory): proves the skill eval fixtures (home/.claude/skills/*/evals/
+      # evals.json) are still a usable test corpus — non-empty prompt + gradable expected_output,
+      # unique ids, skill_name matches its directory — so a hand-/agent-authored eval can't go
+      # structurally inert unnoticed (#95).
       - name: lint skill eval fixtures
+        if: ${{ !cancelled() }}
         run: python3 .github/scripts/lint-evals.py

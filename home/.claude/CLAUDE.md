@@ -73,7 +73,11 @@
   tooling must NOT live there or it lands in the user's live config — put linters, CI scripts,
   etc. under `.github/` instead. Adding a new
   required CI check also needs the main-branch ruleset AND `automerge.yml` `required-gates` updated
-  in lockstep, or the automerge reusable refuses to arm (it verifies the ruleset first).
+  in lockstep, or the automerge reusable refuses to arm (it verifies the ruleset first). Because of
+  that, the config-integrity linters (settings/hooks/json/evals) run as STEPS INSIDE the one
+  ruleset-required `shellcheck` job in `ci.yml` (#122), not as standalone jobs — that gates them on
+  auto-merge with no ruleset change. Keep them folded there; splitting them back into their own jobs
+  silently un-gates them until a human requires the new names in the ruleset.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
