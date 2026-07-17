@@ -4,6 +4,10 @@
 *.bak
 .DS_Store
 
+# Python bytecode from the tracked hooks / CI linter (run locally or in CI).
+__pycache__/
+*.pyc
+
 # skill-creator eval scratch
 home/.claude/skills/*-workspace/
 

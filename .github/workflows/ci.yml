@@ -38,3 +38,19 @@ jobs:
           fi
           printf 'checking: %s\n' "${files[@]}"
           shellcheck "${files[@]}"
+
+  # Lints home/.claude/settings.json for permission rules that fail OPEN with no Claude Code
+  # warning (unnamespaced MCP denies, argument-constraining Bash denies, allow/deny overlaps) —
+  # the traps settings.README.md documents, now an enforced gate instead of a manual checklist
+  # (#82). NOTE: to make this a hard auto-merge gate, add `settings-lint` to the main-branch
+  # ruleset's required checks AND to automerge.yml's required-gates (the reusable refuses to arm
+  # unless the ruleset requires the same names) — until then it runs advisory on every PR.
+  settings-lint:
+    name: settings-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: lint settings.json permission rules
+        run: python3 .github/scripts/lint-settings.py

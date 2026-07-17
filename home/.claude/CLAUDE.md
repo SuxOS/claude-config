@@ -58,6 +58,11 @@
   constrain Bash arguments, and a plugin MCP deny must be `mcp__plugin_<plugin>_<server>__<tool>`
   or it silently fails open with no warning. Verify the matcher against the live tool surface
   before scoping any rule in `settings.json` (see `home/.claude/settings.README.md`).
+- **`install.sh` symlinks every entry under `home/.claude/` into `~/.claude/`** (except
+  `settings.json`/`CLAUDE.md`), so repo-/CI-only tooling must NOT live there or it lands in the
+  user's live config — put linters, CI scripts, etc. under `.github/` instead. Adding a new
+  required CI check also needs the main-branch ruleset AND `automerge.yml` `required-gates` updated
+  in lockstep, or the automerge reusable refuses to arm (it verifies the ruleset first).
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
