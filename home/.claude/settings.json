@@ -173,8 +173,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "$HOME/.claude/hooks/block-egress.py" },
-          { "type": "command", "command": "$HOME/.claude/hooks/block-checkout-held-branch.py" }
+          { "type": "command", "command": "$HOME/.claude/hooks/pretooluse-bash.py" }
         ]
       }
     ]
