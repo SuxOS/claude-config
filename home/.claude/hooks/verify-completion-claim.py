@@ -25,7 +25,13 @@ CLAIM = re.compile(
 # A verification actually happened if the transcript shows one of these being run this turn.
 VERIFY = re.compile(
     r"\b(pytest|npm (run )?test|npm test|jest|vitest|go test|cargo test|bash -n|"
-    r"/verify\b|/bet\b|make test|tox|ruff|mypy|tsc\b|playwright|/run\b|\bnode .*test)\b",
+    r"/verify\b|/bet\b|make test|tox|ruff|mypy|tsc\b|playwright|/run\b|\bnode .*test)\b"
+    # Skill tool_use records serialize as {"name": "Skill", "input": {"skill": "verify", ...}}
+    # (no leading slash on the skill name) and SlashCommand records as
+    # {"name": "SlashCommand", "input": {"command": "/verify ..."}} — confirmed against a
+    # live transcript capture (see #109). The literal /verify|/bet|/run patterns above only
+    # match Bash commands typed with a leading slash and miss both of these.
+    r'|"skill":\s*"(verify|bet|run)"|"command":\s*"/(verify|bet|run)\b',
     re.I,
 )
 # Product-code edits (vs docs/config/tests) — a claim over these is the risky kind.

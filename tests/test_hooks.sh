@@ -67,6 +67,50 @@ assert_exit 0 "$VCC" '{"stop_hook_active":true}'                    "self-limits
 assert_exit 0 "$VCC" '{"transcript_path":"/nonexistent/xyz.jsonl"}' "fails open on an unreadable transcript"
 assert_exit 0 "$VCC" 'not-json'                                     "fails open on malformed JSON"
 
+# Real transcript shapes for /verify via the Skill and SlashCommand tools, captured against a
+# live Claude Code session (#109): a Skill invocation serializes as tool_use name="Skill" with
+# input.skill="verify" (no leading slash), and a slash command as name="SlashCommand" with
+# input.command="/verify ...". The VERIFY regex must match both, or a genuine /verify run over
+# edited product code is treated as unverified and the stop gets blocked.
+build_transcript() {
+  # $1 = tool name, $2 = tool input JSON (as a JSON literal), writes path to stdout
+  local tmp
+  tmp="$(mktemp)"
+  python3 - "$tmp" "$1" "$2" <<'PY'
+import json
+import sys
+
+path, tool_name, tool_input_json = sys.argv[1], sys.argv[2], sys.argv[3]
+tool_input = json.loads(tool_input_json)
+records = [
+    {"message": {"role": "user", "content": "please fix the bug"}},
+    {"message": {"role": "assistant", "content": [
+        {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+    ]}},
+    {"message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+    ]}},
+    {"message": {"role": "assistant", "content": [
+        {"type": "tool_use", "name": tool_name, "input": tool_input}
+    ]}},
+    {"message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t2", "content": "verified"}
+    ]}},
+    {"message": {"role": "assistant", "content": "All tests pass now."}},
+]
+with open(path, "w") as f:
+    for r in records:
+        f.write(json.dumps(r) + "\n")
+PY
+  echo "$tmp"
+}
+
+skill_transcript="$(build_transcript Skill '{"skill":"verify","args":"x"}')"
+slash_transcript="$(build_transcript SlashCommand '{"command":"/verify"}')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$skill_transcript\"}" "does not block a completion claim after a /verify run via the Skill tool (#109)"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$slash_transcript\"}" "does not block a completion claim after a /verify run via the SlashCommand tool (#109)"
+rm -f "$skill_transcript" "$slash_transcript"
+
 echo "== block-egress.py =="
 BE="$HOOKS/block-egress.py"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import urllib.request; urllib.request.urlopen(1)\""}}' "blocks an interpreter inline-code egress one-liner"
