@@ -1,0 +1,23 @@
+{
+  "skill_name": "how",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "how do I get notified if any of my Cloudflare workers error out today?",
+      "expected_output": "Does not answer with a generic tutorial on Cloudflare alerting/dashboards written from general knowledge. Surveys what's actually active this session (skills list, connected MCP tools via ToolSearch, agent types) for something that already covers monitoring/alerting, then hands back a single ready-to-paste prompt in the `**Use:** / **Prompt:**` shape naming the specific skill/MCP/agent, plus one line on why. Ends by asking whether to run it now rather than running it unprompted.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "how can I manage my finances better",
+      "expected_output": "Recognizes the goal is too vague to survey against (maps to nothing specific) and asks one clarifying question before doing any survey, rather than either giving generic financial advice or guessing a tool and surveying anyway.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "is there anything that can turn a GitHub issue into a merged PR automatically for me?",
+      "expected_output": "Checks the active skills list first (a match here beats hand-rolling tool calls) before considering MCP tools or agents, and if a skill like `dispatch`/`work` is a clear fit, stops there rather than also proposing a bespoke multi-tool sequence. Returns one primary recommendation (not a survey of every tangentially related tool) in the `**Use:** / **Prompt:**` format, and does not invent a skill/tool name that isn't actually in the current session's available list.",
+      "files": []
+    }
+  ]
+}
