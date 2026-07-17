@@ -19,11 +19,13 @@ for entry in "$SRC"/*; do
   items+=("$name")
 done
 
+missing=()
 for item in "${items[@]}"; do
   src="$SRC/$item"
   dest="$DEST/$item"
   if [ ! -e "$src" ]; then
     echo "skipping $item — not found at $src" >&2
+    missing+=("$item")
     continue
   fi
   if [ -L "$dest" ]; then
@@ -42,6 +44,14 @@ for item in "${items[@]}"; do
   ln -s "$src" "$dest"
   echo "linked: $dest -> $src"
 done
+
+# A missing source (renamed/moved file, bad merge, sparse checkout) is a hard failure —
+# never exit 0 having silently skipped CLAUDE.md or any other tracked config.
+if [ "${#missing[@]}" -gt 0 ]; then
+  printf 'ERROR: source files not found, nothing linked for: %s\n' "${missing[*]}" >&2
+  echo "Repo checkout looks incomplete — re-check out $SRC and re-run." >&2
+  exit 1
+fi
 
 # settings.json is copied, not symlinked (Claude Code rewrites it in place).
 settings_src="$SRC/settings.json"

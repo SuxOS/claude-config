@@ -17,7 +17,9 @@ the pipeline.
 ## The pipeline (what you're steering)
 
 Read it from the fabric's `orgs.<org>.pipeline` (repo = `.github`, loops =
-`collate-build`, `green-merge`, `red-rebase`). The authoritative design is
+`collate-build`, `green-merge`, `red-rebase` — **conceptual names, not workflow
+filenames**: each maps to real `.yml` files in the table below, so never
+`gh workflow disable collate-build.yml`). The authoritative design is
 `SuxOS/.github/docs/design/three-loop-pipeline.md` — don't re-encode it; drive it via `gh`.
 
 | Loop | Fires on | You steer it by |
