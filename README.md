@@ -19,7 +19,7 @@ because it's part of the product surface.
 home/.claude/
   CLAUDE.md       cardinal rules + the tools, loaded into every session
   fabric.json     one declared truth: workspace_root, orgs (repos + pipeline pointer), bot
-  skills/         orient · work · dispatch · paste · how  (+ AUTHORING.md)
+  skills/         orient · work · dispatch · paste · how · retro  (+ AUTHORING.md)
   hooks/          cardinal rails as code (see hooks/README.md for the current live/disabled list)
   settings.json   reference snapshot only — NOT symlinked (see below)
   settings.README.md  what actually enforces under bypassPermissions (deny-only) + rule semantics
@@ -29,7 +29,8 @@ WORKFLOW.md       the development loop — start here
 The tools are organized by **locus** (workspace ⊃ org ⊃ repo), not by a punctuation
 grammar: `orient` (see), `work` (do), `dispatch` (send to the autonomous `.github`
 pipeline), `paste` (format). `how` is a meta helper — find the right skill/MCP/agent for a
-goal — not locus-scoped like the other four. The cloud pipeline itself lives in
+goal — not locus-scoped like the other four. `retro` is session-scoped, not locus-scoped
+either — an end-of-session harvester that proposes doc edits for lessons learned. The cloud pipeline itself lives in
 `SuxOS/.github` and is never duplicated here — `fabric.json`'s `pipeline` only points at it.
 (One recognized exception: the `scope+=X`/`scope-=X`/`scope=X` operators — see
 `~/.claude/CLAUDE.md`.)
