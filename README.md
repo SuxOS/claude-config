@@ -41,6 +41,10 @@ into this repo, so edits made live (by Claude or by hand) land directly in git â
 copy here as a reference/backup; sync changes over manually when they're worth
 keeping.
 
+Its `permissions.deny` list runs under `bypassPermissions` and is a defense-in-depth
+speed bump, **not** a real egress boundary â€” see
+[`docs/security-model.md`](docs/security-model.md) for the threat model and why.
+
 Everything else under `~/.claude` (sessions, cache, daemon state, telemetry,
 plugin marketplaces, history) is machine/runtime state and intentionally not
 tracked here.

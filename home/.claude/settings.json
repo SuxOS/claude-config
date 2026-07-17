@@ -26,8 +26,11 @@
     ],
     "deny": [
       "Bash(curl *)",
+      "Bash(wget *)",
       "Bash(ssh *)",
-      "Bash(scp *)"
+      "Bash(scp *)",
+      "Bash(gh api -X *)",
+      "Bash(gh api --method *)"
     ],
     "defaultMode": "bypassPermissions"
   },
