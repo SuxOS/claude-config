@@ -64,8 +64,9 @@
   match the live file. Re-derive the fix from `settings.json` at HEAD, never trust the issue's
   line refs or already-added claims at face value.
 - **`install.sh` symlinks every entry under `home/.claude/` into `~/.claude/`** (except
-  `settings.json`/`CLAUDE.md`), so repo-/CI-only tooling must NOT live there or it lands in the
-  user's live config — put linters, CI scripts, etc. under `.github/` instead. Adding a new
+  `settings.json`, which is copied because Claude Code rewrites it in place), so repo-/CI-only
+  tooling must NOT live there or it lands in the user's live config — put linters, CI scripts,
+  etc. under `.github/` instead. Adding a new
   required CI check also needs the main-branch ruleset AND `automerge.yml` `required-gates` updated
   in lockstep, or the automerge reusable refuses to arm (it verifies the ruleset first).
 
