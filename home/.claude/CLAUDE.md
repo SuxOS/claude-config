@@ -69,6 +69,12 @@
   security issue's cited line numbers or its claim that a deny rule "already exists" may not
   match the live file. Re-derive the fix from `settings.json` at HEAD, never trust the issue's
   line refs or already-added claims at face value.
+- **This bot's GitHub token is scoped to `SuxOS/claude-config` only** (#156) — a `suxbot[bot]`
+  GitHub-App installation token (`ghs_…`): `gh api user` 403s and `gh repo view`/`gh api` against
+  any OTHER SuxOS repo (e.g. `SuxOS/.github`) 404s, while this repo works. So an issue that says
+  "copy/reference the pattern in another SuxOS repo" is UNBUILDABLE as worded — the referenced
+  file's content must be pasted inline into the issue body, never left as a bare cross-repo link.
+  File such issues with the content inline, and drop/flag any that only link out.
 - **`block-egress.py` argv parsing is one canonicalization pass, not per-form branches** (#129):
   `strip_prefixes()` removes ALL leading prefixes (env-assign/sudo/wrappers) and `inline_payloads()`
   decomposes every bundled/glued/separate inline-flag shape in a single walk. A new bypass form
