@@ -146,15 +146,33 @@ def discover(argv):
     return sorted(REPO_ROOT.glob(FIXTURE_GLOB))
 
 
+def find_missing_fixtures():
+    """Skill dirs (containing SKILL.md) with no evals/evals.json — silently skipped by the glob."""
+    missing = []
+    for skill_md in sorted(REPO_ROOT.glob("home/.claude/skills/*/SKILL.md")):
+        skill_dir = skill_md.parent
+        if not (skill_dir / "evals" / "evals.json").exists():
+            missing.append(
+                f"{skill_dir}: EVALS-MISSING-FIXTURE  no evals/evals.json for this skill. Fix: add "
+                f'{skill_dir}/evals/evals.json with {{"skill_name": "{skill_dir.name}", "evals": [...]}}.'
+            )
+    return missing
+
+
 def main():
-    fixtures = discover(sys.argv[1:])
-    if not fixtures:
-        print("evals lint: no eval fixtures found")
-        return 0
+    argv = sys.argv[1:]
+    fixtures = discover(argv)
 
     all_problems = []
     for fixture in fixtures:
         all_problems.extend(lint(fixture))
+
+    if not argv:
+        all_problems.extend(find_missing_fixtures())
+
+    if not fixtures and not all_problems:
+        print("evals lint: no eval fixtures found")
+        return 0
 
     if all_problems:
         print(f"evals lint: {len(all_problems)} problem(s) found\n", file=sys.stderr)
