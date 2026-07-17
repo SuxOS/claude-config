@@ -18,11 +18,13 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   non-string `tool_input.command` ONCE, then runs a registered list of pure `check(command, cwd) ->
   message | None` predicates — one per rail, defined in and testable from the rail's own module —
   and prints+exits 2 on the first hit. This is the only entry wired in settings.json under
-  `hooks.PreToolUse` for the `Bash` matcher; `block-egress.py` and `block-checkout-held-branch.py`
-  below are loaded by it (via `importlib`, since their filenames are hyphenated) rather than run as
-  separate hook processes. Each stays directly runnable via stdin for the manual-test recipe below
-  and its own entry in `tests/test_hooks.sh`. Add a new rail by giving its module a `check(command,
-  cwd)` function and registering it in `pretooluse-bash.py`'s `CHECKS` tuple.
+  `hooks.PreToolUse` for the `Bash` matcher; the four rails below are loaded by it (via
+  `importlib`, since their filenames are hyphenated) rather than run as separate hook processes.
+  Each stays directly runnable via stdin for the manual-test recipe below and its own entry in
+  `tests/test_hooks.sh`. Add a new rail by giving its module a `check(command, cwd)` function and
+  registering its module name in `pretooluse-bash.py`'s `_RAIL_MODULES` tuple — `_load_checks()`
+  loads each module independently and drops one that fails to even import, so a broken rail
+  degrades to "not enforced" rather than crashing the dispatcher for every Bash call (#180).
 - **`block-egress.py`** — the egress speed bump the security stream keeps pointing at (#77,
   docs/security-model.md): parses the command's argv and blocks the two obvious egress forms no
   `permissions.deny` rule can catch — interpreter/shell inline-code one-liners that open a socket
@@ -37,10 +39,20 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   working tree never moves and later commands run against the wrong branch. Parses the command for a
   real single-branch switch (not creation `-b`/`-c`, not `--detach`, not a `--` path restore),
   consults `git worktree list` for the invoking cwd, and blocks with guidance (work in that worktree,
-  or add a detached scratch worktree) when the target is held elsewhere. First of the additional
-  cardinal rails the architecture invites; candidates like flagging `sleep`-in-a-loop polling remain
-  follow-ups. Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any
-  error.
+  or add a detached scratch worktree) when the target is held elsewhere. Registered with
+  `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
+- **`block-sleep-loop.py`** — flags a `sleep`-based polling loop (CLAUDE.md dev-speed tactics:
+  "never poll in a loop — block on one `--watch`/`wait` call instead", #181). Fires only when the
+  command has BOTH a loop-opening piece (`while`/`until`/`for`) and a `sleep` piece — a bare
+  `sleep N` with no loop is a common, legitimate delay and is left alone. Registered with
+  `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
+- **`block-suppressed-stderr.py`** — flags a command that redirects stderr to `/dev/null`
+  (`2>/dev/null`/`&>/dev/null`, and their `>>`-appending variants; CLAUDE.md dev-speed tactics:
+  "don't suppress a command's stderr if you might need it to diagnose", #181). Matches on the raw
+  command text (not tokenized argv) so it can require the fd digit be glued to the `>` with no
+  space — the same adjacency rule the shell itself uses to tell a real `2>` fd-redirect from an
+  ordinary word `2` followed by an unrelated `>` (e.g. `ffmpeg -loglevel 2 > /dev/null`).
+  Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
 
 ## Available but DISABLED by default
 

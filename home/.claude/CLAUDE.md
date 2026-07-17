@@ -115,6 +115,14 @@
   ruleset-required `shellcheck` job in `ci.yml` (#122), not as standalone jobs — that gates them on
   auto-merge with no ruleset change. Keep them folded there; splitting them back into their own jobs
   silently un-gates them until a human requires the new names in the ruleset.
+- **Dropping an issue mid-batch does not stop it from being auto-closed** (#148, #151, found
+  investigating #184): the `issue-build.yml` reusable's PR body writes one `Closes #N` line per
+  issue in the batch it was ASSIGNED, not the issues actually resolved by the final commit — if a
+  builder drops an issue (per the REDUCE step) and the PR still merges, GitHub's keyword parser
+  closes the dropped issue anyway, with no resolving commit. That workflow lives in the
+  token-restricted `SuxOS/.github` repo, so it can't be fixed from here — when you drop an issue,
+  say so plainly in your final message (as this file already asks) so a human notices; don't
+  assume "released for retry" happens automatically.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
