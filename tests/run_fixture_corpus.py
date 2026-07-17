@@ -80,6 +80,22 @@ def main():
         return 1
 
     fails = 0
+
+    referenced = {
+        (FIXTURES / (case["stdin"] if "stdin" in case else case["transcript"])).resolve()
+        for case in cases
+        if "stdin" in case or "transcript" in case
+    }
+    tracked = set((FIXTURES / "pretooluse").glob("*.json")) | set((FIXTURES / "transcripts").glob("*.jsonl"))
+    orphans = sorted(f for f in tracked if f.resolve() not in referenced)
+    for orphan in orphans:
+        print(
+            f"  FAIL: {orphan.relative_to(FIXTURES)} — fixture not referenced by any manifest case "
+            "(dropped-in-but-unwired, never runs)",
+            file=sys.stderr,
+        )
+        fails += 1
+
     for case in cases:
         src = case.get("stdin") or case.get("transcript") or "?"
         hook_name = case.get("hook", "?")
@@ -109,7 +125,7 @@ def main():
             )
             fails += 1
 
-    total = len(cases)
+    total = len(cases) + len(orphans)
     if fails:
         print(f"fixture corpus: {fails}/{total} case(s) FAILED", file=sys.stderr)
         return 1
