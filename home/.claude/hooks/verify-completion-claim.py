@@ -104,8 +104,13 @@ def verification_ran(records):
                     return True
             elif block.get("name") in ("Skill", "SlashCommand"):
                 # Skill input carries {skill: "verify"}, SlashCommand {command: "/verify ..."}.
-                invoked = inp.get("skill") or inp.get("command") or ""
-                if isinstance(invoked, str) and VERIFY.search("/" + invoked.lstrip("/")):
+                # Compare the bare invoked name directly against the verify/bet/run set — VERIFY
+                # above is tuned for substring matches inside a Bash command string (or the old
+                # blob), and its `\b` boundary before a leading `/` never matches a string that
+                # STARTS with `/` (no word char precedes it), so reusing it here on the bare
+                # "/verify" value was always a false negative (#109 follow-up).
+                invoked = (inp.get("skill") or inp.get("command") or "").lstrip("/").split()[0:1]
+                if invoked and invoked[0].lower() in ("verify", "bet", "run"):
                     return True
     return False
 
