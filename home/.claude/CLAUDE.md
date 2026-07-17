@@ -70,6 +70,10 @@
   number) already merged. Before reading deep into an issue, `grep -rn '#<N>'` across the repo —
   this codebase cites issue numbers in code comments and test descriptions pervasively, so an
   already-resolved issue usually self-documents in one grep instead of a full re-investigation.
+  This has recurred across separate batches (#131/#152, then #169/#170) even after being
+  documented once — when your own commit message resolves an issue, use `Closes #N`/`Fixes #N`
+  (not just `(#N)`) so GitHub auto-closes it instead of leaving it to be rediscovered and
+  re-investigated by a later build.
 - **Security issues can cite stale line numbers/rules.** The issue-authoring loop can snapshot
   an aggregate/planned state across several in-flight security PRs rather than HEAD, so a
   security issue's cited line numbers or its claim that a deny rule "already exists" may not
