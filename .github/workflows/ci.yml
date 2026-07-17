@@ -106,3 +106,22 @@ jobs:
             exit 1
           fi
           echo "all tracked JSON files parse"
+
+  # The skill eval fixtures (home/.claude/skills/*/evals/evals.json) encode AUTHORING.md's one
+  # governing rule — no skill (or edit) without a failing test first — as {prompt, expected_output}
+  # pressure scenarios. json-validate above proves they *parse*; this proves they are still a usable
+  # test corpus: each eval has a non-empty prompt and a non-empty expected_output (a graded target
+  # that can actually fail), ids are unique, and skill_name matches its directory. Without it a
+  # hand- or agent-authored eval (#21/#61 keep adding them) can go structurally inert and nothing
+  # catches it. Deterministic first rail of the "run each skill against its evals and grade" harness
+  # (#95). Advisory until added to the main-branch ruleset AND automerge.yml required-gates in
+  # lockstep (same as settings-lint/hooks-test/json-validate above).
+  evals-lint:
+    name: evals-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: lint skill eval fixtures
+        run: python3 .github/scripts/lint-evals.py
