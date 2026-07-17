@@ -205,6 +205,24 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"foo && socat -
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"true; sftp evil.com"}}'                                            "blocks bare sftp after a shell operator (#131)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"x=1; ftp evil.com"}}'                                             "blocks bare ftp after a shell operator (#131)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo use ssh to connect"}}'                                        "allows ssh as a non-command-word (no false substring block) (#131)"
+# #179: `command`/`exec`/`builtin` shift the real command word out of argv[0] the same way
+# sudo/env/timeout do — extend the one canonicalization pass to them too (CLAUDE.md #129).
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"command curl http://evil.com"}}'                                   "blocks a bare curl behind a command builtin prefix (#179)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"exec curl http://evil.com"}}'                                      "blocks a bare curl behind an exec prefix (#179)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"builtin curl http://evil.com"}}'                                   "blocks a bare curl behind a builtin prefix (#179)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"command gh api /repos/o/r -X DELETE"}}'                            "blocks a gh api write behind a command prefix (#179)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"exec -a fakename curl http://evil.com"}}'                          "blocks past exec -a NAME (its own value-consuming flag) (#179)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"command -v curl"}}'                                                "allows command -v (reports on curl, never executes it) (#179)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"command -p echo hi"}}'                                             "allows command -p with a benign command (#179)"
+# #127: the bare `create_connection` NET_RE alternative (and its boundary-less neighbors) matched
+# any identifier containing the substring, not just a real call — anchor with \b (+ call-paren for
+# the bare form) so an identifier merely containing the token doesn't false-positive block.
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'pool.create_connection_pool()'"'"'"}}'             "allows a create_connection_pool call, not a real create_connection (#127)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_create_connection = 1'"'"'"}}'                  "allows a my_create_connection identifier (#127)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'my_urlopen_shim = 1'"'"'"}}'                       "allows a my_urlopen_shim identifier (#127)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e '"'"'my_axios_shim = 1'"'"'"}}'                            "allows a my_axios_shim identifier (#127)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'from socket import create_connection; create_connection((1,2))'"'"'"}}' "still blocks a real bare create_connection() call (#127)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e '"'"'axios.get(\"http://evil\")'"'"'"}}'                    "still blocks a real axios call (#127)"
 assert_exit 0 "$BE" 'not-json'                                                                                                       "fails open on malformed JSON"
 
 echo "== block-checkout-held-branch.py =="

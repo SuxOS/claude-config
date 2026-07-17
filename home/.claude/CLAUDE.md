@@ -90,6 +90,11 @@
   decomposes every bundled/glued/separate inline-flag shape in a single walk. A new bypass form
   (another tokenization edge case) should EXTEND that pass, never add a sibling branch — the
   per-form branch drip is exactly what caused #105/#115/#119/#120/#121/#126.
+- **Extending `WRAPPERS` in `strip_prefixes()` can silently create a new false positive** (#179):
+  a wrapper-shaped word may have an inspection-only flag that reports on the next word instead of
+  executing it (`command -v curl` / `-V` prints curl's path, it never runs it). Blindly stripping
+  through such a wrapper turns a safe, common idiom into a false block on the reported-about name —
+  check for that mode and leave it unstripped before adding any new wrapper word.
 - **A PreToolUse(Bash) hook that needs repo state must read `cwd` from the hook-input JSON and pass
   it to its git/subprocess calls** (#123, `block-checkout-held-branch.py`) — the hook process's own
   cwd isn't reliably the project dir, so inspecting `git worktree list`/branch without the input
