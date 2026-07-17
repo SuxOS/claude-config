@@ -7,7 +7,9 @@ name: Fixer
 
 on:
   schedule:
-    - cron: "13 9 * * *" # feat proposer: 1/day (bug-drain push keeps issue-build/pr-sweeps at 15min)
+    # Deep tier of the 3-cadence proposer (see fixer-bugs.yml 15m / fixer-30m.yml 30m):
+    # bugs + feature ideas + an explicit push for at least one ambitious/large idea per pass.
+    - cron: "26 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -19,4 +21,6 @@ jobs:
       issues: write
       id-token: write
     uses: SuxOS/.github/.github/workflows/fixer.yml@main
+    with:
+      scope: deep
     secrets: inherit
