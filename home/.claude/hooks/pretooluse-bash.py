@@ -15,11 +15,15 @@ independently testable via stdin (see hooks/README.md's "Testing a hook before y
 The first predicate to return a message wins; settings.json wires only this one script under
 `hooks.PreToolUse` for the `Bash` matcher instead of N.
 
-Adding a rail: give its module a `check(command, cwd) -> message | None` function (see the two
-existing ones for the shape) and append it to CHECKS below.
+Adding a rail: give its module a `check(command, cwd) -> message | None` function (see the
+existing ones for the shape) and append its module name to _RAIL_MODULES below.
 
 Fail-open on any error — a hook bug (this dispatcher's or any one rail's) must never wedge the
-session (repo convention). Exit 2 = block; exit 0 = allow.
+session (repo convention). Exit 2 = block; exit 0 = allow. That includes a rail module that
+fails to even IMPORT (a syntax error, a broken sibling import): `_load_checks()` loads each rail
+module independently and drops any that raise, rather than letting one broken module crash the
+whole dispatcher before `main()` is ever reached (#180) — a broken rail degrades to "not
+enforced", never to "no Bash command runs".
 """
 import importlib.util
 import json
@@ -27,6 +31,15 @@ import os
 import sys
 
 _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Registered rail modules, in the order they're checked. Each must define
+# `check(command, cwd) -> message | None`; the first to return a message wins.
+_RAIL_MODULES = (
+    "block-egress",
+    "block-checkout-held-branch",
+    "block-sleep-loop",
+    "block-suppressed-stderr",
+)
 
 
 def _load(module_name):
@@ -38,15 +51,18 @@ def _load(module_name):
     return module
 
 
-_block_egress = _load("block-egress")
-_block_checkout = _load("block-checkout-held-branch")
+def _load_checks():
+    """Load every rail module's `check`, skipping (not crashing on) one that fails to load."""
+    checks = []
+    for module_name in _RAIL_MODULES:
+        try:
+            checks.append(_load(module_name).check)
+        except Exception:
+            continue  # a broken sibling module degrades to "not enforced", never a crash (#180)
+    return tuple(checks)
 
-# Registered rails, in the order they're checked. Each is `check(command, cwd) -> message | None`;
-# the first to return a message wins and its message is what gets printed.
-CHECKS = (
-    _block_egress.check,
-    _block_checkout.check,
-)
+
+CHECKS = _load_checks()
 
 
 def main():

@@ -251,16 +251,41 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 
+echo "== block-sleep-loop.py =="
+BSL="$HOOKS/block-sleep-loop.py"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do check_status; sleep 5; done"}}'    "blocks a sleep inside a while loop (#181)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"for i in 1 2 3; do sleep 1; done"}}'              "blocks a sleep inside a for loop (#181)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"until curl -sf http://x; do sleep 2; done"}}'     "blocks a sleep inside an until loop (#181)"
+assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"sleep 5 && echo done"}}'                          "allows a bare sleep with no loop (#181)"
+assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"for f in *.sh; do shellcheck --version; done"}}'  "allows a loop with no sleep (#181)"
+assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"echo \"please wait\""}}'                          "allows a command that merely mentions waiting (#181)"
+assert_exit 0 "$BSL" 'not-json'                                                                                      "fails open on malformed JSON"
+assert_exit 0 "$BSL" '{"tool_name":"Agent","tool_input":{"command":"while true; do sleep 5; done"}}'                 "ignores a non-Bash tool_name"
+
+echo "== block-suppressed-stderr.py =="
+BSS="$HOOKS/block-suppressed-stderr.py"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>/dev/null"}}'                     "blocks stderr redirected to /dev/null (#181)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2> /dev/null"}}'                    "blocks with a space before the redirect target (#181)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x &>/dev/null"}}'                     "blocks combined stdout+stderr redirect to /dev/null (#181)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>>/dev/null"}}'                    "blocks an appending stderr redirect to /dev/null (#181)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&1"}}'                            "allows stderr duplicated onto stdout, not discarded (#181)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x >/dev/null"}}'                      "allows stdout-only suppression (#181)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"ffmpeg -loglevel 2 > /dev/null"}}'                "allows a numeric value merely preceding an unrelated redirect, not an fd-2 redirect (#181)"
+assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
+assert_exit 0 "$BSS" '{"tool_name":"Agent","tool_input":{"command":"curl http://x 2>/dev/null"}}'                    "ignores a non-Bash tool_name"
+
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
 PTB="$HOOKS/pretooluse-bash.py"
-# The dispatcher registers block-egress.py's and block-checkout-held-branch.py's check() predicates
-# behind one envelope read — a representative case per rail (full contract already covered above),
-# plus the envelope-level fail-open/ignore cases the dispatcher now owns instead of each rail.
+# The dispatcher registers all four rails' check() predicates behind one envelope read — a
+# representative case per rail (full contract already covered above), plus the envelope-level
+# fail-open/ignore cases the dispatcher now owns instead of each rail.
 assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://evil"}}'                                           "dispatches to the egress rail and blocks a bare curl (#163)"
-assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                 "dispatches through both rails and allows a plain command (#163)"
+assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                 "dispatches through every rail and allows a plain command (#163)"
 assert_exit 0 "$PTB" 'not-json'                                                                                                   "fails open on malformed JSON (#163)"
 assert_exit 0 "$PTB" '{"tool_name":"Agent","tool_input":{"command":"curl http://evil"}}'                                          "ignores a non-Bash tool_name (#163)"
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":123}}'                                                          "fails open on a non-string command (#163)"
+assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"while true; do sleep 5; done"}}'                               "dispatches to the sleep-loop rail and blocks a polling loop (#181)"
+assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>/dev/null"}}'                                  "dispatches to the suppressed-stderr rail and blocks it (#181)"
 tmprepo="$(mktemp -d)"
 heldwt="$(mktemp -d)"
 git -C "$tmprepo" init -q -b main
