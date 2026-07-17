@@ -42,5 +42,20 @@ list honest about being a speed bump, and prefer documenting a gap over adding a
 deny that gives false assurance. This applies equally to the original `curl`/`ssh`/`scp`
 egress denies, not just the later additions — none of them is a network boundary. (#71)
 
+## The first enforced step: `block-egress.py` (#77)
+
+A `PreToolUse` hook — `home/.claude/hooks/block-egress.py`, wired under `hooks.PreToolUse` with a
+`Bash` matcher — now takes the first concrete step of the "different mechanism" above. It parses
+each Bash command's argv **before it runs** and blocks the two obvious egress forms the deny list
+structurally cannot: interpreter/shell inline-code one-liners that open a socket
+(`python3 -c 'import urllib…'`, `node -e 'fetch(…)'`, `bash -c '…curl…'`), and `gh api` **writes**
+in any argv position (`gh api /repos/O/R -X DELETE`, which the prefix deny misses because the flag
+follows the URL). This raises the casual/accidental bar — but it is still a **speed bump, not a
+seal**, and the durable lesson stands: base64/variable-obfuscated payloads, sockets built without a
+named primitive, and interpreters fed code from a file or stdin all pass it, so a *complete* egress
+boundary still needs OS-level network sandboxing. The hook makes the gh-api gap enforceable at the
+argv layer, which is what would let the blanket `Bash(gh api *)` deny be safely narrowed later to
+re-allow the read-only `gh api repos/…` GETs the skills use.
+
 Tracked in the security-hardening issue stream
-(#33 / #36 / #37 / #43 / #44 / #45 / #46 / #53 / #58 / #63 / #68 / #69 / #71).
+(#33 / #36 / #37 / #43 / #44 / #45 / #46 / #53 / #58 / #63 / #68 / #69 / #71 / #77).

@@ -8,7 +8,6 @@
       "Bash(gh workflow *)",
       "Bash(gh repo *)",
       "Bash(gh search *)",
-      "Bash(gh api *)",
       "Bash(npx wrangler *)",
       "Bash(npm *)",
       "Bash(python3 *)",
@@ -168,6 +167,12 @@
         "matcher": "Agent",
         "hooks": [
           { "type": "command", "command": "$HOME/.claude/hooks/require-delegation-model.py" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/block-egress.py" }
         ]
       }
     ]

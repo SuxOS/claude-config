@@ -10,6 +10,14 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   (never inherit the model): blocks an `Agent` delegation with no explicit `model=` so every fork
   picks its tier deliberately. Exempts `subagent_type=fork` (inherits by design). Wired in
   settings.json under `hooks.PreToolUse`.
+- **`block-egress.py`** — PreToolUse (matcher `Bash`). The egress speed bump the security stream
+  keeps pointing at (#77, docs/security-model.md): parses the command's argv and blocks the two
+  obvious egress forms no `permissions.deny` rule can catch — interpreter/shell inline-code
+  one-liners that open a socket (`python3 -c 'import urllib…'`, `node -e 'fetch(…)'`, `bash -c
+  '…curl…'`) and `gh api` **writes** in any argv position (`gh api /repos/O/R -X DELETE`, which
+  slips the prefix deny). **Honest about being a speed bump, not a seal** — base64/obfuscated
+  payloads and file-fed code still pass; a real boundary needs OS-level network sandboxing. Wired
+  in settings.json under `hooks.PreToolUse`; fails open on any error.
 
 ## Available but DISABLED by default
 
