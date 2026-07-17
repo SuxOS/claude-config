@@ -64,6 +64,19 @@ INTERPRETERS = set(INLINE_FLAGS)
 # key can be recovered — else `python3.11 -c '...urllib...'` slips past the inline scan. (#112)
 VERSION_SUFFIX_RE = re.compile(r"^([a-z]+)(\d+)(?:\.\d+)*$")
 
+# Command-binary vocabulary shared by NET_RE (below) and BARE_NET_BINARIES: the same binary is an
+# exfil primitive whether it shows up as a bare command word or inside an interpreter's inline-code
+# payload, so it must be flagged in both surfaces. Defining it once here means a new binary lands
+# in both places at once — the single-surface drift that split the ssh family into two separate
+# issues (#131 for BARE_NET_BINARIES, #158 for NET_RE) can't recur. This is only the command-binary
+# subset: NET_RE also matches library primitives (urllib, fetch(), Net::HTTP, ...) that have no bare
+# command-word form, so those stay hand-written in NET_RE itself.
+NET_BINARIES = (
+    "curl", "wget", "ncat", "nc", "netcat", "telnet",
+    "ssh", "scp", "sftp", "rsync", "socat", "ftp",
+)
+NET_BINARIES_RE_ALT = " | ".join(rf"\b{b}\b" for b in NET_BINARIES)
+
 # Named outbound primitives across python / node / ruby / perl / php / shell. A match inside an
 # inline-code payload means "this one-liner reaches the network" — the exfil/fetch the docs name.
 # The trailing bare-binary group mirrors BARE_NET_BINARIES so an interpreter-wrapped invocation
@@ -83,8 +96,7 @@ NET_RE = re.compile(
     | \bNet::HTTP\b | \bIO::Socket\b | \bLWP\b | \bHTTP::Tiny\b | \bHTTP::Request\b
     | \bfsockopen\b | \bstream_socket_client\b | \bcurl_exec\b | \bcurl_init\b
     | \b(?:file_get_contents|fopen)\s*\(\s*['"]https?:// | \bURI\.open\b | \bopen\s*\(\s*['"]https?://
-    | \bcurl\b | \bwget\b | \bncat\b | \btelnet\b | /dev/tcp/
-    | \bssh\b | \bscp\b | \bsftp\b | \brsync\b | \bsocat\b | \bftp\b
+    | """ + NET_BINARIES_RE_ALT + r""" | /dev/tcp/
     """,
     re.VERBOSE,
 )
@@ -97,10 +109,7 @@ NET_RE = re.compile(
 # copy / socket family (`ssh`/`scp`/`sftp`/`rsync`/`socat`/`ftp`) is the same class (#131): they
 # are exfil primitives too and the `Bash(ssh *)`/`Bash(scp *)` denies likewise fire only on the
 # first word — a chained/prefixed `… && ssh evil` slips both the deny and this check without them.
-BARE_NET_BINARIES = {
-    "curl", "wget", "ncat", "nc", "netcat", "telnet",
-    "ssh", "scp", "sftp", "rsync", "socat", "ftp",
-}
+BARE_NET_BINARIES = set(NET_BINARIES)
 DEV_TCP_RE = re.compile(r"/dev/(?:tcp|udp)/")
 
 # `gh api` write signals: an explicit mutating method, or gh's implicit-POST field/body flags.

