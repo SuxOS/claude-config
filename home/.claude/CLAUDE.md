@@ -64,6 +64,12 @@
   `git fetch origin main` and diff/rebase against it, then re-derive the fix from the
   rebased HEAD — otherwise you can reintroduce something a merged sibling already fixed, or
   hit an avoidable rebase conflict.
+- **An assigned issue may already be fully fixed on HEAD** — a prior batch's squashed commit
+  message can cite an issue number (`(#131)`) without using a `Closes #131`/`Fixes #131` keyword,
+  so the issue never auto-closes even though the fix (and its test, usually citing the same
+  number) already merged. Before reading deep into an issue, `grep -rn '#<N>'` across the repo —
+  this codebase cites issue numbers in code comments and test descriptions pervasively, so an
+  already-resolved issue usually self-documents in one grep instead of a full re-investigation.
 - **Security issues can cite stale line numbers/rules.** The issue-authoring loop can snapshot
   an aggregate/planned state across several in-flight security PRs rather than HEAD, so a
   security issue's cited line numbers or its claim that a deny rule "already exists" may not

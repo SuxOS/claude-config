@@ -38,6 +38,13 @@ Two payload families, matching the two hook event types:
   carriers), collects `Edit`/`Write` `file_path`s, extracts the final assistant text, and scans
   the turn for a verification command.
 
+`block-checkout-held-branch.py` additionally reads LIVE `git worktree list` state from the
+fixture's `cwd`, which a static JSON file can't capture (#170). Its `pretooluse/bash-checkout-
+*.json` fixtures use a `"cwd": "__HELD_BRANCH_REPO__"` placeholder and set `"cwd_template":
+"held_branch_repo"` on their manifest case; the runner swaps the placeholder for a throwaway repo
+it builds (branch `held` checked out in a second worktree) before piping the fixture, then tears
+the repo down after the run.
+
 ## Adding a case
 
 1. Drop the fixture under `pretooluse/` (a full hook-input object) or `transcripts/` (JSONL).
