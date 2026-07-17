@@ -186,6 +186,18 @@ assert_exit 0 "$BCHB" 'not-json'                                                
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 
+# --- layer 3: real-shape fixture corpus (#117) --------------------------------------------
+# Layer 2's JSON is hand-authored, so a hook that mis-models the REAL Claude Code tool-input /
+# transcript shape passes there against a matching wrong guess — the exact failure the whole
+# hook bug history (#62/#80/#105/#108/#111/#112) keeps repeating. Layer 3 drives each hook
+# against committed fixtures captured in the real envelope shape (full PreToolUse payloads +
+# Stop-hook transcript JSONL) so a shape drift fails CI here instead of at runtime. The corpus
+# and how to regenerate/redact it live in tests/fixtures/README.md.
+echo "== real-shape fixture corpus (tests/fixtures) =="
+if ! python3 "$REPO_DIR/tests/run_fixture_corpus.py"; then
+  fail=1
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "HOOK TESTS FAILED" >&2
   exit 1

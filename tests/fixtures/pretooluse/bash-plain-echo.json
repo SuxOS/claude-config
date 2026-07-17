@@ -1,0 +1,11 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "/home/user/.claude/projects/example-project/00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "/home/user/example-project",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "echo hello world",
+    "description": "A benign command that must be allowed"
+  }
+}
