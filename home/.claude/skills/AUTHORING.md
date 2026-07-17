@@ -23,6 +23,31 @@ A skill written from imagination ("what should a good `foo` skill say?") instead
 observed failure is how you get 60 lines nobody needed. If you can't make the base model
 fail without it, you may not need it.
 
+## Eval fixture schema
+
+Every `evals/evals.json` is enforced by CI (`.github/scripts/lint-evals.py`, job
+`evals-lint`) — not just linted for valid JSON. Top level is an object:
+
+```json
+{
+  "skill_name": "how",
+  "evals": [
+    {"id": 1, "prompt": "...", "expected_output": "...", "files": []}
+  ]
+}
+```
+
+- `skill_name` — non-empty string, must equal the owning directory name
+  (`skills/<name>/evals/evals.json` → `skill_name` is `<name>`).
+- `evals` — a non-empty list of eval items, each requiring:
+  - `id` — an integer, unique within the file.
+  - `prompt` — a non-empty string: the pressure scenario given to a fresh model.
+  - `expected_output` — a non-empty string: the grader's rubric for what a pass looks like.
+  - `files` — a list of fixture files the scenario needs (`[]` when none).
+
+Write the `prompt`/`expected_output` pair from an observed RED failure (see above), not
+from imagination — the fixture is the encoded discipline, not busywork for the linter.
+
 ## The frontmatter `description` is a trigger, not a summary
 
 The highest-leverage, most-broken field. The `description` decides *when* the skill fires;

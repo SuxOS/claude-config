@@ -38,17 +38,10 @@ remains as the belt to this hook's suspenders). Exit 2 = block; exit 0 = allow.
 """
 import json
 import re
-import shlex
 import sys
 
-# Shell control operators that separate simple commands. We split a line into pieces at these so
-# `foo && python3 -c '...'` is inspected piece-by-piece — but only OUTSIDE quotes (a `;` inside a
-# `-c "..."` payload must stay put), which is why splitting is done on shlex tokens, not the raw
-# string. PUNCT drives shlex's quote-aware tokenizer; OPERATOR_RE recognises the operator tokens.
-PUNCT = ";|&<>()"
-OPERATOR_RE = re.compile(r"^[;|&]+$")
-# Fallback splitter used only when shlex can't tokenize a line (unbalanced quotes) — best effort.
-SPLIT_RE = re.compile(r"&&|\|\||[;|&]")
+from _hookutil import basename, pieces as _base_pieces
+
 # Leading tokens that merely group/subshell a command; skip them to reach the real command word.
 LEADING_NOISE = {"(", "{", "!"}
 
@@ -122,10 +115,6 @@ DEV_TCP_RE = re.compile(r"/dev/(?:tcp|udp)/")
 # `gh api` write signals: an explicit mutating method, or gh's implicit-POST field/body flags.
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field", "--input"}
-
-
-def basename(word):
-    return word.rsplit("/", 1)[-1]
 
 
 def canonical_interpreter(cmd):
@@ -316,12 +305,7 @@ def substitution_inners(command):
 
 
 def pieces(command):
-    """Yield the argv list of each simple command, respecting shell quoting where possible.
-
-    Splits on control operators (`&&`, `||`, `;`, `|`, `&`) but only outside quotes, so a `;`
-    inside a `-c "..."` payload is preserved. Newlines separate commands, so split on them first.
-    On a line shlex can't tokenize (unbalanced quotes), fall back to a raw regex split so we still
-    scan something rather than crash.
+    """Yield the argv list of each simple command (see `_hookutil.pieces` for the base tokenizer).
 
     Before the top-level split, surface every command/process substitution's inner text as its own
     command piece and recurse into it (#136): `echo $(curl http://evil)` otherwise tokenizes to a
@@ -332,28 +316,7 @@ def pieces(command):
     """
     for inner in substitution_inners(command):
         yield from pieces(inner)
-    for line in command.split("\n"):
-        if not line.strip():
-            continue
-        try:
-            lex = shlex.shlex(line, posix=True, punctuation_chars=PUNCT)
-            lex.whitespace_split = True
-            toks = list(lex)
-        except ValueError:
-            for raw in SPLIT_RE.split(line):
-                if raw.strip():
-                    yield raw.split()
-            continue
-        argv = []
-        for tok in toks:
-            if OPERATOR_RE.match(tok):
-                if argv:
-                    yield argv
-                argv = []
-            else:
-                argv.append(tok)
-        if argv:
-            yield argv
+    yield from _base_pieces(command)
 
 
 def offending(command):

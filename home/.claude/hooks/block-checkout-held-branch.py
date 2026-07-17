@@ -24,14 +24,10 @@ the session (repo convention). Exit 2 = block; exit 0 = allow.
 """
 import json
 import os
-import re
-import shlex
 import subprocess
 import sys
 
-PUNCT = ";|&<>()"
-OPERATOR_RE = re.compile(r"^[;|&]+$")
-SPLIT_RE = re.compile(r"&&|\|\||[;|&]")
+from _hookutil import basename, pieces
 
 # git global options that consume a following value, so we can walk past them to the subcommand
 # (`git -C /path checkout foo`, `git -c k=v switch foo`). `--opt=value` forms carry their own value
@@ -44,39 +40,6 @@ GIT_GLOBAL_VALUE_OPTS = {
 CREATE_OPTS = {"-b", "-B", "-c", "-C", "--orphan"}
 # flags that mean "don't land on a branch ref at all" (detached HEAD) — also not the no-op case.
 DETACH_OPTS = {"-d", "--detach"}
-
-
-def basename(word):
-    return word.rsplit("/", 1)[-1]
-
-
-def pieces(command):
-    """Yield the argv of each simple command, splitting on shell operators outside quotes.
-
-    Mirrors block-egress.py's splitter so `foo && git checkout main` is inspected piece-by-piece.
-    Falls back to a raw regex split when shlex can't tokenize (unbalanced quotes)."""
-    for line in command.split("\n"):
-        if not line.strip():
-            continue
-        try:
-            lex = shlex.shlex(line, posix=True, punctuation_chars=PUNCT)
-            lex.whitespace_split = True
-            toks = list(lex)
-        except ValueError:
-            for raw in SPLIT_RE.split(line):
-                if raw.strip():
-                    yield raw.split()
-            continue
-        argv = []
-        for tok in toks:
-            if OPERATOR_RE.match(tok):
-                if argv:
-                    yield argv
-                argv = []
-            else:
-                argv.append(tok)
-        if argv:
-            yield argv
 
 
 def checkout_target(argv):
