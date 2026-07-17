@@ -63,6 +63,11 @@
   security issue's cited line numbers or its claim that a deny rule "already exists" may not
   match the live file. Re-derive the fix from `settings.json` at HEAD, never trust the issue's
   line refs or already-added claims at face value.
+- **`block-egress.py` argv parsing is one canonicalization pass, not per-form branches** (#129):
+  `strip_prefixes()` removes ALL leading prefixes (env-assign/sudo/wrappers) and `inline_payloads()`
+  decomposes every bundled/glued/separate inline-flag shape in a single walk. A new bypass form
+  (another tokenization edge case) should EXTEND that pass, never add a sibling branch — the
+  per-form branch drip is exactly what caused #105/#115/#119/#120/#121/#126.
 - **`install.sh` symlinks every entry under `home/.claude/` into `~/.claude/`** (except
   `settings.json`, which is copied because Claude Code rewrites it in place), so repo-/CI-only
   tooling must NOT live there or it lands in the user's live config — put linters, CI scripts,

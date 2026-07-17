@@ -46,14 +46,20 @@ egress denies, not just the later additions — none of them is a network bounda
 
 A `PreToolUse` hook — `home/.claude/hooks/block-egress.py`, wired under `hooks.PreToolUse` with a
 `Bash` matcher — now takes the first concrete step of the "different mechanism" above. It parses
-each Bash command's argv **before it runs** and blocks the two obvious egress forms the deny list
+each Bash command's argv **before it runs** and blocks the obvious egress forms the deny list
 structurally cannot: interpreter/shell inline-code one-liners that open a socket
-(`python3 -c 'import urllib…'`, `node -e 'fetch(…)'`, `bash -c '…curl…'`), and `gh api` **writes**
-in any argv position (`gh api /repos/O/R -X DELETE`, which the prefix deny misses because the flag
-follows the URL). This raises the casual/accidental bar — but it is still a **speed bump, not a
-seal**, and the durable lesson stands: base64/variable-obfuscated payloads, sockets built without a
-named primitive, and interpreters fed code from a file or stdin all pass it, so a *complete* egress
-boundary still needs OS-level network sandboxing. The hook makes the gh-api gap enforceable at the
+(`python3 -c 'import urllib…'`, `node -e 'fetch(…)'`, `bash -c '…curl…'`); a bare network primitive
+as the command word (`… && curl …`, `sudo wget …`) or a `/dev/tcp` redirect, which the *anchored*
+`Bash(curl *)` deny catches only as the first word; and `gh api` **writes** in any argv position
+(`gh api /repos/O/R -X DELETE`, which the prefix deny misses because the flag follows the URL). To
+keep this from becoming a brittle branch per tokenization quirk (the per-form bypass drip of
+#105/#115/#119/#120/#121/#126), argv is **canonicalized once** before scanning — every leading
+prefix (env-assign/`sudo`/wrappers) stripped to the real command word, then inline-code flags read
+through a single walk that decomposes bundled/glued/separate forms uniformly (#129). This raises
+the casual/accidental bar — but it is still a **speed bump, not a seal**, and the durable lesson
+stands: base64/variable-obfuscated payloads, sockets built without a named primitive, and
+interpreters fed code from a file or stdin all pass it, so a *complete* egress boundary still needs
+OS-level network sandboxing. The hook makes the gh-api gap enforceable at the
 argv layer, which is what let the deny be narrowed back (#76) from a blanket `Bash(gh api *)` to
 just the two write-method forms above — restoring the read-only `gh api repos/…` GETs the skills
 use, while the hook still catches writes that slip past the URL-then-flag ordering gap.
