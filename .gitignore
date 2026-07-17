@@ -6,3 +6,8 @@
 
 # skill-creator eval scratch
 home/.claude/skills/*-workspace/
+
+# Claude Code drops isolated worktrees (a nested .git repo) under the repo root.
+# .git/info/exclude is per-clone and doesn't travel with the repo, so exclude it
+# here too — otherwise a stray `git add -A` on a fresh clone commits the nested repo.
+/.claude/worktrees/
