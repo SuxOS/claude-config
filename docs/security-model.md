@@ -35,10 +35,12 @@ general-purpose interpreters (`python3` / `node` / `npx`) stay on the allow-list
 more denied binaries only lengthens the list while leaving the interpreters — and
 `gh api` — as open reproductions of the same capability, which is worse than a short list
 because it reads as protection that isn't there. Closing the gap for real needs a
-*different mechanism*: OS-level network sandboxing (egress firewall / netns), or narrowing
+*different mechanism*: OS-level network sandboxing (egress firewall / netns), a `PreToolUse`
+hook that inspects command intent before it runs (see `home/.claude/hooks/`), or narrowing
 the interpreter and `gh` grants to specific scripts/subcommands. Until then, keep the deny
 list honest about being a speed bump, and prefer documenting a gap over adding a per-binary
-deny that gives false assurance.
+deny that gives false assurance. This applies equally to the original `curl`/`ssh`/`scp`
+egress denies, not just the later additions — none of them is a network boundary. (#71)
 
 Tracked in the security-hardening issue stream
 (#33 / #36 / #37 / #43 / #44 / #45 / #46 / #53 / #58 / #63 / #68 / #69 / #71).
