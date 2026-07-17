@@ -38,3 +38,7 @@ Pipe synthetic hook-input JSON to the script and check the exit code (2 = block,
 
     echo '{"tool_name":"Agent","tool_input":{"subagent_type":"claude","prompt":"x"}}' \
       | ~/.claude/hooks/require-delegation-model.py; echo "exit=$?"
+
+This recipe is now automated: `tests/test_hooks.sh` (run in CI as the `hooks-test` job) byte-compiles
+every hook and asserts each one's exit-code contract — block, fork/model exemptions, malformed-JSON
+fail-open. Add a case there when you add or change a hook so the contract stays enforced, not just prose.
