@@ -1,19 +1,17 @@
-name: Fixer (hourly, shallow)
+name: Fixer (30m, bugs+feats)
 
-# Second caller of the same proposer reusable as fixer.yml, at a much tighter cadence and a
-# much shallower scan. fixer.yml's 2x/week run is tuned for a broad sweep of this low-activity
-# config repo; this one runs hourly with max-turns low enough to only catch fresh, cheap-to-spot
-# signal (recent commits/PRs, obvious TODOs) — not a redundant full scan.
-# Distinct workflow name -> distinct concurrency group (fixer.yml's group key is
-# `fixer-${{ github.workflow }}`), so this never blocks on or races the other caller.
-# Safe by construction: the reusable's own throttle check (check-throttle, defer-at: yellow)
-# already stands this down under budget pressure, same as every other proposer-stage caller —
-# an hourly cadence just means it checks in more often, not that it bypasses the governor.
+# Mid tier of the 3-cadence proposer (see fixer-bugs.yml 15m / fixer.yml 1h deep). Runs every
+# 30m with scope: bugs-feats — bugs plus ordinary feature/gap ideas, no push for an ambitious
+# one (that's the 1h deep tier's job). Distinct workflow name -> distinct concurrency group
+# (fixer.yml's group key is `fixer-${{ github.workflow }}`), so this never blocks on or races
+# the other tiers. Safe by construction: the reusable's own throttle check (check-throttle,
+# defer-at: yellow) already stands this down under budget pressure, same as every other
+# proposer-stage caller.
 # Reusable workflow: SuxOS/.github/.github/workflows/fixer.yml
 
 on:
   schedule:
-    - cron: "45 * * * *" # hourly, shallow (offset to dodge top-of-hour rush)
+    - cron: "11,41 * * * *" # every 30m, offset to dodge top-of-hour rush
   workflow_dispatch:
 
 jobs:
@@ -24,5 +22,6 @@ jobs:
       id-token: write
     uses: SuxOS/.github/.github/workflows/fixer.yml@main
     with:
-      max-turns: 12 # shallow: fresh/cheap signal only, not a full-repo re-sweep
+      max-turns: 15
+      scope: bugs-feats
     secrets: inherit
