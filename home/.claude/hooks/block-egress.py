@@ -48,6 +48,14 @@ WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env"}
 # Wrapper option flags that consume a following value (so `timeout -s KILL 5 cmd` reaches `cmd`).
 WRAPPER_VALUE_OPTS = {"-s", "--signal", "-k", "--kill-after", "-n", "--adjustment", "-I", "-L", "-P"}
 DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
+# Privilege wrappers that take their own options then a command word (`sudo -u user cmd`, `doas`).
+# Treated as value-less wrappers so a `sudo`/`doas` prefix can't shift the command word out of the
+# scan (#119); SUDO_VALUE_OPTS are the separate-value options whose argument must also be skipped.
+SUDO_WRAPPERS = {"sudo", "doas"}
+SUDO_VALUE_OPTS = {"-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "-r", "--role", "-t", "--type", "-U"}
+# A bare inline env-assignment prefix (`FOO=bar cmd`) — NAME=VALUE with a valid shell identifier —
+# likewise shifts the command word; skip a leading run of them the way `env VAR=VAL` is skipped (#119).
+ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # Per-interpreter inline-code flags. Only the flags that actually take *code* — `-c` is code for
 # python/shell but a syntax check for node/ruby/perl, so it is NOT listed for those; `-p` prints
@@ -114,14 +122,29 @@ def canonical_interpreter(cmd):
 
 
 def strip_wrappers(argv):
-    """Drop leading wrapper words + their args (`timeout 5 python3` -> `python3`), like CC does."""
+    """Drop leading wrapper words + their args (`timeout 5 python3` -> `python3`), like CC does.
+
+    Also skips a leading run of bare `NAME=VALUE` env assignments (`FOO=bar cmd`) and treats
+    `sudo`/`doas` as value-less wrappers (consuming their own options, e.g. `-u user`), so an
+    env-assignment or privilege prefix can't shift the real command word out of view (#119).
+    """
     i, n = 0, len(argv)
     while i < n:
         tok = argv[i]
         if tok in LEADING_NOISE:
             i += 1
             continue
+        if ENV_ASSIGN_RE.match(tok):
+            i += 1  # bare inline env assignment: `FOO=bar cmd`
+            continue
         base = basename(tok)
+        if base in SUDO_WRAPPERS:
+            i += 1
+            while i < n and argv[i].startswith("-"):  # sudo/doas own options, e.g. `-u user`, `-E`
+                if argv[i] in SUDO_VALUE_OPTS and i + 1 < n and not argv[i + 1].startswith("-"):
+                    i += 1  # ...and that option's separate value
+                i += 1
+            continue
         if base not in WRAPPERS:
             break
         i += 1
@@ -152,10 +175,17 @@ def inline_payloads(cmd, argv):
         elif "=" in tok and head in flags:
             yield tok.split("=", 1)[1]  # `--eval=CODE`
         else:
-            for f in flags:
-                if len(f) == 2 and tok.startswith(f) and len(tok) > 2:
-                    yield tok[2:]  # glued `-c'code'` -> token `-ccode`
-                    break
+            # Glued single-dash bundle: the inline-flag letter may lead the bundle (`-c'code'` ->
+            # token `-ccode`) OR sit mid-bundle behind value-less short opts (`-Ic'code'` -> token
+            # `-Icimport...`). Split at the FIRST inline-flag letter and treat the remainder as the
+            # code payload — the mid-bundle form otherwise slipped the scan entirely (#105/#120).
+            letters = {f[1] for f in flags if len(f) == 2}
+            if letters and tok.startswith("-") and not tok.startswith("--"):
+                for k in range(1, len(tok)):
+                    if tok[k] in letters:
+                        if k + 1 < len(tok):
+                            yield tok[k + 1:]
+                        break
 
 
 def gh_api_is_write(argv):
@@ -172,6 +202,9 @@ def gh_api_is_write(argv):
         elif tok in FIELD_FLAGS or tok.split("=", 1)[0] in FIELD_FLAGS:
             if method is None:
                 method = "POST"  # gh defaults to POST when any field/body flag is present
+        elif tok.startswith(("-f", "-F")) and len(tok) > 2:
+            if method is None:
+                method = "POST"  # glued short field flag: `-ftitle=x`, `-Fkey=@file` (mirror -X) (#121)
     return method in WRITE_METHODS
 
 
