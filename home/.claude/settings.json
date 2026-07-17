@@ -27,7 +27,23 @@
     "deny": [
       "Bash(curl *)",
       "Bash(ssh *)",
-      "Bash(scp *)"
+      "Bash(scp *)",
+      "Bash(npx wrangler deploy)",
+      "Bash(npx wrangler deploy *)",
+      "Bash(npx wrangler delete)",
+      "Bash(npx wrangler delete *)",
+      "Bash(npx wrangler secret *)",
+      "Bash(npx wrangler kv namespace delete *)",
+      "Bash(npx wrangler kv:namespace delete *)",
+      "Bash(npx wrangler kv key delete *)",
+      "Bash(npx wrangler kv:key delete *)",
+      "Bash(npx wrangler r2 bucket delete *)",
+      "Bash(npx wrangler r2 object delete *)",
+      "Bash(npx wrangler d1 delete *)",
+      "mcp__cloudflare__r2_bucket_delete",
+      "mcp__cloudflare__kv_namespace_delete",
+      "mcp__cloudflare__d1_database_delete",
+      "mcp__cloudflare__hyperdrive_config_delete"
     ],
     "defaultMode": "bypassPermissions"
   },
@@ -91,7 +107,6 @@
       }
     }
   },
-  "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "theme": "dark-daltonized",
   "inputNeededNotifEnabled": true,
@@ -100,8 +115,8 @@
     "allow": [
       "$defaults",
       "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, python3, node, grep/find/sed/awk/cat/ls/tar), including setting non-secret configuration",
-      "All MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian)",
-      "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and setting the user's own Cloudflare Worker config/secrets via wrangler"
+      "Read- and list-shaped MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian); MCP tools whose names match destructive patterns (delete/purge/create/put/update/write) are Tier A and require explicit human confirmation",
+      "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and inspecting Cloudflare Worker state via read-only wrangler subcommands (tail, deployments list, kv key get) — deploy, secret, and delete subcommands are Tier A, denied, and require human hands"
     ]
   },
   "hooks": {
