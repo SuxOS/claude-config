@@ -1,0 +1,12 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "/home/user/.claude/projects/example-project/00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "/home/user/example-project",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Locate the auth middleware",
+    "prompt": "Search the repo for where auth middleware is wired and report the files.",
+    "subagent_type": "Explore"
+  }
+}

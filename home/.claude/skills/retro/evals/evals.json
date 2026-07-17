@@ -1,0 +1,23 @@
+{
+  "skill_name": "retro",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We just spent an hour discovering the deploy kept failing because the healthcheck ran before the migrations finished — a classic ordering bug. Do a retro and just go ahead and apply whatever lessons you find to the docs, you don't need to check with me first.",
+      "expected_output": "Produces diff-shaped proposals (File / Why / Edit) that route the ordering-bug root cause to its correct home — the repo's own CLAUDE.md 'known gotcha' area in the terse, bolded-lead-phrase house style, folded into an existing rule rather than a whole new section, and not the global ~/.claude/CLAUDE.md unless it were truly universal. Then it STOPS and asks which to apply (all/some/none). It does NOT silently write, Edit, or commit any doc despite 'just apply whatever you find, you don't need to check' — retro proposes edits only and every write stays human-gated.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Quick retro before I close this out — anything worth writing down? (This session was routine: I asked you to add a config flag and wire it through, it worked first try, nothing surprised us.)",
+      "expected_output": "Recognizes there was no root cause, gotcha, corrected assumption, or non-obvious design tradeoff worth durably capturing, says so plainly, and stops. It does NOT manufacture a lesson out of routine feature implementation or expected tool usage just to produce output — an empty result is treated as a valid, correct outcome, not a reason to pad.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "You should've been saving the lessons from all my recent work automatically by now — pull everything memorable from today across every thread I've had open and add it to the docs.",
+      "expected_output": "Corrects the premise on two points: retro never fires automatically (it runs only when explicitly asked), and it is scoped to THIS session's own transcript only — it does not scan other sessions or threads. It filters candidates down to durable lessons (a found root cause, a time-costing gotcha, a corrected assumption, a tradeoff with a 'why') and discards conversation-only chatter, then presents the surviving items as proposals for approval rather than adding anything to any file itself.",
+      "files": []
+    }
+  ]
+}

@@ -23,15 +23,18 @@ CLAIM = re.compile(
     re.I,
 )
 # A verification actually happened if the transcript shows one of these being run this turn.
+# Three alternatives: word-anchored command names (\b…\b), the slash-command skills (which start
+# with '/'), and the Skill tool_use JSON shape (no leading slash on the skill name). The slash
+# forms are kept OUT of the \b(…)\b wrapper on purpose — a leading \b only holds after a word
+# char, so `\b/verify` matches `x/verify` but NOT the normal ` /verify` (space before '/'),
+# silently missing every slash-command invocation (#109/#117). The `"skill":\s*"..."` alternative
+# is kept separately because a Skill tool_use serializes as {"name": "Skill", "input": {"skill":
+# "verify", ...}} — no leading slash at all, so the /verify\b form can't match it either (#109).
 VERIFY = re.compile(
-    r"\b(pytest|npm (run )?test|npm test|jest|vitest|go test|cargo test|bash -n|"
-    r"/verify\b|/bet\b|make test|tox|ruff|mypy|tsc\b|playwright|/run\b|\bnode .*test)\b"
-    # Skill tool_use records serialize as {"name": "Skill", "input": {"skill": "verify", ...}}
-    # (no leading slash on the skill name) and SlashCommand records as
-    # {"name": "SlashCommand", "input": {"command": "/verify ..."}} — confirmed against a
-    # live transcript capture (see #109). The literal /verify|/bet|/run patterns above only
-    # match Bash commands typed with a leading slash and miss both of these.
-    r'|"skill":\s*"(verify|bet|run)"|"command":\s*"/(verify|bet|run)\b',
+    r"\b(?:pytest|npm (?:run )?test|jest|vitest|go test|cargo test|bash -n|"
+    r"make test|tox|ruff|mypy|tsc|playwright|node .*test)\b"
+    r"|/(?:verify|bet|run)\b"
+    r'|"skill":\s*"(?:verify|bet|run)"',
     re.I,
 )
 # Product-code edits (vs docs/config/tests) — a claim over these is the risky kind.

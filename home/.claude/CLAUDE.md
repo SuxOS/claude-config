@@ -72,6 +72,12 @@
   it to its git/subprocess calls** (#123, `block-checkout-held-branch.py`) — the hook process's own
   cwd isn't reliably the project dir, so inspecting `git worktree list`/branch without the input
   `cwd` reads the wrong repo. Fail open (exit 0) whenever that context can't be resolved.
+- **Test hook JSON-shape logic against the real-shape corpus, not just synthetic JSON** (#117):
+  the recurring hook bug class is mis-modeling the real Claude Code tool-input/transcript shape
+  (#62/#80/#105/#108/#111/#112), and a hand-authored case in `tests/test_hooks.sh` shares the
+  author's wrong guess so it can't catch a shape drift. Layer 3 drives each hook against redacted
+  real-envelope fixtures under `tests/fixtures/` (its `README.md` documents capture/redact) — add
+  a fixture there whenever a hook's shape assumptions change.
 - **`install.sh` symlinks every entry under `home/.claude/` into `~/.claude/`** (except
   `settings.json`, which is copied because Claude Code rewrites it in place), so repo-/CI-only
   tooling must NOT live there or it lands in the user's live config — put linters, CI scripts,

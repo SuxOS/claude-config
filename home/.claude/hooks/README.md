@@ -54,3 +54,9 @@ Pipe synthetic hook-input JSON to the script and check the exit code (2 = block,
 This recipe is now automated: `tests/test_hooks.sh` (run in CI inside the required `shellcheck` job) byte-compiles
 every hook and asserts each one's exit-code contract — block, fork/model exemptions, malformed-JSON
 fail-open. Add a case there when you add or change a hook so the contract stays enforced, not just prose.
+
+The synthetic JSON above is hand-authored, so it shares whatever shape the author guessed — the exact
+trap behind the recurring parse-shape bugs (#62/#80/#105/#108/#111/#112). Layer 3 of the same script
+additionally drives each hook against a **real-shape fixture corpus** under `tests/fixtures/` (full
+PreToolUse payloads + Stop-hook transcript JSONL, captured and redacted from real Claude Code output).
+See `tests/fixtures/README.md` for the corpus and how to regenerate/redact it (#117).
