@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(git *)",
-      "Bash(gh *)",
+      "Bash(gh pr *)",
+      "Bash(gh issue *)",
+      "Bash(gh run *)",
+      "Bash(gh workflow *)",
+      "Bash(gh repo *)",
+      "Bash(gh search *)",
+      "Bash(gh api *)",
       "Bash(npx wrangler *)",
       "Bash(npm *)",
       "Bash(python3 *)",
@@ -14,7 +20,6 @@
       "Bash(ls *)",
       "Bash(echo *)",
       "Bash(printf *)",
-      "Bash(tar *)",
       "Bash(node *)",
       "WebFetch",
       "WebSearch",
@@ -29,8 +34,13 @@
       "Bash(wget *)",
       "Bash(ssh *)",
       "Bash(scp *)",
-      "Bash(gh api -X *)",
-      "Bash(gh api --method *)"
+      "Bash(tar *)",
+      "Bash(gh secret *)",
+      "Bash(gh auth *)",
+      "Bash(gh repo delete *)",
+      "Bash(gh repo edit *)",
+      "Bash(gh repo transfer *)",
+      "Bash(gh api *)"
     ],
     "defaultMode": "bypassPermissions"
   },
@@ -71,21 +81,21 @@
         "source": "github",
         "repo": "cloudflare/skills"
       },
-      "autoUpdate": true
+      "autoUpdate": false
     },
     "sux": {
       "source": {
         "source": "github",
         "repo": "SuxOS/sux"
       },
-      "autoUpdate": true
+      "autoUpdate": false
     },
     "grafana-ai-marketplace": {
       "source": {
         "source": "github",
         "repo": "grafana/ai-marketplace"
       },
-      "autoUpdate": true
+      "autoUpdate": false
     },
     "claude-plugins-official": {
       "source": {
@@ -102,7 +112,7 @@
   "autoMode": {
     "allow": [
       "$defaults",
-      "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, python3, node, grep/find/sed/awk/cat/ls/tar), including setting non-secret configuration",
+      "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, python3, node, grep/find/sed/awk/cat/ls), including setting non-secret configuration",
       "All MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian)",
       "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and setting the user's own Cloudflare Worker config/secrets via wrangler"
     ]
