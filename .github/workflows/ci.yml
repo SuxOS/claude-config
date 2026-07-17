@@ -105,3 +105,42 @@ jobs:
       - name: lint skill eval fixtures
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/lint-evals.py
+
+  # `bash -n install.sh` only catches parse errors, not logic bugs (wrong case glob, broken
+  # idempotency check, etc). This actually runs the script end-to-end against a scratch HOME
+  # and checks the result, then runs it a second time to assert idempotency (#42).
+  install-smoke:
+    name: install-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: run install.sh against a scratch HOME, twice
+        run: |
+          set -euo pipefail
+          scratch_home="$(mktemp -d)"
+          HOME="$scratch_home" bash install.sh
+
+          for entry in home/.claude/*; do
+            name="$(basename "$entry")"
+            case "$name" in
+              settings.json) continue ;;
+              CLAUDE.md) continue ;;
+            esac
+            link="$scratch_home/.claude/$name"
+            [ -L "$link" ] || { echo "expected symlink missing: $link" >&2; exit 1; }
+          done
+          [ -L "$scratch_home/.claude/CLAUDE.md" ] || { echo "expected symlink missing: $scratch_home/.claude/CLAUDE.md" >&2; exit 1; }
+          [ -e "$scratch_home/.claude/settings.json" ] || { echo "settings.json not copied" >&2; exit 1; }
+
+          # second run must be a no-op: no errors, no new backups
+          HOME="$scratch_home" bash install.sh
+          shopt -s nullglob
+          backups=("$scratch_home"/.claude/*.bak-*)
+          shopt -u nullglob
+          if [ "${#backups[@]}" -gt 0 ]; then
+            echo "unexpected backups after idempotent re-run: ${backups[*]}" >&2
+            exit 1
+          fi
+          echo "install.sh smoke test passed"

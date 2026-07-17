@@ -19,7 +19,7 @@ because it's part of the product surface.
 home/.claude/
   CLAUDE.md       cardinal rules + the tools, loaded into every session
   fabric.json     one declared truth: workspace_root, orgs (repos + pipeline pointer), bot
-  skills/         orient · work · dispatch · paste  (+ AUTHORING.md)
+  skills/         orient · work · dispatch · paste · how  (+ AUTHORING.md)
   hooks/          cardinal rails as code (require-delegation-model live; see hooks/README.md)
   settings.json   reference snapshot only — NOT symlinked (see below)
   settings.README.md  what actually enforces under bypassPermissions (deny-only) + rule semantics
@@ -28,9 +28,11 @@ WORKFLOW.md       the development loop — start here
 
 The tools are organized by **locus** (workspace ⊃ org ⊃ repo), not by a punctuation
 grammar: `orient` (see), `work` (do), `dispatch` (send to the autonomous `.github`
-pipeline), `paste` (format). The cloud pipeline itself lives in `SuxOS/.github` and is
-never duplicated here — `fabric.json`'s `pipeline` only points at it. (One recognized
-exception: the `scope+=X`/`scope-=X`/`scope=X` operators — see `~/.claude/CLAUDE.md`.)
+pipeline), `paste` (format). `how` is a meta helper — find the right skill/MCP/agent for a
+goal — not locus-scoped like the other four. The cloud pipeline itself lives in
+`SuxOS/.github` and is never duplicated here — `fabric.json`'s `pipeline` only points at it.
+(One recognized exception: the `scope+=X`/`scope-=X`/`scope=X` operators — see
+`~/.claude/CLAUDE.md`.)
 
 `~/.claude/CLAUDE.md`, `~/.claude/skills`, and `~/.claude/fabric.json` are symlinks
 into this repo, so edits made live (by Claude or by hand) land directly in git —
