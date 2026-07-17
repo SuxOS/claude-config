@@ -21,6 +21,15 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   slips the prefix deny). **Honest about being a speed bump, not a seal** — base64/obfuscated
   payloads and file-fed code still pass; a real boundary needs OS-level network sandboxing. Wired
   in settings.json under `hooks.PreToolUse`; fails open on any error.
+- **`block-checkout-held-branch.py`** — PreToolUse (matcher `Bash`). Enforces the git-checkout-vs-
+  worktree cardinal rail (CLAUDE.md dev-speed tactics, #123): `git checkout <branch>` / `git switch
+  <branch>` is a **silent no-op — not an error** — when that branch is already checked out in another
+  worktree, so the working tree never moves and later commands run against the wrong branch. Parses
+  the command for a real single-branch switch (not creation `-b`/`-c`, not `--detach`, not a `--`
+  path restore), consults `git worktree list` for the invoking cwd, and blocks with guidance (work
+  in that worktree, or add a detached scratch worktree) when the target is held elsewhere. First of
+  the additional cardinal rails the architecture invites; candidates like flagging `sleep`-in-a-loop
+  polling remain follow-ups. Wired in settings.json under `hooks.PreToolUse`; fails open on any error.
 
 ## Available but DISABLED by default
 

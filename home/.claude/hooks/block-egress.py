@@ -364,6 +364,17 @@ def offending(command):
             continue
         cmd = canonical_interpreter(basename(argv[0]))
 
+        if cmd == "eval" and len(argv) >= 2:
+            # `eval` runs its argument string AS a command, but it is not an interpreter with an
+            # inline-code flag — so its payload is never re-scanned unless we re-feed it. Join the
+            # remaining argv tokens and run them back through the same pass, the way an inline-code
+            # payload is scanned: `eval "curl …"`, `eval curl …`, `eval "python3 -c '…urllib…'"` all
+            # reach the network. One more code-runner into the existing canonicalization pass, not a
+            # sibling branch (CLAUDE.md #129). Recursion terminates: each pass drops the `eval` word.
+            inner = offending(" ".join(argv[1:]))
+            if inner:
+                return inner
+
         if cmd in INTERPRETERS:
             for payload in inline_payloads(cmd, argv):
                 if NET_RE.search(payload):

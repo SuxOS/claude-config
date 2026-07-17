@@ -68,6 +68,10 @@
   decomposes every bundled/glued/separate inline-flag shape in a single walk. A new bypass form
   (another tokenization edge case) should EXTEND that pass, never add a sibling branch — the
   per-form branch drip is exactly what caused #105/#115/#119/#120/#121/#126.
+- **A PreToolUse(Bash) hook that needs repo state must read `cwd` from the hook-input JSON and pass
+  it to its git/subprocess calls** (#123, `block-checkout-held-branch.py`) — the hook process's own
+  cwd isn't reliably the project dir, so inspecting `git worktree list`/branch without the input
+  `cwd` reads the wrong repo. Fail open (exit 0) whenever that context can't be resolved.
 - **`install.sh` symlinks every entry under `home/.claude/` into `~/.claude/`** (except
   `settings.json`, which is copied because Claude Code rewrites it in place), so repo-/CI-only
   tooling must NOT live there or it lands in the user's live config — put linters, CI scripts,
