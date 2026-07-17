@@ -19,8 +19,9 @@ path — exactly what the deny list already aims at — but a determined caller 
 base64- or variable-obfuscated payloads, sockets built without a named primitive, and interpreters
 that read their code from a file or stdin are all invisible here. Closing that for real needs
 OS-level network sandboxing (egress firewall / netns), not a command parser. The `gh api` branch
-is largely dormant while the blanket `Bash(gh api *)` deny stands (that deny fires first); it is
-the enforcement point that lets that deny be safely narrowed later to re-allow read-only GETs.
+is now the live enforcement point: the blanket `Bash(gh api *)` deny was narrowed (#76/#101) to the
+two write-method forms so read-only GETs are re-allowed, and this branch catches writes in any argv
+position that the prefix deny misses.
 
 Fail-open on any error — a hook bug must never wedge the session (repo convention; the deny list
 remains as the belt to this hook's suspenders). Exit 2 = block; exit 0 = allow.
@@ -61,6 +62,11 @@ INLINE_FLAGS = {
 }
 INTERPRETERS = set(INLINE_FLAGS)
 PERL_BUNDLE_RE = re.compile(r"-[A-Za-z]*[eE]")  # perl/ruby `-pe`, `-ne`, `-nE`, ... (bundle ends in e/E)
+# Versioned interpreter basenames (`python3.11`, `python2.7`, `perl5.36`, `ruby3.0`) are a normal,
+# non-obfuscated invocation form present on most distros, but they miss the exact-basename
+# INTERPRETERS lookup. VERSION_SUFFIX_RE strips a trailing `X` or `X.Y[.Z]` version so the family
+# key can be recovered — else `python3.11 -c '...urllib...'` slips past the inline scan. (#112)
+VERSION_SUFFIX_RE = re.compile(r"^([a-z]+)(\d+)(?:\.\d+)*$")
 
 # Named outbound primitives across python / node / ruby / perl / php / shell. A match inside an
 # inline-code payload means "this one-liner reaches the network" — the exfil/fetch the docs name.
@@ -88,6 +94,23 @@ FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field", "--input"}
 
 def basename(word):
     return word.rsplit("/", 1)[-1]
+
+
+def canonical_interpreter(cmd):
+    """Map a possibly-versioned interpreter basename to its INTERPRETERS key, else return cmd.
+
+    `python3.11` -> `python3`, `python2.7` -> `python2`, `perl5.36` -> `perl`. Exact matches pass
+    through untouched; a non-interpreter word (e.g. `gh`, `python3-config`) returns unchanged.
+    """
+    if cmd in INTERPRETERS:
+        return cmd
+    m = VERSION_SUFFIX_RE.match(cmd)
+    if m:
+        base, major = m.group(1), m.group(2)
+        for cand in (base + major, base):  # python3.11 -> python3, then bare python
+            if cand in INTERPRETERS:
+                return cand
+    return cmd
 
 
 def strip_wrappers(argv):
@@ -190,7 +213,7 @@ def offending(command):
         argv = strip_wrappers(argv)
         if not argv:
             continue
-        cmd = basename(argv[0])
+        cmd = canonical_interpreter(basename(argv[0]))
 
         if cmd in INTERPRETERS:
             for payload in inline_payloads(cmd, argv):
