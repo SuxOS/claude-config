@@ -22,6 +22,7 @@ home/.claude/
   skills/         orient · work · dispatch · paste  (+ AUTHORING.md)
   hooks/          cardinal rails as code (require-delegation-model live; see hooks/README.md)
   settings.json   reference snapshot only — NOT symlinked (see below)
+  settings.README.md  what actually enforces under bypassPermissions (deny-only) + rule semantics
 WORKFLOW.md       the development loop — start here
 ```
 
