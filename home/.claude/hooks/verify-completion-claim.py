@@ -80,6 +80,36 @@ def edited_file_paths(records):
                     yield path
 
 
+def verification_ran(records):
+    """True if this turn actually RAN a verification, not merely mentioned one.
+
+    A substring match on the serialized turn treats a mere mention as evidence — the word
+    `pytest` in the assistant's prose ("I'll run pytest next") or inside an edited file's
+    content would wave a claim through. So inspect the tool CALLS, not the text: a `Bash`
+    tool_use whose command matches VERIFY, or a `/verify`,`/bet`,`/run` skill/slash-command
+    invocation. That is what proves a test/build/verify step executed this turn.
+    """
+    for r in records:
+        msg = r.get("message") or r
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            inp = block.get("input") or {}
+            if block.get("name") == "Bash":
+                cmd = inp.get("command")
+                if isinstance(cmd, str) and VERIFY.search(cmd):
+                    return True
+            elif block.get("name") in ("Skill", "SlashCommand"):
+                # Skill input carries {skill: "verify"}, SlashCommand {command: "/verify ..."}.
+                invoked = inp.get("skill") or inp.get("command") or ""
+                if isinstance(invoked, str) and VERIFY.search("/" + invoked.lstrip("/")):
+                    return True
+    return False
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -92,7 +122,6 @@ def main():
     if not records:
         sys.exit(0)
 
-    blob = json.dumps(records)
     edited_code = any(
         os.path.splitext(path)[1] in CODE_EXT for path in edited_file_paths(records)
     )
@@ -108,7 +137,7 @@ def main():
         sys.exit(0)
     if not CLAIM.search(final_text):
         sys.exit(0)
-    if VERIFY.search(blob):
+    if verification_ran(records):
         sys.exit(0)
 
     print(

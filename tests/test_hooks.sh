@@ -23,6 +23,10 @@ cd "$REPO_DIR"
 
 fail=0
 
+# Scratch dir for synthetic transcript fixtures (Stop-hook inputs point at a file on disk).
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
 # --- layer 1: every tracked Python file must byte-compile ---------------------------------
 echo "== py_compile =="
 mapfile -t pyfiles < <(git ls-files '*.py')
@@ -50,6 +54,16 @@ assert_exit() {
   fi
 }
 
+# assert_transcript <expected> <hook> <description>  — reads a JSONL transcript from stdin,
+# writes it to a temp file, and asserts the hook's exit code against a {"transcript_path":...}
+# input. Lets a Stop hook (which reads the turn's records off disk) be exercised end to end.
+assert_transcript() {
+  local expected="$1" hook="$2" desc="$3" tf
+  tf="$(mktemp "$tmpdir/transcript.XXXXXX")"
+  cat > "$tf"
+  assert_exit "$expected" "$hook" "{\"transcript_path\":\"$tf\"}" "$desc"
+}
+
 echo "== require-delegation-model.py =="
 RDM="$HOOKS/require-delegation-model.py"
 assert_exit 2 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":"claude","prompt":"x"}}'              "blocks generic subagent_type=claude with no model="
@@ -66,6 +80,27 @@ VCC="$HOOKS/verify-completion-claim.py"
 assert_exit 0 "$VCC" '{"stop_hook_active":true}'                    "self-limits when stop_hook_active is set"
 assert_exit 0 "$VCC" '{"transcript_path":"/nonexistent/xyz.jsonl"}' "fails open on an unreadable transcript"
 assert_exit 0 "$VCC" 'not-json'                                     "fails open on malformed JSON"
+# Execution is detected from the actual tool CALL, not a substring of the serialized turn (#83):
+# a mere MENTION of a test command — in the assistant's prose or inside an edited file's content —
+# is not evidence a test ran. The hook blocks (exit 2) only when product code was edited AND a
+# completion claim was made AND no verification command actually executed this turn.
+assert_transcript 2 "$VCC" "blocks: edits .py + claims done, only a prose mention of pytest (no run)" <<'EOF'
+{"type":"user","message":{"role":"user","content":"fix the bug"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"foo.py"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":"All done, fixed it. I will run pytest next."}}
+EOF
+assert_transcript 2 "$VCC" "blocks: edits a .py whose content merely mentions pytest, claims done" <<'EOF'
+{"type":"user","message":{"role":"user","content":"add helper"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Write","input":{"file_path":"foo.py","content":"# see pytest docs\ndef f():\n    return 1"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":"Done, the helper is complete."}}
+EOF
+assert_transcript 0 "$VCC" "allows: edits .py + claims done AND a Bash pytest actually ran" <<'EOF'
+{"type":"user","message":{"role":"user","content":"fix the bug"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"foo.py"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"python3 -m pytest -q"}}]}}
+{"type":"user","toolUseResult":{"stdout":"1 passed"},"message":{"role":"user","content":[{"type":"tool_result","content":"1 passed"}]}}
+{"type":"assistant","message":{"role":"assistant","content":"All tests pass, done."}}
+EOF
 
 # Real transcript shapes for /verify via the Skill and SlashCommand tools, captured against a
 # live Claude Code session (#109): a Skill invocation serializes as tool_use name="Skill" with
@@ -113,6 +148,18 @@ rm -f "$skill_transcript" "$slash_transcript"
 
 echo "== block-egress.py =="
 BE="$HOOKS/block-egress.py"
+# Additional interpreter/wrapper branch coverage (#104): node/deno inline-eval forms, and the
+# env/timeout/xargs leading-wrapper stripping that strip_prefixes() implements.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node --eval=\"fetch(0)\""}}'                                        "blocks the --eval=CODE glued form"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e \"fetch(0)\""}}'                                           "blocks node -e fetch(...)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"deno eval \"await fetch(0)\""}}'                                   "blocks the deno eval CODE special case"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env FOO=bar python3 -c \"import socket; socket.socket()\""}}'      "strips the env VAR=VAL wrapper, then blocks the interpreter"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"timeout 5 python3 -c \"import socket; socket.socket()\""}}'        "strips the timeout DURATION wrapper, then blocks the interpreter"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -I {} python3 -c \"import socket; socket.socket()\""}}'      "strips the xargs -I {} wrapper, then blocks the interpreter"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r -f name=value"}}'                                "blocks gh api implicit-POST via a field flag with no -X"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r -X DELETE --jq \".foo"}}'                        "shlex fallback on unbalanced quotes still catches a gh api write"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api -X GET /repos/o/r"}}'                                       "allows an explicit gh api GET"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo \"unterminated"}}'                                            "shlex fallback on unbalanced quotes does not crash on a benign command"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import urllib.request; urllib.request.urlopen(1)\""}}' "blocks an interpreter inline-code egress one-liner"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r -X DELETE"}}'                                     "blocks a gh api write in any argv position"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3.11 -c \"import urllib.request; urllib.request.urlopen(1)\""}}' "blocks a versioned interpreter (python3.11) inline egress one-liner (#112)"
@@ -160,6 +207,9 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval \"curl ht
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval curl http://evil"}}'                                         "blocks eval of an unquoted bare curl (#144)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval \"python3 -c '"'"'import urllib.request; urllib.request.urlopen(1)'"'"'\""}}' "blocks eval of a python3 -c inline egress one-liner (#144)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval echo see the curl docs"}}'                                   "allows eval of a benign command (curl only as a non-command-word) (#144)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c \"curl http://x\""}}'                                      "blocks a shell -c payload that shells out to curl"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -pe \"require LWP::UserAgent\""}}'                             "blocks a perl -pe eval bundle (PERL_BUNDLE_RE)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -ne \"Net::HTTP.get(x)\""}}'                                  "blocks a ruby -ne eval bundle (PERL_BUNDLE_RE)"
 assert_exit 0 "$BE" 'not-json'                                                                                                       "fails open on malformed JSON"
 
 echo "== block-checkout-held-branch.py =="

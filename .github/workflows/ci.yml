@@ -144,3 +144,30 @@ jobs:
             exit 1
           fi
           echo "install.sh smoke test passed"
+
+  # actionlint lints the GitHub Actions workflow YAML this repo ships (cron expressions,
+  # `permissions` blocks, `if:` expressions) — real surface that fails only at trigger time, not
+  # in PR CI, and is agent-editable. This is the self-check pattern ci.yml's own header names
+  # (self-check.yml / actionlint); this makes it real for claude-config too (#84). The binary is
+  # pinned by version AND sha256 so the check is reproducible and tamper-evident. actionlint with
+  # no file args auto-discovers .github/workflows/*.yml and shellchecks the embedded run: scripts.
+  # Advisory until added to the main-branch ruleset AND automerge.yml required-gates in lockstep
+  # (same as settings-lint/hooks-test/json-validate above).
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ACTIONLINT_VERSION: 1.7.7
+      ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: lint workflow YAML with actionlint
+        run: |
+          set -euo pipefail
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o actionlint.tar.gz "$url"
+          echo "${ACTIONLINT_SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+          ./actionlint -color
