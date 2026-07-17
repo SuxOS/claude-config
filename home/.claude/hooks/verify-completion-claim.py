@@ -64,6 +64,23 @@ def turn_lines(transcript_path):
     return records
 
 
+def assistant_text_blocks(records):
+    """Yield text content from assistant text blocks only — never tool_use inputs."""
+    for r in records:
+        msg = r.get("message") or r
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str):
+            yield content
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        yield text
+
+
 def edited_file_paths(records):
     """Yield file_path values from Edit/Write tool_use blocks in this turn's records."""
     for r in records:
@@ -100,8 +117,7 @@ def main():
     for r in reversed(records):
         msg = r.get("message") or r
         if (msg.get("role") == "assistant") and isinstance(msg.get("content"), (str, list)):
-            c = msg["content"]
-            final_text = c if isinstance(c, str) else json.dumps(c)
+            final_text = "\n".join(assistant_text_blocks([r]))
             break
 
     if not edited_code:

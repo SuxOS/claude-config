@@ -6,7 +6,7 @@ under `~/.claude`.
 
 **Why this lives in the SuxOS org:** it's a personal, cross-project tool-config
 repo, not a SuxOS product or component — it sits here for convenience/visibility
-alongside the repos it's used against (`sux`, `suxrouter`, `sux-fileops`), not
+alongside the repos it's used against (`sux`, `suxrouter`), not
 because it's part of the product surface.
 
 **New here? Read [`WORKFLOW.md`](WORKFLOW.md)** — the development loop in one screen
@@ -19,8 +19,8 @@ because it's part of the product surface.
 home/.claude/
   CLAUDE.md       cardinal rules + the tools, loaded into every session
   fabric.json     one declared truth: workspace_root, orgs (repos + pipeline pointer), bot
-  skills/         orient · work · dispatch · paste · how  (+ AUTHORING.md)
-  hooks/          cardinal rails as code (require-delegation-model live; see hooks/README.md)
+  skills/         orient · work · dispatch · paste · how · retro  (+ AUTHORING.md)
+  hooks/          cardinal rails as code (require-delegation-model, block-egress, block-checkout-held-branch live; see hooks/README.md)
   settings.json   reference snapshot only — NOT symlinked (see below)
   settings.README.md  what actually enforces under bypassPermissions (deny-only) + rule semantics
 WORKFLOW.md       the development loop — start here

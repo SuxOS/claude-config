@@ -59,7 +59,8 @@ They're not modes to choose between. You work; the pipeline runs.
   its `repos` + a `pipeline` pointer). Every tool reads it; nothing hardcodes a second copy.
   Edit it when a repo or org opts in/out — that's the only place it changes.
 - **`home/.claude/hooks/`** — the cardinal rails as code. `require-delegation-model` (live)
-  blocks a subagent with no explicit model. `verify-completion-claim` (built, off) blocks
+  blocks a subagent with no explicit model. `block-egress` (live) blocks obvious egress
+  one-liners and `gh api` writes. `verify-completion-claim` (built, off) blocks
   "done" with no verification — arm it when you trust it (`hooks/README.md`).
 - **Security model** — one taxonomy, local and cloud: **Tier A** (irreversible/destructive,
   secret egress) blocks, human hands only; **Tier B** (everything else) ships and rolls

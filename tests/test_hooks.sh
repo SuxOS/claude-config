@@ -111,6 +111,29 @@ assert_exit 0 "$VCC" "{\"transcript_path\":\"$skill_transcript\"}" "does not blo
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$slash_transcript\"}" "does not block a completion claim after a /verify run via the SlashCommand tool (#109)"
 rm -f "$skill_transcript" "$slash_transcript"
 
+# Positive (exit 2) coverage: a synthetic transcript for the turn — a human user message
+# (turn boundary), an Edit on a product-code file, and a final assistant message that
+# claims completion — with no verification command anywhere in the turn (#106).
+vcc_transcript="$(mktemp)"
+vcc_transcript_verified="$(mktemp)"
+trap 'rm -f "$vcc_transcript" "$vcc_transcript_verified"' EXIT
+{
+  printf '%s\n' '{"message":{"role":"user","content":"please fix the crash"}}'
+  printf '%s\n' '{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/tmp/repo/app.py"}}]}}'
+  printf '%s\n' '{"message":{"role":"assistant","content":[{"type":"text","text":"done, fixed the crash"}]}}'
+} > "$vcc_transcript"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$vcc_transcript\"}" "blocks a completion claim over an edited product-code file with no verification run (#106)"
+
+# Companion: same turn, plus a verification command (pytest) — must NOT block.
+{
+  printf '%s\n' '{"message":{"role":"user","content":"please fix the crash"}}'
+  printf '%s\n' '{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/tmp/repo/app.py"}}]}}'
+  printf '%s\n' '{"message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{"command":"pytest tests/"}}]}}'
+  printf '%s\n' '{"message":{"role":"assistant","content":[{"type":"text","text":"done, fixed the crash"}]}}'
+} > "$vcc_transcript_verified"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$vcc_transcript_verified\"}" "allows a completion claim when a verification command ran this turn (#106)"
+rm -f "$vcc_transcript" "$vcc_transcript_verified"
+
 echo "== block-egress.py =="
 BE="$HOOKS/block-egress.py"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import urllib.request; urllib.request.urlopen(1)\""}}' "blocks an interpreter inline-code egress one-liner"
