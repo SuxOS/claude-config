@@ -54,6 +54,25 @@ def run_hook(hook_path, stdin_bytes):
     return proc.returncode
 
 
+def validate_transcript(transcript):
+    """Assert every non-empty line of a transcript fixture is valid JSON, else raise ValueError.
+
+    verify-completion-claim.py's loader fails OPEN on any parse error — turn_lines() catches the
+    JSONDecodeError, returns [], and the hook exits 0. So a corrupted line in an allow-expected
+    (expect_exit 0) fixture would still yield exit 0 and the case would PASS despite the fixture
+    being inert — the silent-rot failure mode json-validate/evals-lint exist to prevent, but which
+    *.jsonl is exempt from (JSONL is not single-document JSON). Parse each line here so a broken
+    transcript fixture fails the corpus loudly instead of passing on the hook's fail-open path (#139).
+    """
+    for lineno, line in enumerate(transcript.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            json.loads(line)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"malformed JSONL at {transcript.name}:{lineno} — {e}")
+
+
 def build_stdin(case):
     """The stdin payload bytes for a case: a raw PreToolUse fixture, or a synthesized Stop envelope."""
     if "stdin" in case:
@@ -62,6 +81,7 @@ def build_stdin(case):
         transcript = FIXTURES / case["transcript"]
         if not transcript.exists():
             raise FileNotFoundError(f"transcript fixture not found: {transcript}")
+        validate_transcript(transcript)
         envelope = dict(STOP_ENVELOPE_BASE, transcript_path=str(transcript))
         return json.dumps(envelope).encode()
     raise ValueError("case has neither 'stdin' nor 'transcript'")

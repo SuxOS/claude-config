@@ -31,6 +31,10 @@ Two payload families, matching the two hook event types:
   Real shape: `session_id`, `transcript_path`, `cwd`, `hook_event_name: "PreToolUse"`,
   `tool_name`, `tool_input`. `require-delegation-model.py` reads `tool_name` + `tool_input`
   (`subagent_type`, `model`); `block-egress.py` reads `tool_name` + `tool_input.command`.
+  The subagent launcher has shipped under both `tool_name` values `"Agent"` (current) and
+  `"Task"` (historical), so the hook and the settings matcher (`"Agent|Task"`) accept either,
+  and the corpus pins a delegation under each name (#138). If a live capture ever shows a
+  third name, widen `SUBAGENT_TOOL_NAMES` and the matcher in lockstep and add a fixture here.
 - **Stop-hook transcript** (`transcripts/*.jsonl`) — JSONL, one record per line, the session
   transcript. The runner synthesizes the Stop envelope (`stop_hook_active: false`,
   `transcript_path` pointing at the fixture) and pipes that. `verify-completion-claim.py` reads
