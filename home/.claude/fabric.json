@@ -4,7 +4,7 @@
   "orgs": {
     "SuxOS": {
       "github": "SuxOS",
-      "repos": ["sux", "sux-fileops", "suxlib", "suxrouter", "claude-config", "suxvault", ".github"],
+      "repos": ["sux", "suxlib", "suxrouter", "claude-config", "suxvault", ".github"],
       "pipeline": { "repo": ".github", "loops": ["collate-build", "green-merge", "red-rebase"] }
     },
     "colinxs": {
