@@ -130,7 +130,11 @@
   that, the config-integrity linters (settings/hooks/json/evals) run as STEPS INSIDE the one
   ruleset-required `shellcheck` job in `ci.yml` (#122), not as standalone jobs — that gates them on
   auto-merge with no ruleset change. Keep them folded there; splitting them back into their own jobs
-  silently un-gates them until a human requires the new names in the ruleset.
+  silently un-gates them until a human requires the new names in the ruleset. The INVERSE holds for a
+  check that needs a secret or a model call (e.g. the `skill-evals` runner, #140): keep it a
+  STANDALONE ADVISORY job — never fold it into `shellcheck` (that would make a cost/secret/flaky call
+  a hard merge gate) — and have it skip cleanly (exit 0) when its secret/CLI is absent, so it stays a
+  green no-op until a human enables it.
 - **Dropping an issue mid-batch does not stop it from being auto-closed** (#148, #151, found
   investigating #184): the `issue-build.yml` reusable's PR body writes one `Closes #N` line per
   issue in the batch it was ASSIGNED, not the issues actually resolved by the final commit — if a

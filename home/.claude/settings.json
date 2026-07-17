@@ -165,7 +165,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Agent",
+        "matcher": "Agent|Task",
         "hooks": [
           { "type": "command", "command": "$HOME/.claude/hooks/require-delegation-model.py" }
         ]

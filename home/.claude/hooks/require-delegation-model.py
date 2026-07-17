@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""PreToolUse hook (matcher: Agent) — enforce cardinal rule #1: never inherit the model.
+"""PreToolUse hook (matcher: Agent|Task) — enforce cardinal rule #1: never inherit the model.
 
-Blocks an Agent delegation that would silently inherit the orchestrator's session model
+Blocks a subagent delegation that would silently inherit the orchestrator's session model
 instead of picking a tier deliberately (haiku for mechanical, top for hard verify/judge) —
 the exact failure rule #1 names.
+
+Matches BOTH tool names the subagent launcher has shipped as: "Agent" (current) and "Task"
+(its historical built-in name). The gate must fire on whichever this Claude Code emits, or
+rule #1 fails OPEN with no signal (#138); the settings.json matcher is widened in lockstep.
+A delegation via either name carries the same tool_input shape (subagent_type/model/prompt).
 
 That only applies to the generic default agent: subagent_type absent, "general-purpose", or
 "claude" (FleetView's own default) all resolve to the session model with no model= given.
@@ -19,13 +24,15 @@ import json
 import sys
 
 GENERIC_SUBAGENT_TYPES = {"", "general-purpose", "claude"}
+# The subagent launcher has shipped under both names across Claude Code versions; gate on either.
+SUBAGENT_TOOL_NAMES = {"Agent", "Task"}
 
 try:
     data = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
 
-if data.get("tool_name") != "Agent":
+if data.get("tool_name") not in SUBAGENT_TOOL_NAMES:
     sys.exit(0)
 
 ti = data.get("tool_input") or {}

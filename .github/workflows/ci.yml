@@ -115,6 +115,27 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/lint-evals.py
 
+  # skill-evals (ADVISORY, #140): runs each skill's evals.json against a model and grades the
+  # resulting response with an LLM judge — the runner layer #95 envisioned above the deterministic
+  # evals-lint rail (which only checks eval SHAPE). A model call means cost + secrets + non-determinism,
+  # so this is deliberately a STANDALONE ADVISORY job, NOT folded into the ruleset-required `shellcheck`
+  # job: native auto-merge only waits on required checks (see automerge.yml required-gates), so this
+  # never blocks merge. The runner SKIPS cleanly (exit 0) when there is no model access — no `claude`
+  # CLI on PATH, or no auth token — so with no ANTHROPIC_API_KEY secret configured here it is a green
+  # no-op today, and stays one until a human installs the CLI and adds the secret. See
+  # .github/scripts/run-skill-evals.py for the full gate-vs-advisory design.
+  skill-evals:
+    name: skill-evals
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: run skill evals (advisory; skips cleanly when no model access)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python3 .github/scripts/run-skill-evals.py
+
   # `bash -n install.sh` only catches parse errors, not logic bugs (wrong case glob, broken
   # idempotency check, etc). This actually runs the script end-to-end against a scratch HOME
   # and checks the result, then runs it a second time to assert idempotency (#42).
