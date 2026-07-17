@@ -15,7 +15,7 @@ grammar you have to memorize. Plain English is the whole surface.
 
 The tools detect which locus you're in from your cwd and adapt. You never say it.
 
-## The tools — see / do / send
+## The tools — see / do / send / find
 
 - **`orient`** — *see.* What's off here. At a repo: its state. At an org: the cross-repo
   radar (drift, repeated bugs, settings drift, held/stuck pipeline PRs). Read-only.
@@ -24,6 +24,8 @@ The tools detect which locus you're in from your cwd and adapt. You never say it
 - **`dispatch`** — *send.* Steer the autonomous `.github` pipeline: file issues for it to
   build while you're away, or `hold`/toggle it for surgery and reenable.
 - **`paste`** — format output for wherever it's going (email/Slack/GitHub/terminal).
+- **`how`** — *find.* Meta helper, not locus-scoped: find the right skill/MCP/agent for a
+  goal when none of the above is the obvious fit.
 
 That's it. No marks, no counts, no adverbs. "carefully work the flaky auth tests across all
 repos" is a complete instruction. (One recognized exception: the `scope+=X`/`scope-=X`/

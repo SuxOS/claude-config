@@ -1,9 +1,10 @@
 # Authoring the tools
 
 How to write or edit a skill so it stays consistent with the rest. Read it before adding a
-tool, adding a dimension, or reshaping a `SKILL.md`. The tools themselves are `orient`,
-`work`, `dispatch`, `paste`; the model they live in is in [`../CLAUDE.md`](../CLAUDE.md)
-and [`../../../WORKFLOW.md`](../../../WORKFLOW.md).
+tool, adding a dimension, or reshaping a `SKILL.md`. The locus tools themselves are
+`orient`, `work`, `dispatch`, `paste`, plus the meta helper `how` (find the right
+skill/MCP/agent for a goal — not locus-scoped); the model they live in is in
+[`../CLAUDE.md`](../CLAUDE.md) and [`../../../WORKFLOW.md`](../../../WORKFLOW.md).
 
 ## The one rule that catches everything: test before you write
 

@@ -1,8 +1,9 @@
 name: Fixer
 
 # Proposer stage: scans this repo, files bugs/features as issues with confidence labels.
-# Never opens a PR, never queues for build (triage.yml decides that). Runs on the Claude
-# Pro/Max subscription (CLAUDE_CODE_OAUTH_TOKEN), not a metered API key.
+# Never opens a PR, never queues for build (the reusable's own logic or a human applies
+# `queued-for-build`). Runs on the Claude Pro/Max subscription (CLAUDE_CODE_OAUTH_TOKEN),
+# not a metered API key.
 # Reusable workflow: SuxOS/.github/.github/workflows/fixer.yml — see its design doc.
 
 on:
