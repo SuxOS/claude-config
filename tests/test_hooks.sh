@@ -184,6 +184,9 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval curl http
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval \"python3 -c '"'"'import urllib.request; urllib.request.urlopen(1)'"'"'\""}}' "blocks eval of a python3 -c inline egress one-liner (#144)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval echo see the curl docs"}}'                                   "allows eval of a benign command (curl only as a non-command-word) (#144)"
 assert_exit 0 "$BE" 'not-json'                                                                                                       "fails open on malformed JSON"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"pool.create_connection_pool()\""}}'                    "allows a create_connection_pool false match (#127)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query='"'"'query{viewer{login}}'"'"'"}}'          "allows a read-only gh api graphql query (#111)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query='"'"'mutation{addComment(input:{})}'"'"'"}}' "blocks a gh api graphql mutation (#111)"
 
 echo "== block-checkout-held-branch.py =="
 BCHB="$HOOKS/block-checkout-held-branch.py"

@@ -98,7 +98,7 @@ NET_RE = re.compile(
     r"""
       urllib | urlopen | \brequests\b | httpx | urllib3 | http\.client | httplib
     | smtplib | ftplib | telnetlib | poplib | imaplib | paramiko
-    | socket\.socket | socket\.create_connection | create_connection | asyncio\.open_connection
+    | socket\.socket | socket\.create_connection | \bcreate_connection\s*\( | asyncio\.open_connection
     | \bfetch\s*\( | XMLHttpRequest | axios | node-fetch | \bgot\s*\(
     | require\(\s*['"`](?:node:)?(?:http|https|net|tls|dgram)['"`]\s*\)
     | \bhttps?\.(?:get|request)\s*\( | \bnet\.(?:connect|createConnection)\s*\(
@@ -221,6 +221,9 @@ def inline_payloads(cmd, argv):
         j += 1
 
 
+MUTATION_RE = re.compile(r"\bmutation\b", re.I)
+
+
 def gh_api_is_write(argv):
     """True if this `gh api ...` argv mutates state (explicit method or implicit-POST fields).
 
@@ -228,22 +231,41 @@ def gh_api_is_write(argv):
     long-glued (`--field=x=y`), and short-glued (`-ftitle=x`, `-Fkey=@file`) — the last of which
     is a real state-mutating POST that the exact/long checks alone miss (#121), mirroring the
     glued `-XPOST` method handling.
+
+    `gh api graphql -f query=...` is a special case: GraphQL always ships its query/mutation
+    body through a `-f`/`-F` field flag, even for plain reads, so the generic implicit-POST
+    field-flag rule would over-block every `gh api graphql` read. For that one endpoint, only
+    an actual `mutation { ... }` body counts as a write (#111).
     """
-    method = None
+    is_graphql = "graphql" in argv[2:]
+    explicit_method = None
+    implicit_post = False
+    field_values = []
     for j, tok in enumerate(argv):
         if tok in ("-X", "--method"):
             if j + 1 < len(argv):
-                method = argv[j + 1].upper()
+                explicit_method = argv[j + 1].upper()
         elif tok.startswith("-X") and len(tok) > 2:
-            method = tok[2:].upper()
+            explicit_method = tok[2:].upper()
         elif tok.startswith("--method="):
-            method = tok.split("=", 1)[1].upper()
-        elif (tok in FIELD_FLAGS or tok.split("=", 1)[0] in FIELD_FLAGS
-              or (len(tok) > 2 and tok[0] == "-" and tok[1] in ("f", "F"))):
-            if method is None:
-                method = "POST"  # gh defaults to POST when any field/body flag is present, incl.
-                                  # glued short forms `-ftitle=x` / `-Fkey=@file` (#121)
-    return method in WRITE_METHODS
+            explicit_method = tok.split("=", 1)[1].upper()
+        elif tok in FIELD_FLAGS or tok.split("=", 1)[0] in FIELD_FLAGS:
+            if j + 1 < len(argv):
+                field_values.append(argv[j + 1])
+            implicit_post = True  # gh defaults to POST when any field/body flag is present
+        elif tok.startswith(("-f", "-F")) and len(tok) > 2:
+            field_values.append(tok[2:])
+            implicit_post = True  # glued short field flag: `-ftitle=x`, `-Fkey=@file` (mirror -X) (#121)
+
+    if explicit_method is not None:
+        return explicit_method in WRITE_METHODS
+    if not implicit_post:
+        return False
+    if is_graphql:
+        # No explicit mutating -X/--method: fall back to sniffing the query/mutation body,
+        # since GraphQL reads and writes both ship through the same `-f query=` field flag.
+        return any(MUTATION_RE.search(v) for v in field_values)
+    return True
 
 
 def substitution_inners(command):
