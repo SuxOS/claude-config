@@ -53,6 +53,11 @@
 - **Never put comments in a code snippet meant to be copy-pasted.** Strip all explanatory
   comments from any snippet the user will paste elsewhere — the explanation belongs in your
   surrounding prose, not in the pasted artifact.
+- **Under `defaultMode: bypassPermissions`, only `permissions.deny` enforces** — `allow`/
+  `autoMode.allow` are inert. Deny rules are anchored globs (not prefixes) that can't reliably
+  constrain Bash arguments, and a plugin MCP deny must be `mcp__plugin_<plugin>_<server>__<tool>`
+  or it silently fails open with no warning. Verify the matcher against the live tool surface
+  before scoping any rule in `settings.json` (see `home/.claude/settings.README.md`).
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
