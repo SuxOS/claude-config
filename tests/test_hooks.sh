@@ -126,6 +126,10 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -Ic'"'
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/issues -ftitle=x"}}'                              "blocks a glued short field flag gh api -ftitle=x (#121)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/contents -Fkey=@file"}}'                          "blocks a glued short field flag gh api -Fkey=@file (#121)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r"}}'                                              "allows a gh api read (GET, no write flag)"
+# #127: the bare `create_connection` NET_RE alternative had no word boundary/call-paren anchor, so
+# it substring-matched identifiers like `create_connection_pool` that never call the network primitive.
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"pool.create_connection_pool()\""}}'                    "allows a create_connection_pool identifier (no false substring block) (#127)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"from socket import create_connection; create_connection((1,2))\""}}' "still blocks an actual bare create_connection(...) call (#127)"
 # #111: `gh api graphql -f query=...` is the standard way to run a read-only GraphQL query, but
 # carries a field flag like any write — only the `mutation` keyword in the query body means write.
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query='"'"'query{viewer{login}}'"'"'"}}'           "allows a read-only gh api graphql query (#111)"

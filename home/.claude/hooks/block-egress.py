@@ -95,10 +95,10 @@ VERSION_SUFFIX_RE = re.compile(r"^([a-z]+)(\d+)(?:\.\d+)*$")
 # string/identifier can false-positive; that is the accepted speed-bump cost the block message names.
 NET_RE = re.compile(
     r"""
-      urllib | urlopen | \brequests\b | httpx | urllib3 | http\.client | httplib
+      urllib | \burlopen\b | \brequests\b | httpx | urllib3 | http\.client | httplib
     | smtplib | ftplib | telnetlib | poplib | imaplib | paramiko
-    | socket\.socket | socket\.create_connection | create_connection | asyncio\.open_connection
-    | \bfetch\s*\( | XMLHttpRequest | axios | node-fetch | \bgot\s*\(
+    | socket\.socket | socket\.create_connection | \bcreate_connection\s*\( | asyncio\.open_connection
+    | \bfetch\s*\( | XMLHttpRequest | \baxios\b | \bnode-fetch\b | \bgot\s*\(
     | require\(\s*['"`](?:node:)?(?:http|https|net|tls|dgram)['"`]\s*\)
     | \bhttps?\.(?:get|request)\s*\( | \bnet\.(?:connect|createConnection)\s*\(
     | \btls\.connect\s*\( | Deno\.connect\s*\(
