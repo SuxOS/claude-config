@@ -3,7 +3,7 @@
 
 DISABLED BY DEFAULT. This is the high-value but higher-risk hook: a Stop hook that blocks
 forces the model to keep working, and a false positive is disruptive. Arm it only after you
-have watched it run and tuned the predicates — see settings.json for the one-line enable.
+have watched it run and tuned the predicates — see hooks/README.md for the one-line enable.
 
 Fires ONLY when all three hold, to keep false positives near zero:
   1. the final assistant message makes a strong completion claim (done/fixed/passing/shipped),

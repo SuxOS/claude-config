@@ -107,6 +107,7 @@ NET_RE = re.compile(
     | (?:file_get_contents|fopen)\s*\(\s*['"]https?:// | \bURI\.open\b | \bopen\s*\(\s*['"]https?://
     | \bcurl\b | \bwget\b | \bncat\b | \btelnet\b | /dev/tcp/
     | \bssh\b | \bscp\b | \bsftp\b | \brsync\b | \bsocat\b | \bftp\b
+    | \bnc\b | \bnetcat\b
     """,
     re.VERBOSE,
 )
@@ -128,6 +129,11 @@ DEV_TCP_RE = re.compile(r"/dev/(?:tcp|udp)/")
 # `gh api` write signals: an explicit mutating method, or gh's implicit-POST field/body flags.
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field", "--input"}
+# `gh api graphql -f query=...` always carries a field flag but is the standard way to run a
+# read-only GraphQL *query* — the field-flag-implies-POST heuristic below over-blocks it (#111).
+# A GraphQL mutation is distinguished only by its body starting the `mutation` keyword, so for
+# the graphql endpoint specifically we inspect the `query` field's value instead of assuming POST.
+GRAPHQL_MUTATION_RE = re.compile(r"\bmutation\b", re.IGNORECASE)
 
 
 def canonical_interpreter(cmd):
@@ -223,29 +229,58 @@ def inline_payloads(cmd, argv):
         j += 1
 
 
+def _gh_field_value(tok, argv, j):
+    """Return the raw `name=value` text a field-flag token carries, or None if tok isn't one.
+
+    Mirrors the three shapes `gh_api_is_write` recognizes: exact (`-f`/`--field`, value is the
+    next argv token), long-glued (`--field=name=value`), and short-glued (`-fname=value`).
+    """
+    if tok in ("-f", "-F", "--field", "--raw-field"):
+        return argv[j + 1] if j + 1 < len(argv) else ""
+    if tok.startswith("--field=") or tok.startswith("--raw-field="):
+        return tok.split("=", 1)[1]
+    if len(tok) > 2 and tok[0] == "-" and tok[1] in ("f", "F"):
+        return tok[2:]
+    return None
+
+
 def gh_api_is_write(argv):
     """True if this `gh api ...` argv mutates state (explicit method or implicit-POST fields).
 
     Field/body flags are matched in every shape gh/pflag accepts: exact (`-f`, `--field`),
     long-glued (`--field=x=y`), and short-glued (`-ftitle=x`, `-Fkey=@file`) — the last of which
     is a real state-mutating POST that the exact/long checks alone miss (#121), mirroring the
-    glued `-XPOST` method handling.
+    glued `-XPOST` method handling. An explicit method always wins. Absent one, `gh api graphql`
+    is special-cased (#111): a field flag there is only flagged as a write when the `query`
+    field's text contains the `mutation` keyword, since `-f query=...` is also the standard way
+    to send a read-only GraphQL query — the argv shape alone can't tell a query from a mutation.
     """
-    method = None
+    is_graphql = len(argv) > 2 and argv[2] == "graphql"
+    explicit_method = None
+    implicit_write = False
+    query_text = None
     for j, tok in enumerate(argv):
         if tok in ("-X", "--method"):
             if j + 1 < len(argv):
-                method = argv[j + 1].upper()
+                explicit_method = argv[j + 1].upper()
         elif tok.startswith("-X") and len(tok) > 2:
-            method = tok[2:].upper()
+            explicit_method = tok[2:].upper()
         elif tok.startswith("--method="):
-            method = tok.split("=", 1)[1].upper()
+            explicit_method = tok.split("=", 1)[1].upper()
         elif (tok in FIELD_FLAGS or tok.split("=", 1)[0] in FIELD_FLAGS
               or (len(tok) > 2 and tok[0] == "-" and tok[1] in ("f", "F"))):
-            if method is None:
-                method = "POST"  # gh defaults to POST when any field/body flag is present, incl.
-                                  # glued short forms `-ftitle=x` / `-Fkey=@file` (#121)
-    return method in WRITE_METHODS
+            implicit_write = True  # gh defaults to POST when any field/body flag is present, incl.
+                                    # glued short forms `-ftitle=x` / `-Fkey=@file` (#121)
+            value = _gh_field_value(tok, argv, j)
+            if value is not None:
+                name, _, val = value.partition("=")
+                if name == "query":
+                    query_text = val
+    if explicit_method is not None:
+        return explicit_method in WRITE_METHODS
+    if is_graphql and query_text is not None:
+        return bool(GRAPHQL_MUTATION_RE.search(query_text))
+    return implicit_write
 
 
 def substitution_inners(command):

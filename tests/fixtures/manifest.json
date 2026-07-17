@@ -5,6 +5,8 @@
     {"hook": "block-egress.py", "stdin": "pretooluse/bash-gh-api-write.json", "expect_exit": 2, "desc": "gh api write in trailing argv position is blocked"},
     {"hook": "block-egress.py", "stdin": "pretooluse/bash-plain-echo.json", "expect_exit": 0, "desc": "a benign command is allowed"},
     {"hook": "block-egress.py", "stdin": "pretooluse/bash-gh-api-read.json", "expect_exit": 0, "desc": "a gh api read (GET) is allowed"},
+    {"hook": "block-egress.py", "stdin": "pretooluse/bash-gh-api-graphql-query.json", "expect_exit": 0, "desc": "a gh api graphql read-only query is allowed (#111)"},
+    {"hook": "block-egress.py", "stdin": "pretooluse/bash-gh-api-graphql-mutation.json", "expect_exit": 2, "desc": "a gh api graphql mutation is blocked (#111)"},
     {"hook": "block-egress.py", "stdin": "pretooluse/agent-generic-claude-no-model.json", "expect_exit": 0, "desc": "block-egress ignores a non-Bash tool_name (real envelope)"},
 
     {"hook": "require-delegation-model.py", "stdin": "pretooluse/agent-generic-claude-no-model.json", "expect_exit": 2, "desc": "generic subagent_type=claude with no model= is blocked"},

