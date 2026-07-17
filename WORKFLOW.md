@@ -58,9 +58,11 @@ They're not modes to choose between. You work; the pipeline runs.
 - **`~/.claude/fabric.json`** — the one declared truth: `workspace_root`, `orgs` (each with
   its `repos` + a `pipeline` pointer). Every tool reads it; nothing hardcodes a second copy.
   Edit it when a repo or org opts in/out — that's the only place it changes.
-- **`home/.claude/hooks/`** — the cardinal rails as code. `require-delegation-model` (live)
-  blocks a subagent with no explicit model. `verify-completion-claim` (built, off) blocks
-  "done" with no verification — arm it when you trust it (`hooks/README.md`).
+- **`home/.claude/hooks/`** — the cardinal rails as code. Live today: delegation-model
+  (blocks a subagent with no explicit model), the egress speed bump, and the
+  checkout-vs-worktree guard, all dispatched through one PreToolUse entry point.
+  `verify-completion-claim` is built but off — arm it when you trust it. `hooks/README.md`
+  is the definitive live/disabled list; don't re-enumerate it here, it drifts (#169).
 - **Security model** — one taxonomy, local and cloud: **Tier A** (irreversible/destructive,
   secret egress) blocks, human hands only; **Tier B** (everything else) ships and rolls
   back; **`hold`** is the one pipeline write-gate. Defined in

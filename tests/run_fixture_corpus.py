@@ -15,7 +15,10 @@ or neutering a gate at runtime. See tests/fixtures/README.md for the corpus layo
 regenerate/redact fixtures when the schema evolves.
 
 The manifest (tests/fixtures/manifest.json) lists cases of two kinds:
-  - "stdin"      : a full PreToolUse hook-input payload piped straight to the hook.
+  - "stdin"      : a full PreToolUse hook-input payload piped straight to the hook. A case may
+                   also set "cwd_template": "held_branch_repo" (#170) when the hook under test
+                   reads live git state from `cwd` (block-checkout-held-branch.py) — the fixture's
+                   placeholder cwd is swapped for a throwaway repo built by make_held_branch_repo().
   - "transcript" : a Stop-hook transcript JSONL; the runner synthesizes the Stop envelope
                    ({stop_hook_active, transcript_path -> the fixture}) and pipes that.
 
@@ -23,8 +26,10 @@ Exit 0 = every case matched its expected exit code; exit 1 = one or more mismatc
 printed with hook + fixture + expected/actual + description). Run: python3 tests/run_fixture_corpus.py
 """
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent            # tests/
@@ -42,6 +47,31 @@ STOP_ENVELOPE_BASE = {
     "stop_hook_active": False,
 }
 
+# block-checkout-held-branch.py consults live `git worktree list` state in the fixture's `cwd`
+# (#170) — unlike the other hooks here it cannot be exercised by static JSON alone. A case with
+# "cwd_template": "held_branch_repo" gets this placeholder swapped for a throwaway repo (mirrors
+# tests/test_hooks.sh's #123 setup: branch `held` checked out in a second worktree) built once and
+# torn down at the end of main().
+HELD_BRANCH_PLACEHOLDER = "__HELD_BRANCH_REPO__"
+
+
+def make_held_branch_repo():
+    """Build a throwaway repo whose branch `held` is checked out in a second worktree. Returns
+    (tmp_dir_to_clean_up, repo_path). Raises on any git failure — a broken fixture setup should
+    fail the corpus loudly, not silently skip the cases that need it."""
+    tmp = tempfile.mkdtemp(prefix="fixture-held-branch-")
+    repo = str(Path(tmp) / "repo")
+    heldwt = str(Path(tmp) / "heldwt")
+    subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(["git", "-C", repo, "branch", "held"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", repo, "worktree", "add", "-q", heldwt, "held"], check=True, capture_output=True)
+    return tmp, repo
+
 
 def run_hook(hook_path, stdin_bytes):
     """Pipe stdin_bytes to the hook and return its exit code (stdout/stderr suppressed)."""
@@ -54,10 +84,17 @@ def run_hook(hook_path, stdin_bytes):
     return proc.returncode
 
 
-def build_stdin(case):
-    """The stdin payload bytes for a case: a raw PreToolUse fixture, or a synthesized Stop envelope."""
+def build_stdin(case, held_branch_repo=None):
+    """The stdin payload bytes for a case: a raw PreToolUse fixture, or a synthesized Stop envelope.
+
+    `held_branch_repo` is the live repo path substituted for HELD_BRANCH_PLACEHOLDER when a case
+    is marked "cwd_template": "held_branch_repo" (see make_held_branch_repo).
+    """
     if "stdin" in case:
-        return (FIXTURES / case["stdin"]).read_bytes()
+        raw = (FIXTURES / case["stdin"]).read_bytes()
+        if case.get("cwd_template") == "held_branch_repo":
+            raw = raw.replace(HELD_BRANCH_PLACEHOLDER.encode(), held_branch_repo.encode())
+        return raw
     if "transcript" in case:
         transcript = FIXTURES / case["transcript"]
         if not transcript.exists():
@@ -80,6 +117,10 @@ def main():
         return 1
 
     fails = 0
+
+    held_branch_tmp = held_branch_repo = None
+    if any(case.get("cwd_template") == "held_branch_repo" for case in cases):
+        held_branch_tmp, held_branch_repo = make_held_branch_repo()
 
     referenced = {
         (FIXTURES / (case["stdin"] if "stdin" in case else case["transcript"])).resolve()
@@ -109,7 +150,7 @@ def main():
             continue
 
         try:
-            stdin_bytes = build_stdin(case)
+            stdin_bytes = build_stdin(case, held_branch_repo)
         except (FileNotFoundError, ValueError) as e:
             print(f"  FAIL: {hook_name} <- {src} — {e}", file=sys.stderr)
             fails += 1
@@ -124,6 +165,9 @@ def main():
                 file=sys.stderr,
             )
             fails += 1
+
+    if held_branch_tmp:
+        shutil.rmtree(held_branch_tmp, ignore_errors=True)
 
     total = len(cases) + len(orphans)
     if fails:
