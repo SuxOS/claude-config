@@ -28,10 +28,15 @@ This is deliberately self-contained: it grants autonomy (no gate), scopes the wo
 It's already the architecture — you don't babysit it:
 
 ```
-fixer (daily cron)  ─proposes issues→  issue-build (4×/day)  ─builds PRs→  automerge (on green)
-        ▲                                                                        │
-        └──────── pr-watch / pr-auto-update / pr-unstick keep PRs moving ────────┘
+fixer-bugs / fixer-30m / fixer (3-tier, 15m/30m/hourly)  ─proposes issues→  issue-build (hourly)  ─builds PRs→  automerge (on green)
 ```
+
+The three `fixer*.yml` cadences and `issue-build.yml`'s schedule live in
+`.github/workflows/` (see each file's `on.schedule` cron) — check there instead of this doc
+for exact timing, since it drifts as cadences get retuned. Not every repo runs the
+`pr-watch`/`pr-auto-update`/`pr-unstick` self-heal loop shown in earlier revisions of this
+doc — `claude-config` currently doesn't (see `.github/workflows/` for what's actually wired
+here).
 
 `orient` + `dispatch` from your session are the *operator's overlay* on this: `orient`
 finds cross-repo work the scheduled `fixer` misses; `dispatch` files it as issues (seeds

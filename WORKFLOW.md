@@ -26,6 +26,9 @@ The tools detect which locus you're in from your cwd and adapt. You never say it
 - **`paste`** — format output for wherever it's going (email/Slack/GitHub/terminal).
 - **`how`** — *find.* Meta helper, not locus-scoped: find the right skill/MCP/agent for a
   goal when none of the above is the obvious fit.
+- **`retro`** — *reflect.* Session-scoped, not locus-scoped: at end-of-session, scans this
+  conversation's transcript for lessons learned but never durably captured and proposes
+  concrete CLAUDE.md/doc edits for approval. Never fires automatically — always asked for.
 
 That's it. No marks, no counts, no adverbs. "carefully work the flaky auth tests across all
 repos" is a complete instruction. (One recognized exception: the `scope+=X`/`scope-=X`/

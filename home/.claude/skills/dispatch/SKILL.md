@@ -50,8 +50,15 @@ schedule of their own) plus its own self-contained pipeline for `.github`'s own 
 | green-merge | `automerge.yml` (+ `pr-drain.yml` reconcile backstop) | `self-automerge.yml` |
 | red-rebase | `pr-auto-update.yml` (+ `pr-unstick.yml`, `claude-autofix.yml`) | n/a — `.github` has no red-rebase loop of its own |
 
-Not every repo has every file yet (e.g. `claude-config` has no `pr-auto-update`/`pr-drain`/
-`pr-unstick`) — confirm with `gh workflow list --repo <org>/<r>` before disabling.
+Not every repo has every file (e.g. `claude-config` currently has no `pr-auto-update`/
+`pr-drain`/`pr-unstick` — a red/behind PR here has nothing to auto-rebase or unstick it,
+so it needs a manual `git pull --rebase` or `hold`/close) — confirm with
+`gh workflow list --repo <org>/<r>` before disabling. Wiring it is a repo-side thin wrapper
+around the `SuxOS/.github` reusable `pr-auto-update.yml`/`pr-unstick.yml` (mirroring
+`issue-build.yml`'s/`automerge.yml`'s pattern in this repo's `.github/workflows/`), but
+requires reading those reusable workflows' actual `workflow_call` inputs first — this
+bot's token can't reach `SuxOS/.github` (see the token-scope note in `CLAUDE.md`), so that
+step needs a human or a differently-scoped session.
 
 The exact sequence for "stop the remote workflows, do local surgery, then reenable":
 
