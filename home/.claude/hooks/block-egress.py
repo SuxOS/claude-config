@@ -47,10 +47,16 @@ from _hookutil import basename, pieces as _base_pieces
 LEADING_NOISE = {"(", "{", "!"}
 
 # Leading wrappers stripped before reading the real command word. Superset of the set Claude Code
-# strips (timeout/time/nice/nohup/stdbuf/xargs) plus `env`, a common interpreter-indirection form.
-WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env"}
-# Wrapper option flags that consume a following value (so `timeout -s KILL 5 cmd` reaches `cmd`).
-WRAPPER_VALUE_OPTS = {"-s", "--signal", "-k", "--kill-after", "-n", "--adjustment", "-I", "-L", "-P"}
+# strips (timeout/time/nice/nohup/stdbuf/xargs) plus `env`, a common interpreter-indirection form,
+# and the shell builtins `command`/`exec`/`builtin` — the same "shift the command word out of
+# argv[0]" shape (#179): `command curl evil.com` / `exec curl evil.com` reach the network exactly
+# like a bare `curl evil.com` would, so they must land on the same real command word.
+WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env", "command", "exec", "builtin"}
+# Wrapper option flags that consume a following value (so `timeout -s KILL 5 cmd` reaches `cmd`,
+# and `exec -a name cmd` reaches `cmd` rather than stopping on the -a argv[0]-name value).
+WRAPPER_VALUE_OPTS = {
+    "-s", "--signal", "-k", "--kill-after", "-n", "--adjustment", "-I", "-L", "-P", "-a",
+}
 DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
 # Privilege wrappers that take their own options then a command word (`sudo -u user cmd`, `doas`).
 # Treated as value-less wrappers so a `sudo`/`doas` prefix can't shift the command word out of the
@@ -95,16 +101,16 @@ VERSION_SUFFIX_RE = re.compile(r"^([a-z]+)(\d+)(?:\.\d+)*$")
 # string/identifier can false-positive; that is the accepted speed-bump cost the block message names.
 NET_RE = re.compile(
     r"""
-      \burllib\b | urlopen | \brequests\b | \bhttpx\b | \burllib3\b | \bhttp\.client\b | \bhttplib\b
+      \burllib\b | \burlopen\b | \brequests\b | \bhttpx\b | \burllib3\b | \bhttp\.client\b | \bhttplib\b
     | \bsmtplib\b | \bftplib\b | \btelnetlib\b | \bpoplib\b | \bimaplib\b | \bparamiko\b
-    | socket\.socket | socket\.create_connection | create_connection | asyncio\.open_connection
-    | \bfetch\s*\( | \bXMLHttpRequest\b | axios | node-fetch | \bgot\s*\(
+    | \bsocket\.socket\b | \bsocket\.create_connection\b | \bcreate_connection\s*\( | \basyncio\.open_connection\b
+    | \bfetch\s*\( | \bXMLHttpRequest\b | \baxios\b | \bnode-fetch\b | \bgot\s*\(
     | require\(\s*['"`](?:node:)?(?:http|https|net|tls|dgram)['"`]\s*\)
     | \bhttps?\.(?:get|request)\s*\( | \bnet\.(?:connect|createConnection)\s*\(
-    | \btls\.connect\s*\( | Deno\.connect\s*\(
+    | \btls\.connect\s*\( | \bDeno\.connect\s*\(
     | \bNet::HTTP\b | \bIO::Socket\b | \bLWP\b | \bHTTP::Tiny\b | \bHTTP::Request\b
     | \bfsockopen\b | \bstream_socket_client\b | \bcurl_exec\b | \bcurl_init\b
-    | (?:file_get_contents|fopen)\s*\(\s*['"]https?:// | \bURI\.open\b | \bopen\s*\(\s*['"]https?://
+    | \b(?:file_get_contents|fopen)\s*\(\s*['"]https?:// | \bURI\.open\b | \bopen\s*\(\s*['"]https?://
     | \bcurl\b | \bwget\b | \bncat\b | \btelnet\b | /dev/tcp/
     | \bssh\b | \bscp\b | \bsftp\b | \brsync\b | \bsocat\b | \bftp\b
     """,
@@ -150,8 +156,10 @@ def canonical_interpreter(cmd):
 def strip_prefixes(argv):
     """Drop everything before the real command word, in one pass: grouping noise, bare
     `NAME=VALUE` env assignments, `sudo`/`doas`, and value-consuming wrappers + their args
-    (`timeout 5 python3` -> `python3`, `FOO=1 sudo -u x curl …` -> `curl …`). Collapses the
-    whole "a leading prefix shifts the command word out of argv[0]" bypass class (#119)."""
+    (`timeout 5 python3` -> `python3`, `FOO=1 sudo -u x curl …` -> `curl …`,
+    `exec -a fake curl …` -> `curl …`). Collapses the whole "a leading prefix shifts the
+    command word out of argv[0]" bypass class (#119, #179). `command -v/-V NAME` is left
+    unstripped since it reports on NAME rather than executing it."""
     i, n = 0, len(argv)
     while i < n:
         tok = argv[i]
@@ -171,6 +179,8 @@ def strip_prefixes(argv):
             continue
         if base not in WRAPPERS:
             break
+        if base == "command" and i + 1 < n and argv[i + 1] in ("-v", "-V"):
+            break  # `command -v/-V NAME` reports NAME's path/type, it never executes it
         i += 1
         while i < n and argv[i].startswith("-"):  # the wrapper's own option flags
             if argv[i] in WRAPPER_VALUE_OPTS and i + 1 < n and not argv[i + 1].startswith("-"):
