@@ -10,7 +10,8 @@ runs and blocks the OBVIOUS, common egress forms those docs name that no deny ru
   1. INTERPRETER / SHELL inline-code egress one-liners — the argument to an interpreter's
      inline-eval flag (`python3 -c 'import urllib.request; ...'`, `node -e 'fetch(...)'`,
      `ruby/perl -e`, `php -r`, `bash -c '... curl ...'`) scanned for a named outbound primitive;
-  2. BARE network primitives as the command word (`curl`/`wget`/`ncat`/`nc`/`telnet`) or a
+  2. BARE network primitives as the command word (`curl`/`wget`/`ncat`/`nc`/`telnet`, plus the
+     remote-shell/copy/socket family `ssh`/`scp`/`sftp`/`rsync`/`socat`/`ftp`) or a
      `/dev/tcp`//dev/udp redirect in any command piece — the anchored `Bash(curl *)` deny only
      fires when the primitive is the FIRST word, so one after `&&`/`;`/`|` (or behind a prefix)
      slips it (security-model.md:9);
@@ -108,8 +109,14 @@ NET_RE = re.compile(
 # other half of the anchored-deny gap (#115): `Bash(curl *)` matches only when `curl` is the
 # first word, so `… && curl …` or `sudo curl …` slips it. Checked against the command word after
 # prefix-stripping (unambiguous, unlike a substring scan of the whole line), plus a token scan for
-# bash's `/dev/tcp`//dev/udp egress redirect (`echo x > /dev/tcp/host/port`).
-BARE_NET_BINARIES = {"curl", "wget", "ncat", "nc", "telnet"}
+# bash's `/dev/tcp`//dev/udp egress redirect (`echo x > /dev/tcp/host/port`). The remote-shell /
+# copy / socket family (`ssh`/`scp`/`sftp`/`rsync`/`socat`/`ftp`) is the same class (#131): they
+# are exfil primitives too and the `Bash(ssh *)`/`Bash(scp *)` denies likewise fire only on the
+# first word — a chained/prefixed `… && ssh evil` slips both the deny and this check without them.
+BARE_NET_BINARIES = {
+    "curl", "wget", "ncat", "nc", "netcat", "telnet",
+    "ssh", "scp", "sftp", "rsync", "socat", "ftp",
+}
 DEV_TCP_RE = re.compile(r"/dev/(?:tcp|udp)/")
 
 # `gh api` write signals: an explicit mutating method, or gh's implicit-POST field/body flags.
