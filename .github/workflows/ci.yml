@@ -54,3 +54,19 @@ jobs:
 
       - name: lint settings.json permission rules
         run: python3 .github/scripts/lint-settings.py
+
+  # Verifies the Python hooks under home/.claude/hooks/ the way `shellcheck` verifies the *.sh
+  # scripts: byte-compiles every tracked *.py (syntax/import regressions) and asserts each live
+  # hook's documented exit-code contract (2 = block, 0 = allow) against synthetic hook-input JSON
+  # — e.g. the subagent_type=fork exemption and the stop_hook_active self-limit. Without this a
+  # broken hook merges silently and only surfaces at runtime as a wedged session or a neutered
+  # gate (#40, #41). Advisory until added to the ruleset + automerge.yml required-gates in lockstep.
+  hooks-test:
+    name: hooks-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: compile and exercise the Python hooks
+        run: bash tests/test_hooks.sh
