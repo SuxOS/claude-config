@@ -38,7 +38,9 @@ def skill_name_from_path(path):
     """The owning skill directory for .../skills/<name>/evals/evals.json, or None if not that shape."""
     parts = path.resolve().parts
     try:
-        i = parts.index("skills")
+        # last occurrence: an ancestor dir (e.g. a checkout under ~/dev/skills/) can also be named
+        # "skills", but the fixture layout is always .../skills/<name>/evals/evals.json.
+        i = len(parts) - 1 - parts[::-1].index("skills")
     except ValueError:
         return None
     # skills/<name>/evals/evals.json  → <name> is the segment right after "skills".
