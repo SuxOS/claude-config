@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(git *)",
-      "Bash(gh *)",
+      "Bash(gh pr *)",
+      "Bash(gh issue *)",
+      "Bash(gh run *)",
+      "Bash(gh workflow *)",
+      "Bash(gh repo *)",
+      "Bash(gh search *)",
+      "Bash(gh api *)",
       "Bash(npx wrangler *)",
       "Bash(npm *)",
       "Bash(python3 *)",
@@ -14,7 +20,6 @@
       "Bash(ls *)",
       "Bash(echo *)",
       "Bash(printf *)",
-      "Bash(tar *)",
       "Bash(node *)",
       "WebFetch",
       "WebSearch",
@@ -26,8 +31,16 @@
     ],
     "deny": [
       "Bash(curl *)",
+      "Bash(wget *)",
       "Bash(ssh *)",
       "Bash(scp *)",
+      "Bash(tar *)",
+      "Bash(gh secret *)",
+      "Bash(gh auth *)",
+      "Bash(gh repo delete *)",
+      "Bash(gh repo edit *)",
+      "Bash(gh repo transfer *)",
+      "Bash(gh api *)",
       "Bash(npx wrangler deploy)",
       "Bash(npx wrangler deploy *)",
       "Bash(npx wrangler delete)",
@@ -105,21 +118,21 @@
         "source": "github",
         "repo": "cloudflare/skills"
       },
-      "autoUpdate": true
+      "autoUpdate": false
     },
     "sux": {
       "source": {
         "source": "github",
         "repo": "SuxOS/sux"
       },
-      "autoUpdate": true
+      "autoUpdate": false
     },
     "grafana-ai-marketplace": {
       "source": {
         "source": "github",
         "repo": "grafana/ai-marketplace"
       },
-      "autoUpdate": true
+      "autoUpdate": false
     },
     "claude-plugins-official": {
       "source": {
@@ -135,7 +148,7 @@
   "autoMode": {
     "allow": [
       "$defaults",
-      "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, python3, node, grep/find/sed/awk/cat/ls/tar), including setting non-secret configuration",
+      "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, python3, node, grep/find/sed/awk/cat/ls), including setting non-secret configuration",
       "Read- and list-shaped MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian); destructive Cloudflare MCP tools (create/update/edit/delete for d1, kv, r2, hyperdrive) are Tier A and denied by exact tool name in permissions.deny — Claude Code's deny matches exact names, not patterns, so each destructive tool must be listed explicitly there",
       "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and inspecting Cloudflare Worker state via read-only wrangler subcommands (tail, deployments list, kv key get) — deploy, secret, and delete subcommands are Tier A, denied, and require human hands"
     ]

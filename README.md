@@ -22,6 +22,7 @@ home/.claude/
   skills/         orient · work · dispatch · paste  (+ AUTHORING.md)
   hooks/          cardinal rails as code (require-delegation-model live; see hooks/README.md)
   settings.json   reference snapshot only — NOT symlinked (see below)
+  settings.README.md  what actually enforces under bypassPermissions (deny-only) + rule semantics
 WORKFLOW.md       the development loop — start here
 ```
 
@@ -39,6 +40,10 @@ into this repo, so edits made live (by Claude or by hand) land directly in git �
 (permissions grants, plugin state, etc.), which would fight a symlink. Treat the
 copy here as a reference/backup; sync changes over manually when they're worth
 keeping.
+
+Its `permissions.deny` list runs under `bypassPermissions` and is a defense-in-depth
+speed bump, **not** a real egress boundary — see
+[`docs/security-model.md`](docs/security-model.md) for the threat model and why.
 
 Everything else under `~/.claude` (sessions, cache, daemon state, telemetry,
 plugin marketplaces, history) is machine/runtime state and intentionally not
