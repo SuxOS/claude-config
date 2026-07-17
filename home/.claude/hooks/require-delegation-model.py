@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """PreToolUse hook (matcher: Agent) — enforce cardinal rule #1: never inherit the model.
 
-Blocks an Agent delegation that sets no explicit model=, so every fork picks its tier
-deliberately (haiku for mechanical, top for hard verify/judge) instead of silently
-inheriting the orchestrator's session model — the exact failure rule #1 names.
+Blocks an Agent delegation that would silently inherit the orchestrator's session model
+instead of picking a tier deliberately (haiku for mechanical, top for hard verify/judge) —
+the exact failure rule #1 names.
 
-Exempt: subagent_type=fork, which inherits the parent model by design and cannot override.
+That only applies to the generic default agent: subagent_type absent, "general-purpose", or
+"claude" (FleetView's own default) all resolve to the session model with no model= given.
+A NAMED subagent_type (Explore, Plan, code-reviewer, or any other custom agent) has its model
+pinned in its own definition/frontmatter — omitting model= there means "use the agent's
+deliberately-chosen tier," not "inherit the session model," and the Agent tool's own guidance
+recommends omitting it in that case. So named types are exempt, same as subagent_type=fork
+(which inherits the parent model by design and cannot override).
+
 Fail-open on any parse error — a hook bug must never wedge the session.
 """
 import json
 import sys
+
+GENERIC_SUBAGENT_TYPES = {"", "general-purpose", "claude"}
 
 try:
     data = json.load(sys.stdin)
@@ -21,7 +30,11 @@ if data.get("tool_name") != "Agent":
 
 ti = data.get("tool_input") or {}
 
-if ti.get("subagent_type") == "fork":
+subagent_type = ti.get("subagent_type") or ""
+if subagent_type == "fork":
+    sys.exit(0)
+
+if subagent_type not in GENERIC_SUBAGENT_TYPES:
     sys.exit(0)
 
 if ti.get("model"):

@@ -58,6 +58,11 @@
   constrain Bash arguments, and a plugin MCP deny must be `mcp__plugin_<plugin>_<server>__<tool>`
   or it silently fails open with no warning. Verify the matcher against the live tool surface
   before scoping any rule in `settings.json` (see `home/.claude/settings.README.md`).
+- **Security issues can cite stale line numbers/rules.** The issue-authoring loop can snapshot
+  an aggregate/planned state across several in-flight security PRs rather than HEAD, so a
+  security issue's cited line numbers or its claim that a deny rule "already exists" may not
+  match the live file. Re-derive the fix from `settings.json` at HEAD, never trust the issue's
+  line refs or already-added claims at face value.
 - **`install.sh` symlinks every entry under `home/.claude/` into `~/.claude/`** (except
   `settings.json`/`CLAUDE.md`), so repo-/CI-only tooling must NOT live there or it lands in the
   user's live config — put linters, CI scripts, etc. under `.github/` instead. Adding a new

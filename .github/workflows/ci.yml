@@ -70,3 +70,39 @@ jobs:
 
       - name: compile and exercise the Python hooks
         run: bash tests/test_hooks.sh
+
+  # settings.json, fabric.json, and the skill evals.json files are the repo's most load-bearing
+  # artifacts — edited by hand and by autonomous agents (the fixer/issue-build pipeline) — and a
+  # malformed one fails silently: Claude Code just ignores/rejects it with nothing here to catch
+  # it before merge (#65). Cheap, mechanical: every tracked *.json must parse. Advisory until
+  # added to the main-branch ruleset AND automerge.yml required-gates in lockstep (same as
+  # settings-lint/hooks-test above).
+  json-validate:
+    name: json-validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: validate tracked JSON files parse
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.json')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no tracked JSON files to validate"; exit 0
+          fi
+          fail=0
+          for f in "${files[@]}"; do
+            if err=$(python3 -m json.tool "$f" 2>&1 >/dev/null); then
+              echo "  ok: $f"
+            else
+              echo "  FAIL: $f" >&2
+              echo "$err" >&2
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "JSON VALIDATION FAILED" >&2
+            exit 1
+          fi
+          echo "all tracked JSON files parse"
