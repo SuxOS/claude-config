@@ -54,8 +54,9 @@ follows the URL). This raises the casual/accidental bar — but it is still a **
 seal**, and the durable lesson stands: base64/variable-obfuscated payloads, sockets built without a
 named primitive, and interpreters fed code from a file or stdin all pass it, so a *complete* egress
 boundary still needs OS-level network sandboxing. The hook makes the gh-api gap enforceable at the
-argv layer, which is what would let the blanket `Bash(gh api *)` deny be safely narrowed later to
-re-allow the read-only `gh api repos/…` GETs the skills use.
+argv layer, which is what let the deny be narrowed back (#76) from a blanket `Bash(gh api *)` to
+just the two write-method forms above — restoring the read-only `gh api repos/…` GETs the skills
+use, while the hook still catches writes that slip past the URL-then-flag ordering gap.
 
 Tracked in the security-hardening issue stream
 (#33 / #36 / #37 / #43 / #44 / #45 / #46 / #53 / #58 / #63 / #68 / #69 / #71 / #77).

@@ -32,17 +32,28 @@ VERIFY = re.compile(
 CODE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".rb", ".java", ".c", ".cpp", ".sh")
 
 
+def is_tool_result(record):
+    """True if a role:'user' record is actually a tool-result carrier, not a human prompt."""
+    if "toolUseResult" in record:
+        return True
+    msg = record.get("message") or record
+    content = msg.get("content")
+    if isinstance(content, list):
+        return any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+    return False
+
+
 def turn_lines(transcript_path):
-    """Yield the JSONL records for the most recent turn (since the last user message)."""
+    """Yield the JSONL records for the most recent turn (since the last genuine user message)."""
     try:
         with open(transcript_path) as f:
             records = [json.loads(line) for line in f if line.strip()]
     except Exception:
         return []
-    # Walk back to the last user message; everything after is this turn.
+    # Walk back to the last human user message, skipping tool-result records (also role:"user").
     for i in range(len(records) - 1, -1, -1):
         role = (records[i].get("message") or {}).get("role") or records[i].get("role")
-        if role == "user":
+        if role == "user" and not is_tool_result(records[i]):
             return records[i + 1 :]
     return records
 
