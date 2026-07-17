@@ -7,9 +7,12 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
 ## Live
 
 - **`require-delegation-model.py`** — PreToolUse (matcher `Agent`). Enforces cardinal rule #1
-  (never inherit the model): blocks an `Agent` delegation with no explicit `model=` so every fork
-  picks its tier deliberately. Exempts `subagent_type=fork` (inherits by design). Wired in
-  settings.json under `hooks.PreToolUse`.
+  (never inherit the model): blocks an `Agent` delegation with no explicit `model=` when
+  `subagent_type` is absent, `general-purpose`, or `claude` — the generic cases that silently
+  inherit the orchestrator's session model. Exempts `subagent_type=fork` (inherits by design) and
+  any other NAMED subagent_type (e.g. `Explore`, `Plan`, `code-reviewer`), since those resolve
+  their model from their own agent definition and omitting `model=` there is the recommended,
+  rule-compliant usage. Wired in settings.json under `hooks.PreToolUse`.
 - **`block-egress.py`** — PreToolUse (matcher `Bash`). The egress speed bump the security stream
   keeps pointing at (#77, docs/security-model.md): parses the command's argv and blocks the two
   obvious egress forms no `permissions.deny` rule can catch — interpreter/shell inline-code
