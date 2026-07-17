@@ -141,6 +141,31 @@ def offending(command, cwd):
     return None
 
 
+def check(command, cwd):
+    """Dispatcher-facing predicate (#163): (command, cwd) -> full block message, or None.
+
+    Fails open (returns None) when `cwd` can't be resolved (CLAUDE.md's documented contract for
+    this hook) — the process's own cwd isn't reliably the project dir, so never substitute it.
+    """
+    if cwd is None:
+        return None
+    try:
+        hit = offending(command, cwd)
+    except Exception:
+        return None
+    if not hit:
+        return None
+    target, held = hit
+    return (
+        f"Worktree guard (PreToolUse): `git checkout {target}` / `git switch {target}` was blocked "
+        f"because branch `{target}` is already checked out in another worktree ({held}). git makes "
+        "this a SILENT NO-OP — not an error — so the working tree would not move and later commands "
+        "would run against the wrong branch (CLAUDE.md dev-speed tactics). Work in that worktree "
+        f"directly (`cd {held}`), or if you need this branch's tree here, add a detached scratch "
+        f"worktree (`git worktree add --detach <path> {target}`) instead of switching in place."
+    )
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -154,30 +179,15 @@ def main():
     if not isinstance(command, str):
         sys.exit(0)
 
-    cwd = data.get("cwd") or None
-    if cwd is None:
-        # Fail open when cwd can't be resolved (CLAUDE.md's documented contract for this hook) —
-        # the process's own cwd isn't reliably the project dir, so never substitute it.
-        sys.exit(0)
-
     try:
-        hit = offending(command, cwd)
+        message = check(command, data.get("cwd") or None)
     except Exception:
         sys.exit(0)  # never wedge the session on a hook bug
 
-    if not hit:
+    if not message:
         sys.exit(0)
 
-    target, held = hit
-    print(
-        f"Worktree guard (PreToolUse): `git checkout {target}` / `git switch {target}` was blocked "
-        f"because branch `{target}` is already checked out in another worktree ({held}). git makes "
-        "this a SILENT NO-OP — not an error — so the working tree would not move and later commands "
-        "would run against the wrong branch (CLAUDE.md dev-speed tactics). Work in that worktree "
-        f"directly (`cd {held}`), or if you need this branch's tree here, add a detached scratch "
-        f"worktree (`git worktree add --detach <path> {target}`) instead of switching in place.",
-        file=sys.stderr,
-    )
+    print(message, file=sys.stderr)
     sys.exit(2)
 
 

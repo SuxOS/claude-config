@@ -44,8 +44,9 @@ egress denies, not just the later additions — none of them is a network bounda
 
 ## The first enforced step: `block-egress.py` (#77)
 
-A `PreToolUse` hook — `home/.claude/hooks/block-egress.py`, wired under `hooks.PreToolUse` with a
-`Bash` matcher — now takes the first concrete step of the "different mechanism" above. It parses
+A `PreToolUse` hook — `home/.claude/hooks/block-egress.py`, registered as a rail behind the single
+`pretooluse-bash.py` dispatcher wired under `hooks.PreToolUse` with a `Bash` matcher (#163) — now
+takes the first concrete step of the "different mechanism" above. It parses
 each Bash command's argv **before it runs** and blocks the obvious egress forms the deny list
 structurally cannot: interpreter/shell inline-code one-liners that open a socket
 (`python3 -c 'import urllib…'`, `node -e 'fetch(…)'`, `bash -c '…curl…'`); a bare network primitive

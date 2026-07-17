@@ -13,23 +13,34 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   any other NAMED subagent_type (e.g. `Explore`, `Plan`, `code-reviewer`), since those resolve
   their model from their own agent definition and omitting `model=` there is the recommended,
   rule-compliant usage. Wired in settings.json under `hooks.PreToolUse`.
-- **`block-egress.py`** — PreToolUse (matcher `Bash`). The egress speed bump the security stream
-  keeps pointing at (#77, docs/security-model.md): parses the command's argv and blocks the two
-  obvious egress forms no `permissions.deny` rule can catch — interpreter/shell inline-code
-  one-liners that open a socket (`python3 -c 'import urllib…'`, `node -e 'fetch(…)'`, `bash -c
-  '…curl…'`) and `gh api` **writes** in any argv position (`gh api /repos/O/R -X DELETE`, which
-  slips the prefix deny). **Honest about being a speed bump, not a seal** — base64/obfuscated
-  payloads and file-fed code still pass; a real boundary needs OS-level network sandboxing. Wired
-  in settings.json under `hooks.PreToolUse`; fails open on any error.
-- **`block-checkout-held-branch.py`** — PreToolUse (matcher `Bash`). Enforces the git-checkout-vs-
-  worktree cardinal rail (CLAUDE.md dev-speed tactics, #123): `git checkout <branch>` / `git switch
-  <branch>` is a **silent no-op — not an error** — when that branch is already checked out in another
-  worktree, so the working tree never moves and later commands run against the wrong branch. Parses
-  the command for a real single-branch switch (not creation `-b`/`-c`, not `--detach`, not a `--`
-  path restore), consults `git worktree list` for the invoking cwd, and blocks with guidance (work
-  in that worktree, or add a detached scratch worktree) when the target is held elsewhere. First of
-  the additional cardinal rails the architecture invites; candidates like flagging `sleep`-in-a-loop
-  polling remain follow-ups. Wired in settings.json under `hooks.PreToolUse`; fails open on any error.
+- **`pretooluse-bash.py`** — PreToolUse (matcher `Bash`). The single envelope dispatcher for every
+  Bash-command rail (#163): reads `json.load(sys.stdin)` ONCE, guards `tool_name != "Bash"` and a
+  non-string `tool_input.command` ONCE, then runs a registered list of pure `check(command, cwd) ->
+  message | None` predicates — one per rail, defined in and testable from the rail's own module —
+  and prints+exits 2 on the first hit. This is the only entry wired in settings.json under
+  `hooks.PreToolUse` for the `Bash` matcher; `block-egress.py` and `block-checkout-held-branch.py`
+  below are loaded by it (via `importlib`, since their filenames are hyphenated) rather than run as
+  separate hook processes. Each stays directly runnable via stdin for the manual-test recipe below
+  and its own entry in `tests/test_hooks.sh`. Add a new rail by giving its module a `check(command,
+  cwd)` function and registering it in `pretooluse-bash.py`'s `CHECKS` tuple.
+- **`block-egress.py`** — the egress speed bump the security stream keeps pointing at (#77,
+  docs/security-model.md): parses the command's argv and blocks the two obvious egress forms no
+  `permissions.deny` rule can catch — interpreter/shell inline-code one-liners that open a socket
+  (`python3 -c 'import urllib…'`, `node -e 'fetch(…)'`, `bash -c '…curl…'`) and `gh api` **writes**
+  in any argv position (`gh api /repos/O/R -X DELETE`, which slips the prefix deny). **Honest about
+  being a speed bump, not a seal** — base64/obfuscated payloads and file-fed code still pass; a real
+  boundary needs OS-level network sandboxing. Registered with `pretooluse-bash.py` via its
+  `check(command, cwd)`; fails open on any error.
+- **`block-checkout-held-branch.py`** — enforces the git-checkout-vs-worktree cardinal rail
+  (CLAUDE.md dev-speed tactics, #123): `git checkout <branch>` / `git switch <branch>` is a **silent
+  no-op — not an error** — when that branch is already checked out in another worktree, so the
+  working tree never moves and later commands run against the wrong branch. Parses the command for a
+  real single-branch switch (not creation `-b`/`-c`, not `--detach`, not a `--` path restore),
+  consults `git worktree list` for the invoking cwd, and blocks with guidance (work in that worktree,
+  or add a detached scratch worktree) when the target is held elsewhere. First of the additional
+  cardinal rails the architecture invites; candidates like flagging `sleep`-in-a-loop polling remain
+  follow-ups. Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any
+  error.
 
 ## Available but DISABLED by default
 

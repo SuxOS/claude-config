@@ -95,15 +95,15 @@ VERSION_SUFFIX_RE = re.compile(r"^([a-z]+)(\d+)(?:\.\d+)*$")
 # string/identifier can false-positive; that is the accepted speed-bump cost the block message names.
 NET_RE = re.compile(
     r"""
-      urllib | urlopen | \brequests\b | httpx | urllib3 | http\.client | httplib
-    | smtplib | ftplib | telnetlib | poplib | imaplib | paramiko
+      \burllib\b | urlopen | \brequests\b | \bhttpx\b | \burllib3\b | \bhttp\.client\b | \bhttplib\b
+    | \bsmtplib\b | \bftplib\b | \btelnetlib\b | \bpoplib\b | \bimaplib\b | \bparamiko\b
     | socket\.socket | socket\.create_connection | create_connection | asyncio\.open_connection
-    | \bfetch\s*\( | XMLHttpRequest | axios | node-fetch | \bgot\s*\(
+    | \bfetch\s*\( | \bXMLHttpRequest\b | axios | node-fetch | \bgot\s*\(
     | require\(\s*['"`](?:node:)?(?:http|https|net|tls|dgram)['"`]\s*\)
     | \bhttps?\.(?:get|request)\s*\( | \bnet\.(?:connect|createConnection)\s*\(
     | \btls\.connect\s*\( | Deno\.connect\s*\(
-    | Net::HTTP | IO::Socket | \bLWP\b | HTTP::Tiny | HTTP::Request
-    | fsockopen | stream_socket_client | curl_exec | curl_init
+    | \bNet::HTTP\b | \bIO::Socket\b | \bLWP\b | \bHTTP::Tiny\b | \bHTTP::Request\b
+    | \bfsockopen\b | \bstream_socket_client\b | \bcurl_exec\b | \bcurl_init\b
     | (?:file_get_contents|fopen)\s*\(\s*['"]https?:// | \bURI\.open\b | \bopen\s*\(\s*['"]https?://
     | \bcurl\b | \bwget\b | \bncat\b | \btelnet\b | /dev/tcp/
     | \bssh\b | \bscp\b | \bsftp\b | \brsync\b | \bsocat\b | \bftp\b
@@ -374,6 +374,26 @@ def offending(command):
     return None
 
 
+def check(command, cwd):
+    """Dispatcher-facing predicate (#163): (command, cwd) -> full block message, or None.
+
+    `cwd` is unused here — this rail needs no repo state — but the parameter is part of the
+    shared `check(command, cwd) -> reason | None` contract `pretooluse-bash.py` registers every
+    rail against, so every predicate takes it even when it's ignored.
+    """
+    reason = offending(command)
+    if not reason:
+        return None
+    return (
+        "Egress speed bump (PreToolUse): this Bash command was blocked because it looks like "
+        f"{reason}. Direct network egress from an interpreter or a `gh api` write is not an "
+        "approved path here (docs/security-model.md). If you need to fetch a URL use WebFetch/"
+        "WebSearch; for GitHub reads use the read-only `gh` subcommands or a `gh api ... GET`. "
+        "If this is a legitimate non-egress command that tripped a substring match, restructure "
+        "it so the flagged token isn't present."
+    )
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -388,22 +408,14 @@ def main():
         sys.exit(0)
 
     try:
-        reason = offending(command)
+        message = check(command, data.get("cwd") or None)
     except Exception:
         sys.exit(0)  # never wedge the session on a hook bug
 
-    if not reason:
+    if not message:
         sys.exit(0)
 
-    print(
-        "Egress speed bump (PreToolUse): this Bash command was blocked because it looks like "
-        f"{reason}. Direct network egress from an interpreter or a `gh api` write is not an "
-        "approved path here (docs/security-model.md). If you need to fetch a URL use WebFetch/"
-        "WebSearch; for GitHub reads use the read-only `gh` subcommands or a `gh api ... GET`. "
-        "If this is a legitimate non-egress command that tripped a substring match, restructure "
-        "it so the flagged token isn't present.",
-        file=sys.stderr,
-    )
+    print(message, file=sys.stderr)
     sys.exit(2)
 
 
