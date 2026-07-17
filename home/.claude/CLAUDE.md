@@ -58,6 +58,12 @@
   constrain Bash arguments, and a plugin MCP deny must be `mcp__plugin_<plugin>_<server>__<tool>`
   or it silently fails open with no warning. Verify the matcher against the live tool surface
   before scoping any rule in `settings.json` (see `home/.claude/settings.README.md`).
+- **An issue-build branch can itself lag `origin/main`**, not just an issue's cited line
+  numbers — when a sibling build merges first, the branch this build was cut from predates
+  that merge. Before editing a shared file (e.g. `block-egress.py`, `tests/test_hooks.sh`),
+  `git fetch origin main` and diff/rebase against it, then re-derive the fix from the
+  rebased HEAD — otherwise you can reintroduce something a merged sibling already fixed, or
+  hit an avoidable rebase conflict.
 - **Security issues can cite stale line numbers/rules.** The issue-authoring loop can snapshot
   an aggregate/planned state across several in-flight security PRs rather than HEAD, so a
   security issue's cited line numbers or its claim that a deny rule "already exists" may not
