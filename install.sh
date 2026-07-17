@@ -60,6 +60,29 @@ if [ -e "$settings_dest" ]; then
   echo
   echo "settings.json already exists at $settings_dest — not overwritten."
   echo "Reference copy at $settings_src — diff/merge manually as needed."
+  if command -v jq >/dev/null 2>&1; then
+    missing_deny="$(jq -n --slurpfile src "$settings_src" --slurpfile dest "$settings_dest" \
+      '(($src[0].permissions.deny // []) - ($dest[0].permissions.deny // [])) | .[]' 2>/dev/null || true)"
+    missing_hooks="$(jq -n --slurpfile src "$settings_src" --slurpfile dest "$settings_dest" \
+      '(($src[0].hooks // {}) | [.. | objects | .command? // empty]) as $src_cmds |
+       (($dest[0].hooks // {}) | [.. | objects | .command? // empty]) as $dest_cmds |
+       ($src_cmds - $dest_cmds) | .[]' 2>/dev/null || true)"
+    if [ -n "$missing_deny" ] || [ -n "$missing_hooks" ]; then
+      echo
+      echo "Your settings.json is missing security updates from the repo reference:"
+      if [ -n "$missing_deny" ]; then
+        while IFS= read -r rule; do
+          echo "  missing permissions.deny rule: $rule"
+        done <<< "$missing_deny"
+      fi
+      if [ -n "$missing_hooks" ]; then
+        while IFS= read -r cmd; do
+          echo "  missing hook command: $cmd"
+        done <<< "$missing_hooks"
+      fi
+      echo "Merge these by hand from $settings_src."
+    fi
+  fi
 elif [ -e "$settings_src" ]; then
   cp -n "$settings_src" "$settings_dest"
   echo
