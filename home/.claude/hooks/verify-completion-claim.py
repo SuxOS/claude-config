@@ -13,6 +13,7 @@ Then it blocks the stop and reminds the model to produce fresh evidence. Fail-op
 parse error — a hook bug must never wedge the session.
 """
 import json
+import os
 import re
 import sys
 
@@ -46,6 +47,22 @@ def turn_lines(transcript_path):
     return records
 
 
+def edited_file_paths(records):
+    """Yield file_path values from Edit/Write tool_use blocks in this turn's records."""
+    for r in records:
+        msg = r.get("message") or r
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use" and block.get("name") in ("Edit", "Write"):
+                path = (block.get("input") or {}).get("file_path")
+                if isinstance(path, str):
+                    yield path
+
+
 def main():
     try:
         data = json.load(sys.stdin)
@@ -59,8 +76,8 @@ def main():
         sys.exit(0)
 
     blob = json.dumps(records)
-    edited_code = bool(re.search(r'"(Edit|Write)"', blob)) and any(
-        ext in blob for ext in CODE_EXT
+    edited_code = any(
+        os.path.splitext(path)[1] in CODE_EXT for path in edited_file_paths(records)
     )
     final_text = ""
     for r in reversed(records):
