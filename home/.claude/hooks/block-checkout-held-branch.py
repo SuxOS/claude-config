@@ -55,9 +55,16 @@ def checkout_target(argv):
     while i < n:                      # walk past git global options to the subcommand
         tok = argv[i]
         if tok in GIT_GLOBAL_VALUE_OPTS:
+            # `-C <dir>`/`--git-dir <dir>`/`--work-tree <dir>` redirect git at a DIFFERENT repo
+            # than the hook-input cwd — checking cwd's worktrees would consult the wrong repo, so
+            # treat this as unparsable-for-our-purposes and allow (conservative, per #154).
+            if tok in ("-C", "--git-dir", "--work-tree"):
+                return None
             i += 2
             continue
         if tok.startswith("-"):
+            if tok.startswith("--git-dir=") or tok.startswith("--work-tree="):
+                return None
             i += 1
             continue
         break
@@ -148,6 +155,10 @@ def main():
         sys.exit(0)
 
     cwd = data.get("cwd") or None
+    if cwd is None:
+        # Fail open when cwd can't be resolved (CLAUDE.md's documented contract for this hook) —
+        # the process's own cwd isn't reliably the project dir, so never substitute it.
+        sys.exit(0)
 
     try:
         hit = offending(command, cwd)
