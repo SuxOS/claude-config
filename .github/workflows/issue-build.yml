@@ -8,9 +8,11 @@ name: Issue build
 # Reusable workflow: SuxOS/.github/.github/workflows/issue-build.yml
 
 on:
+  schedule:
+    - cron: "27 * * * *" # hourly, offset from sibling repos to spread shared-subscription load
+  workflow_dispatch:
   issues:
     types: [labeled]
-  workflow_dispatch:
 
 jobs:
   issue-build:
