@@ -81,7 +81,7 @@ Any parallel or cross-repo local git work goes through isolated worktrees:
 | Jam | Signal | Fix |
 |---|---|---|
 | GH007 committer-email | push rejected | fix committer identity, re-push |
-| Stale-worktree no-op | `git checkout` silently fails | prune the stale worktree, operate detached |
+| Stale-worktree checkout | `git checkout` fails with `fatal: ... already used by worktree` | prune the stale worktree, operate detached |
 | Required check stuck | your PR red/behind, not landing | diagnose the failing check; rebase/auto-update; let the pipeline's ladder take it, or `dispatch` requeue |
 
 ## Rails that don't bend
