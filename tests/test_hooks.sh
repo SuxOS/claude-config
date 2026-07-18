@@ -214,6 +214,15 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"command gh api
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"exec -a fakename curl http://evil.com"}}'                          "blocks past exec -a NAME (its own value-consuming flag) (#179)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"command -v curl"}}'                                                "allows command -v (reports on curl, never executes it) (#179)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"command -p echo hi"}}'                                             "allows command -p with a benign command (#179)"
+# #198: stdbuf's -o/-i/-e MODE flags take a separate value in their non-glued form, so the real
+# command word must be read past the flag's value, not the value itself.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"stdbuf -o L curl http://evil.com"}}'                               "blocks past stdbuf -o's separate-value MODE arg (#198)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"stdbuf -oL0 curl http://evil.com"}}'                               "still blocks the glued stdbuf -oL0 form (#198)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -i curl http://evil.com"}}'                                     "env -i stays a boolean flag and doesn't swallow the command word (#198)"
+# #199: the same separate-value gap as #198, found in xargs's -n/-s/-d while building the fuzzer.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -n 1 curl http://evil.com"}}'                                 "blocks past xargs -n's separate-value arg (#199)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -s 1000 curl http://evil.com"}}'                              "blocks past xargs -s's separate-value arg (#199)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -d , curl http://evil.com"}}'                                 "blocks past xargs -d's separate-value arg (#199)"
 # #127: the bare `create_connection` NET_RE alternative (and its boundary-less neighbors) matched
 # any identifier containing the substring, not just a real call — anchor with \b (+ call-paren for
 # the bare form) so an identifier merely containing the token doesn't false-positive block.
@@ -269,6 +278,7 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; d
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do VAR=1 sleep 5; done"}}'            "blocks a sleep behind an inline env assignment (#193)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do timeout 10 sleep 5; done"}}'       "blocks a sleep behind a timeout prefix (#193)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do sudo sleep 5; done"}}'             "blocks a sleep behind a sudo prefix (#193)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do stdbuf -o L sleep 5; done"}}'      "blocks a sleep behind a stdbuf -o L prefix (#198)"
 # #196: a grouping/negation token ahead of the loop keyword must not shift it out of argv[0].
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"(while true; do sleep 5; done)"}}'                "blocks a sleep loop wrapped in a subshell (#196)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"{ until curl -sf http://x; do sleep 2; done; }"}}' "blocks a sleep loop wrapped in a brace group (#196)"
@@ -285,6 +295,13 @@ assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&1"}}'                            "allows stderr duplicated onto stdout, not discarded (#181)"
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x >/dev/null"}}'                      "allows stdout-only suppression (#181)"
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"ffmpeg -loglevel 2 > /dev/null"}}'                "allows a numeric value merely preceding an unrelated redirect, not an fd-2 redirect (#181)"
+# #201: the `>/dev/null 2>&1` idiom — stdout to null, then stderr duplicated onto wherever
+# stdout now points — fully silences both streams and is at least as common as the bare `2>` form.
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x > /dev/null 2>&1"}}'                "blocks the >/dev/null 2>&1 idiom (#201)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x >/dev/null 2>&1"}}'                 "blocks the idiom with no space before /dev/null (#201)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 1>/dev/null 2>&1"}}'                "blocks the idiom with an explicit 1> (#201)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x >>/dev/null 2>&1"}}'                "blocks the appending variant of the idiom (#201)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&1 >/dev/null"}}'                 "allows the reordered form (stderr dup'd before stdout is redirected, so stderr stays visible) (#201)"
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSS" '{"tool_name":"Agent","tool_input":{"command":"curl http://x 2>/dev/null"}}'                    "ignores a non-Bash tool_name"
 

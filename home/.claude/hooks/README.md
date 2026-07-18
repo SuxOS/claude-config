@@ -47,11 +47,12 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   `sleep N` with no loop is a common, legitimate delay and is left alone. Registered with
   `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
 - **`block-suppressed-stderr.py`** — flags a command that redirects stderr to `/dev/null`
-  (`2>/dev/null`/`&>/dev/null`, and their `>>`-appending variants; CLAUDE.md dev-speed tactics:
-  "don't suppress a command's stderr if you might need it to diagnose", #181). Matches on the raw
-  command text (not tokenized argv) so it can require the fd digit be glued to the `>` with no
-  space — the same adjacency rule the shell itself uses to tell a real `2>` fd-redirect from an
-  ordinary word `2` followed by an unrelated `>` (e.g. `ffmpeg -loglevel 2 > /dev/null`).
+  (`2>/dev/null`/`&>/dev/null`, and their `>>`-appending variants, plus the order-sensitive
+  `>/dev/null 2>&1` idiom, #201; CLAUDE.md dev-speed tactics: "don't suppress a command's stderr if
+  you might need it to diagnose", #181). Matches on the raw command text (not tokenized argv) so it
+  can require the fd digit be glued to the `>` with no space — the same adjacency rule the shell
+  itself uses to tell a real `2>` fd-redirect from an ordinary word `2` followed by an unrelated `>`
+  (e.g. `ffmpeg -loglevel 2 > /dev/null`).
   Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
 
 ## Available but DISABLED by default

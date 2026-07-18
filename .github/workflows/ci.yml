@@ -71,6 +71,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash tests/test_hooks.sh
 
+      # argv-canon fuzzer (#199): tests/test_hooks.sh only covers hand-picked bypass shapes;
+      # this generates the combinatorial wrapper/flag/env/grouping space from an independent
+      # reference grammar and asserts strip_prefixes()/block-egress's offending() recover the
+      # real command word regardless of the combination — folded into this one required job for
+      # the same auto-merge-gating reason as the other integrity steps (CLAUDE.md).
+      - name: fuzz the shared argv-canonicalization logic
+        if: ${{ !cancelled() }}
+        run: python3 tests/fuzz_argv_canon.py
+
       # json-validate (was advisory): settings.json, fabric.json, and the skill evals.json files are
       # hand- and agent-edited and fail silently when malformed — Claude Code just ignores/rejects
       # them. Every tracked *.json must parse (#65).
