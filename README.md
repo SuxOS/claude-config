@@ -6,8 +6,8 @@ under `~/.claude`.
 
 **Why this lives in the SuxOS org:** it's a personal, cross-project tool-config
 repo, not a SuxOS product or component — it sits here for convenience/visibility
-alongside the repos it's used against (`sux`, `suxrouter`, `sux-fileops`), not
-because it's part of the product surface.
+alongside the other repos it's used against (see `fabric.json`'s `orgs.SuxOS.repos`
+for the current list), not because it's part of the product surface.
 
 **New here? Read [`WORKFLOW.md`](WORKFLOW.md)** — the development loop in one screen
 (orient → work → land), the three loci, and setup. Design rationale lives in

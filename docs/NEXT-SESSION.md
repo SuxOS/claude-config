@@ -1,7 +1,7 @@
 # Next session — zero-question org autonomy
 
 Everything from the loci redesign + three-loop reconciliation is **merged to `main`
-org-wide** (`.github`, `claude-config`, `sux`, `sux-fileops`, `suxrouter`). The pipeline is
+org-wide** (see `fabric.json`'s `orgs.SuxOS.repos` for the current repo list). The pipeline is
 **live** (`CLAUDE_CODE_OAUTH_TOKEN` + bot App secrets set) and **scheduled** — it runs and
 makes progress on its own crons, credit-bounded. This doc is how to drive it hands-off.
 
