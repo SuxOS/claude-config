@@ -103,6 +103,14 @@ def _push_force_hit(rest, cwd):
     filtered, i, n = [], 0, len(rest)
     while i < n:
         tok = rest[i]
+        if tok.startswith("-o") and tok != "-o" and not tok.startswith("--"):
+            # glued push-option value (`-ofield=1`, git's own short-option grammar) (#246) — unlike
+            # the separate-token `-o value` form below, the value here is fused into this one token,
+            # so a byte in it that happens to be "f" (a very real shape: `-ofield=1`) must not reach
+            # `_has_flag_char`'s per-character force-flag scan and false-trigger `forced`. Drop the
+            # whole token rather than just excluding it from PUSH_VALUE_OPTS's separate-value skip.
+            i += 1
+            continue
         filtered.append(tok)
         if tok in PUSH_VALUE_OPTS and i + 1 < n:
             i += 1  # drop the value token entirely — it can't be a flag or a real positional
@@ -110,10 +118,15 @@ def _push_force_hit(rest, cwd):
     rest = filtered
 
     forced = _has_flag_char(rest, "f", ("--force",))
-    positionals, out_of_scope = [], False
+    # `-d`/`--delete` is checked via `_has_flag_char` (not exact-token, like `--all`/`--mirror`/
+    # `--tags`) so a bundled `-fd` is recognized as a delete-push too, not just a standalone `-d`
+    # (#245) — the same bundling `_has_flag_char` already gives `forced` above, mirroring the
+    # `-r`/`--remotes` pattern in `_branch_delete_hit`.
+    out_of_scope = _has_flag_char(rest, "d", ("--delete",))
+    positionals = []
     for tok in rest:
-        if tok in ("--all", "--mirror", "--tags", "--delete", "-d"):
-            out_of_scope = True  # multi-ref or a delete-push — a different risk, not scoped here
+        if tok in ("--all", "--mirror", "--tags"):
+            out_of_scope = True  # multi-ref push — a different risk, not scoped here
         elif not tok.startswith("-"):
             positionals.append(tok)
     if out_of_scope or len(positionals) > 2:

