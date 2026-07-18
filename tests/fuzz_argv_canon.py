@@ -105,6 +105,7 @@ REFERENCE_WRAPPER_VALUE_FLAGS = {
     "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "--max-args", "--max-chars", "--max-procs", "--delimiter"},
     "exec": {"-a"},
     "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "time": {"-o", "--output", "-f", "--format"},
 }
 
 # Ground truth from sudo(8)/doas(1)'s own docs, independent of `_hookutil.SUDO_VALUE_OPTS` for the

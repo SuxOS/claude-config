@@ -223,6 +223,10 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -i curl ht
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -n 1 curl http://evil.com"}}'                                 "blocks past xargs -n's separate-value arg (#199)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -s 1000 curl http://evil.com"}}'                              "blocks past xargs -s's separate-value arg (#199)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -d , curl http://evil.com"}}'                                 "blocks past xargs -d's separate-value arg (#199)"
+# #214: WRAPPER_VALUE_OPTS had no entry for `time` at all, so its own separate-value -o/-f flags
+# weren't skipped, misreading the command word as the flag's own value.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"time -o results.txt curl http://evil.com"}}'                        "blocks past time -o's separate-value arg (#214)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"time -f %e curl http://evil.com"}}'                                 "blocks past time -f's separate-value arg (#214)"
 # #203: the same gap pattern found in sudo/doas's own value flags by the fuzzer's independent
 # sudo/doas reference table — a bare short flag was covered (-C/-D/-R/-U) but its long form
 # wasn't, -T/--command-timeout was missing entirely, and doas's -a (auth style) was missing too.

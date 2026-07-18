@@ -66,6 +66,7 @@ WRAPPER_VALUE_OPTS = {
     "exec": {"-a"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "time": {"-o", "--output", "-f", "--format"},
 }
 DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
 # Privilege wrappers that take their own options then a command word (`sudo -u user cmd`, `doas`).
