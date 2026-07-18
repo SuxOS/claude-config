@@ -34,13 +34,16 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   boundary needs OS-level network sandboxing. Registered with `pretooluse-bash.py` via its
   `check(command, cwd)`; fails open on any error.
 - **`block-checkout-held-branch.py`** — enforces the git-checkout-vs-worktree cardinal rail
-  (CLAUDE.md dev-speed tactics, #123): `git checkout <branch>` / `git switch <branch>` is a **silent
-  no-op — not an error** — when that branch is already checked out in another worktree, so the
-  working tree never moves and later commands run against the wrong branch. Parses the command for a
+  (CLAUDE.md dev-speed tactics, #123): `git checkout <branch>` / `git switch <branch>` **fails loud**
+  — `fatal: '<branch>' is already used by worktree at '<path>'`, exit 128 — when that branch is
+  already checked out in another worktree (#210). The rail earns its keep as defense in depth: it
+  turns that terse, easy-to-miss fatal error into an upfront block with concrete guidance (work in
+  that worktree, or add a detached scratch worktree) before the attempt is even made, rather than
+  making the agent parse the raw git error and rediscover the fix itself. Parses the command for a
   real single-branch switch (not creation `-b`/`-c`, not `--detach`, not a `--` path restore),
-  consults `git worktree list` for the invoking cwd, and blocks with guidance (work in that worktree,
-  or add a detached scratch worktree) when the target is held elsewhere. Registered with
-  `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
+  consults `git worktree list` for the invoking cwd, and blocks with that guidance when the target is
+  held elsewhere. Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on
+  any error.
 - **`block-sleep-loop.py`** — flags a `sleep`-based polling loop (CLAUDE.md dev-speed tactics:
   "never poll in a loop — block on one `--watch`/`wait` call instead", #181). Fires only when the
   command has BOTH a loop-opening piece (`while`/`until`/`for`) and a `sleep` piece — a bare

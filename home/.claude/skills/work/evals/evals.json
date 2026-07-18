@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "work on the flaky auth tests — I've already got a worktree checked out on branch fix/flaky-auth from earlier, can you just use that one?",
-      "expected_output": "Does not `git checkout` a branch a worktree may already hold (silent no-op, not an error) and does not reuse/mutate the existing named-branch checkout for new work. Creates a fresh detached scratch worktree (`git worktree add --detach <scratch>/<repo>-<unit> <base-sha>`) and pushes by explicit refspec instead, per the worktree discipline section.",
+      "expected_output": "Does not `git checkout` a branch a worktree may already hold (fails loud — `fatal: ... already used by worktree`, exit 128 — not a silent no-op) and does not reuse/mutate the existing named-branch checkout for new work. Creates a fresh detached scratch worktree (`git worktree add --detach <scratch>/<repo>-<unit> <base-sha>`) and pushes by explicit refspec instead, per the worktree discipline section.",
       "files": []
     },
     {

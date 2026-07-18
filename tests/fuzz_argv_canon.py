@@ -97,12 +97,13 @@ PLACEHOLDER_VALUE = "VAL"
 # argument as OPTIONAL, which only ever binds via `=`, never a separate following word. stdbuf(1)'s
 # `--input`/`--output`/`--error` are the long forms of `-i`/`-o`/`-e`. env(1)'s own separate-value
 # flags `-u`/`--unset`, `-C`/`--chdir`, `-S`/`--split-string` get their own entry (#212) — its `-i`
-# boolean and inline `VAR=VAL` stay in WRAPPER_EXTRA_SUFFIXES below.
+# boolean and inline `VAR=VAL` stay in WRAPPER_EXTRA_SUFFIXES below. xargs's `-a`/`--arg-file` (read
+# items from FILE instead of stdin) takes a REQUIRED separate value the same as `-n`/`-s`/`-d` (#217).
 REFERENCE_WRAPPER_VALUE_FLAGS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
-    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "--max-args", "--max-chars", "--max-procs", "--delimiter"},
+    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "-a", "--max-args", "--max-chars", "--max-procs", "--delimiter", "--arg-file"},
     "exec": {"-a"},
     "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
 }
