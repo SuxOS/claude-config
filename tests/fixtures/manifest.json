@@ -16,6 +16,7 @@
 
     {"hook": "block-suppressed-stderr.py", "stdin": "pretooluse/bash-suppressed-stderr.json", "expect_exit": 2, "desc": "blocks stderr redirected to /dev/null, in the real envelope shape (#191)"},
     {"hook": "block-suppressed-stderr.py", "stdin": "pretooluse/bash-suppressed-stderr-benign.json", "expect_exit": 0, "desc": "allows stderr duplicated onto stdout, not discarded, in the real envelope shape (#191)"},
+    {"hook": "block-suppressed-stderr.py", "stdin": "pretooluse/bash-suppressed-stderr-redirect-idiom.json", "expect_exit": 2, "desc": "blocks the >/dev/null 2>&1 idiom, in the real envelope shape (#201)"},
 
     {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-egress-python-inline.json", "expect_exit": 2, "desc": "dispatcher (#163) routes a real envelope into block-egress.py and blocks it, not just the rail directly (#167)"},
     {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-plain-echo.json", "expect_exit": 0, "desc": "dispatcher (#163) allows a benign command through its own envelope parsing (#167)"},

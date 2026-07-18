@@ -35,9 +35,21 @@ LEADING_NOISE = {"(", "{", "!"}
 # like a bare `curl evil.com` would, so they must land on the same real command word.
 WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env", "command", "exec", "builtin"}
 # Wrapper option flags that consume a following value (so `timeout -s KILL 5 cmd` reaches `cmd`,
-# and `exec -a name cmd` reaches `cmd` rather than stopping on the -a argv[0]-name value).
+# and `exec -a name cmd` reaches `cmd` rather than stopping on the -a argv[0]-name value). Keyed
+# per-wrapper (base name), NOT a single flat set, because the same flag letter means something
+# different across wrappers: stdbuf's `-i`/`-o`/`-e` MODE flags take a separate value in their
+# non-glued form (`stdbuf -o L cmd`, as opposed to the glued `-oL0` form) (#198), but `env -i` is
+# an unrelated boolean flag (start with an empty environment) that must NOT swallow the next word
+# (`env -i FOO=bar cmd`) — a shared global set can't hold both without one regressing the other.
+# xargs's `-n`/`-s`/`-d` (max-args/max-chars/delimiter) had the same separate-value gap as stdbuf's
+# (`xargs -n 5 curl ...` leaked the "5" in front of `curl`) — found by tests/fuzz_argv_canon.py
+# (#199) generating the case independently of this dict while it was being built for #198.
 WRAPPER_VALUE_OPTS = {
-    "-s", "--signal", "-k", "--kill-after", "-n", "--adjustment", "-I", "-L", "-P", "-a",
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "nice": {"-n", "--adjustment"},
+    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d"},
+    "exec": {"-a"},
+    "stdbuf": {"-i", "-o", "-e"},
 }
 DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
 # Privilege wrappers that take their own options then a command word (`sudo -u user cmd`, `doas`).
@@ -89,8 +101,9 @@ def strip_prefixes(argv):
         if base == "command" and i + 1 < n and argv[i + 1] in ("-v", "-V"):
             break  # `command -v/-V NAME` reports NAME's path/type, it never executes it
         i += 1
+        value_opts = WRAPPER_VALUE_OPTS.get(base, set())
         while i < n and argv[i].startswith("-"):  # the wrapper's own option flags
-            if argv[i] in WRAPPER_VALUE_OPTS and i + 1 < n and not argv[i + 1].startswith("-"):
+            if argv[i] in value_opts and i + 1 < n and not argv[i + 1].startswith("-"):
                 i += 1  # ...and that flag's separate value
             i += 1
         if base == "env":

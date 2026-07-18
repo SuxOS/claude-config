@@ -136,6 +136,15 @@
   token-restricted `SuxOS/.github` repo, so it can't be fixed from here — when you drop an issue,
   say so plainly in your final message (as this file already asks) so a human notices; don't
   assume "released for retry" happens automatically.
+- **A differential/property fuzzer must generate cases from an INDEPENDENT reference grammar, not
+  from the production constant it's testing** (#199): `tests/fuzz_argv_canon.py`'s wrapper-flag
+  cases are hand-authored from each tool's real docs, deliberately not read out of
+  `_hookutil.WRAPPER_VALUE_OPTS`. Generating from that dict directly would have been tautological —
+  the exact stdbuf `-o`/`-i`/`-e` gap it had (#198) would also have stopped the generator from ever
+  producing a `stdbuf -o VAL cmd` case, so a self-referential fuzzer can't catch a gap in the very
+  thing it draws cases from (it's how this harness also caught a live sibling gap in xargs's
+  `-n`/`-s`/`-d` while being built). Keep a fuzzer's ground truth independent of its SUT's own
+  bookkeeping whenever that bookkeeping is exactly what's under test.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
