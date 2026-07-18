@@ -99,6 +99,17 @@ def build_stdin(case, held_branch_repo=None):
         transcript = FIXTURES / case["transcript"]
         if not transcript.exists():
             raise FileNotFoundError(f"transcript fixture not found: {transcript}")
+        # verify-completion-claim.py's loader fails OPEN on a parse error (turn_lines returns
+        # [], hook exits 0), so a corrupted line in an allow-expected (expect_exit 0) fixture
+        # would otherwise pass silently despite the fixture being inert (#139). Assert every
+        # line parses here so a broken fixture fails the corpus loudly instead.
+        for lineno, line in enumerate(transcript.read_text().splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{transcript}:{lineno} is not valid JSON — {e}")
         envelope = dict(STOP_ENVELOPE_BASE, transcript_path=str(transcript))
         return json.dumps(envelope).encode()
     raise ValueError("case has neither 'stdin' nor 'transcript'")
