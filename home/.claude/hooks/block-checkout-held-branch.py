@@ -2,22 +2,32 @@
 """PreToolUse hook (matcher: Bash) — enforce the git-checkout-vs-worktree cardinal rail.
 
 CLAUDE.md's dev-speed tactics name a concrete, time-costing trap: `git checkout <branch>` (or
-`git switch <branch>`) is a SILENT NO-OP — not an error — when that branch is already checked out
-in another worktree. The shell prints nothing useful, the working tree doesn't move, and the next
-commands run against the wrong branch. hooks/README.md frames this dir as moving CLAUDE.md's
-cardinal rails 'from aspiration to guarantee'; this is the first of those rails made mechanical:
-the delegation-model rule and the egress bump are enforced today, and 'never checkout a branch a
-stale worktree holds' is the next crisp, mechanically-checkable one (#123).
+`git switch <branch>`) FAILS — `fatal: '<branch>' is already used by worktree at '<path>'`, exit
+128 — when that branch is already checked out in another worktree. Re-verified live against git
+2.54.0 (#210): every git release with `git worktree` support (2.5+, July 2015 — the protection
+shipped together with the worktree feature itself, not added later) raises this fatal error rather
+than silently no-opping, including against a stale/prunable worktree whose directory was deleted
+out from under git first. (Older docstrings/CLAUDE.md described this as a "SILENT NO-OP — not an
+error"; that premise doesn't hold for any git version that can even run this hook's target
+scenario, and #210 found no evidence it ever did.) The rail still earns its keep as defense in
+depth: it turns git's terse, easy-to-miss fatal error into an upfront block with concrete guidance
+(work in the other worktree, or add a detached scratch worktree) before the attempt is even made,
+rather than making the agent parse the raw git error and rediscover the fix itself. hooks/README.md
+frames this dir as moving CLAUDE.md's cardinal rails 'from aspiration to guarantee'; this is the
+first of those rails made mechanical: the delegation-model rule and the egress bump are enforced
+today, and 'never checkout a branch a stale worktree holds' is the next crisp,
+mechanically-checkable one (#123).
 
 The check: parse the Bash command for a real branch SWITCH (`git checkout <branch>` / `git switch
 <branch>` — NOT branch creation, path restore, or a detach), then consult `git worktree list` for
 the invoking cwd. If the target branch is held by a DIFFERENT worktree, block with guidance (work
-in that worktree, or make a detached scratch worktree) instead of letting the no-op happen.
+in that worktree, or make a detached scratch worktree) up front, instead of letting the attempt
+run into git's own fatal error.
 
 Deliberately narrow to keep false positives near zero — it fires ONLY when all of these hold:
   - the command word (per shell piece) is `git` with subcommand `checkout` or `switch`;
   - exactly one positional target and no `-b`/`-B`/`-c`/`-C`/`--orphan` (creation), no `--detach`
-    /`-d`, and no `--`/multi-positional (path restore) — those aren't the silent-no-op case;
+    /`-d`, and no `--`/multi-positional (path restore) — those aren't the held-branch-switch case;
   - that target names a branch some OTHER worktree already holds.
 Anything it can't parse cleanly is allowed. Fail-open on any error — a hook bug must never wedge
 the session (repo convention). Exit 2 = block; exit 0 = allow.
@@ -31,14 +41,21 @@ from _hookutil import basename, pieces, strip_prefixes
 
 # git global options that consume a following value, so we can walk past them to the subcommand
 # (`git -C /path checkout foo`, `git -c k=v switch foo`). `--opt=value` forms carry their own value
-# and are skipped as ordinary flags below.
+# and are skipped as ordinary flags below. `--exec-path` is deliberately NOT here: real git's bare
+# `--exec-path` (no `=`) takes NO value at all — it just prints the current exec-path and exits
+# immediately, never reaching a subcommand (`git --exec-path status` never touches `status`); only
+# the glued `--exec-path=<path>` form sets it, and that's self-contained in one token, already
+# handled by the generic `tok.startswith("-")` fallthrough below. Treating bare `--exec-path` as
+# value-consuming misread the next token as its value instead of (correctly) a no-value flag —
+# harmless in practice since the misparsed invocation is already inert either way, but wrong per
+# git's actual grammar (#211).
 GIT_GLOBAL_VALUE_OPTS = {
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env",
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
 }
 # checkout/switch flags that create a branch (take the new name as their value) — NOT a switch into
-# an existing, possibly-held branch, so never the silent-no-op case.
+# an existing, possibly-held branch, so never the held-branch-switch case.
 CREATE_OPTS = {"-b", "-B", "-c", "-C", "--orphan"}
-# flags that mean "don't land on a branch ref at all" (detached HEAD) — also not the no-op case.
+# flags that mean "don't land on a branch ref at all" (detached HEAD) — also not the held-branch case.
 DETACH_OPTS = {"-d", "--detach"}
 
 
@@ -164,9 +181,9 @@ def check(command, cwd):
     target, held = hit
     return (
         f"Worktree guard (PreToolUse): `git checkout {target}` / `git switch {target}` was blocked "
-        f"because branch `{target}` is already checked out in another worktree ({held}). git makes "
-        "this a SILENT NO-OP — not an error — so the working tree would not move and later commands "
-        "would run against the wrong branch (CLAUDE.md dev-speed tactics). Work in that worktree "
+        f"because branch `{target}` is already checked out in another worktree ({held}). git would "
+        "raise a fatal error here (exit 128, `already used by worktree at ...`) rather than switch "
+        "(CLAUDE.md dev-speed tactics). Work in that worktree "
         f"directly (`cd {held}`), or if you need this branch's tree here, add a detached scratch "
         f"worktree (`git worktree add --detach <path> {target}`) instead of switching in place."
     )

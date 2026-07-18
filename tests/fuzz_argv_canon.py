@@ -91,12 +91,20 @@ PLACEHOLDER_VALUE = "VAL"
 # value-consuming flags (time, nohup, command, builtin) are simply absent; `.get(w, ())` covers
 # them, and `env`'s own value-ish forms (`-i`, inline `VAR=VAL`) are handled by WRAPPER_EXTRA_SUFFIXES
 # below since they're not a plain "flag consumes the next bare token" shape.
+# xargs's `--max-args`/`--max-chars`/`--max-procs`/`--delimiter` (long forms of `-n`/`-s`/`-P`/`-d`)
+# take a REQUIRED argument per GNU xargs(1) getopt_long usage, so they bind via a separate word too;
+# `--replace`/`--max-lines` (of `-I`/`-L`) are deliberately absent since GNU getopt_long treats their
+# argument as OPTIONAL, which only ever binds via `=`, never a separate following word. stdbuf(1)'s
+# `--input`/`--output`/`--error` are the long forms of `-i`/`-o`/`-e`. env(1)'s own separate-value
+# flags `-u`/`--unset`, `-C`/`--chdir`, `-S`/`--split-string` get their own entry (#212) — its `-i`
+# boolean and inline `VAR=VAL` stay in WRAPPER_EXTRA_SUFFIXES below.
 REFERENCE_WRAPPER_VALUE_FLAGS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"},
-    "stdbuf": {"-i", "-o", "-e"},
-    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "--max-args", "--max-chars", "--max-procs", "--delimiter"},
     "exec": {"-a"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
 }
 
 # Ground truth from sudo(8)/doas(1)'s own docs, independent of `_hookutil.SUDO_VALUE_OPTS` for the

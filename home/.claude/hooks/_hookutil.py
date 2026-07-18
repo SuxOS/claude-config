@@ -48,12 +48,24 @@ WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env", "comma
 # xargs's `-n`/`-s`/`-d` (max-args/max-chars/delimiter) had the same separate-value gap as stdbuf's
 # (`xargs -n 5 curl ...` leaked the "5" in front of `curl`) — found by tests/fuzz_argv_canon.py
 # (#199) generating the case independently of this dict while it was being built for #198.
+# xargs's long forms `--max-args`/`--max-chars`/`--max-procs`/`--delimiter` (of `-n`/`-s`/`-P`/`-d`)
+# take a REQUIRED argument per GNU getopt_long, so like `timeout`/`--signal` they bind via a separate
+# following word too (`xargs --max-args 1 curl ...`); `--replace`/`--max-lines` (of `-I`/`-L`) are
+# deliberately left short-only since their long form's argument is OPTIONAL and only ever binds via
+# `=`, never a separate word. stdbuf's `--input`/`--output`/`--error` (long forms of `-i`/`-o`/`-e`)
+# have the same separate-value gap the short forms were fixed for (#198). `env`'s own separate-value
+# flags (`-u`/`--unset`, `-C`/`--chdir`, `-S`/`--split-string`) were missing an entry entirely — its
+# boolean `-i` (ignore-environment) and inline `VAR=VAL` handling below are unaffected, only its
+# value-taking flags were the gap. All three found by auditing xargs/stdbuf/env against #198/#203's
+# already-fixed sibling wrappers (#212), same "hand-maintained flag table drifts from the real tool's
+# separate-vs-glued-vs-long grammar" class.
 WRAPPER_VALUE_OPTS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"},
-    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d"},
+    "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "--max-args", "--max-chars", "--max-procs", "--delimiter"},
     "exec": {"-a"},
-    "stdbuf": {"-i", "-o", "-e"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
 }
 DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
 # Privilege wrappers that take their own options then a command word (`sudo -u user cmd`, `doas`).
