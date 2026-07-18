@@ -103,6 +103,14 @@ def _push_force_hit(rest, cwd):
     filtered, i, n = [], 0, len(rest)
     while i < n:
         tok = rest[i]
+        if tok.startswith("-o") and tok != "-o" and not tok.startswith("--"):
+            # glued push-option value (`-ofield=1`, git's own short-option grammar) (#246) — unlike
+            # the separate-token `-o value` form below, the value here is fused into this one token,
+            # so a byte in it that happens to be "f" (a very real shape: `-ofield=1`) must not reach
+            # `_has_flag_char`'s per-character force-flag scan and false-trigger `forced`. Drop the
+            # whole token rather than just excluding it from PUSH_VALUE_OPTS's separate-value skip.
+            i += 1
+            continue
         filtered.append(tok)
         if tok in PUSH_VALUE_OPTS and i + 1 < n:
             i += 1  # drop the value token entirely — it can't be a flag or a real positional
