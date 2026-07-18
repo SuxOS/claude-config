@@ -41,17 +41,22 @@ from _hookutil import basename, pieces, strip_prefixes
 
 # git global options that consume a following value, so we can walk past them to the subcommand
 # (`git -C /path checkout foo`, `git -c k=v switch foo`). `--opt=value` forms carry their own value
-# and are skipped as ordinary flags below. `--exec-path` is deliberately NOT here: real git's bare
-# `--exec-path` (no `=`) takes NO value at all — it just prints the current exec-path and exits
-# immediately, never reaching a subcommand (`git --exec-path status` never touches `status`); only
-# the glued `--exec-path=<path>` form sets it, and that's self-contained in one token, already
-# handled by the generic `tok.startswith("-")` fallthrough below. Treating bare `--exec-path` as
-# value-consuming misread the next token as its value instead of (correctly) a no-value flag —
-# harmless in practice since the misparsed invocation is already inert either way, but wrong per
-# git's actual grammar (#211).
+# and are skipped as ordinary flags below. Audited against `git(1)`/`git --help` the same way #203
+# audited SUDO_VALUE_OPTS (#208): `--attr-source` was the live gap — verified against git 2.54.0
+# that `git --attr-source HEAD checkout foo` really does consume `HEAD` as --attr-source's separate
+# value and reach the `checkout` subcommand, which the unpatched walk misparsed (treating `HEAD` as
+# the subcommand position and failing the checkout/switch check, i.e. a missed detection).
+# `--exec-path` is deliberately NOT here: real git's bare `--exec-path` (no `=`) takes NO value at
+# all — it just prints the current exec-path and exits immediately, never reaching a subcommand
+# (`git --exec-path status` never touches `status`); only the glued `--exec-path=<path>` form sets
+# it, and that's self-contained in one token, already handled by the generic `tok.startswith("-")`
+# fallthrough below. Treating bare `--exec-path` as value-consuming misread the next token as its
+# value instead of (correctly) a no-value flag — harmless in practice since the misparsed
+# invocation is already inert either way, but wrong per git's actual grammar (#211).
 GIT_GLOBAL_VALUE_OPTS = {
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
-}
+    "--attr-source",
+
 # checkout/switch flags that create a branch (take the new name as their value) — NOT a switch into
 # an existing, possibly-held branch, so never the held-branch-switch case.
 CREATE_OPTS = {"-b", "-B", "-c", "-C", "--orphan"}
