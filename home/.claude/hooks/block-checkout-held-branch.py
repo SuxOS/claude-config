@@ -56,7 +56,7 @@ from _hookutil import basename, pieces, strip_prefixes
 GIT_GLOBAL_VALUE_OPTS = {
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
     "--attr-source",
-
+}
 # checkout/switch flags that create a branch (take the new name as their value) — NOT a switch into
 # an existing, possibly-held branch, so never the held-branch-switch case.
 CREATE_OPTS = {"-b", "-B", "-c", "-C", "--orphan"}

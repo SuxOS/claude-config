@@ -148,6 +148,14 @@
   thing it draws cases from (it's how this harness also caught a live sibling gap in xargs's
   `-n`/`-s`/`-d` while being built). Keep a fuzzer's ground truth independent of its SUT's own
   bookkeeping whenever that bookkeeping is exactly what's under test.
+- **A value-flag-audit issue's cited "verified live" repro against an external tool (git/sudo/…)
+  can fail to reproduce on this environment's installed tool version** — flag support differs
+  across versions (#208's cited `git --super-prefix` repro didn't reproduce at all on this repo's
+  installed git 2.54, which rejects it as an unknown top-level option; an independent re-audit of
+  the same value-opts set against `git --help`/`man git` found `--attr-source` as a real, verified
+  gap instead). Re-derive the flag table and a live repro against the ACTUAL installed tool version
+  before trusting an issue's claimed flag behavior or exit code — the audit TECHNIQUE (#203's
+  independent-reference-grammar approach) stays valid even when a specific cited repro doesn't.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
