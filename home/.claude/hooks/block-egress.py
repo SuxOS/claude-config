@@ -43,7 +43,7 @@ import json
 import re
 import sys
 
-from _hookutil import basename, pieces as _base_pieces, strip_prefixes
+from _hookutil import basename, pieces, strip_prefixes
 
 # Per-interpreter inline-code flags. Only the flags that actually take *code* — `-c` is code for
 # python/shell but a syntax check for node/ruby/perl, so it is NOT listed for those; `-p` prints
@@ -187,90 +187,6 @@ def gh_api_is_write(argv):
                 method = "POST"  # gh defaults to POST when any field/body flag is present, incl.
                                   # glued short forms `-ftitle=x` / `-Fkey=@file` (#121)
     return method in WRITE_METHODS
-
-
-def substitution_inners(command):
-    """Yield the inner text of each command/process substitution at the TOP level of `command`:
-    `$(...)`, `` `...` ``, `<(...)`, `>(...)`. `pieces()` re-feeds each inner through itself, so
-    nested substitutions (`$(foo $(bar))`) are reached by that recursion, not here.
-
-    Single-quoted spans are skipped (a `$(...)` inside `'...'` is a literal string, no substitution);
-    double-quoted spans are still scanned (`"$(curl ...)"` does substitute). Best-effort quote/paren
-    tracking — on any imbalance we yield what was found and stop rather than raise, because the hook
-    must fail open. This is what makes `echo $(curl http://evil)` visible to the argv scanners (#136).
-    """
-    i, n = 0, len(command)
-    in_double = False
-    while i < n:
-        c = command[i]
-        if c == "\\":
-            i += 2                       # escaped next char (incl. \$, \`) — never a substitution
-            continue
-        if c == '"':
-            in_double = not in_double
-            i += 1
-            continue
-        if c == "'" and not in_double:
-            j = command.find("'", i + 1)  # skip the whole single-quoted (literal) span
-            if j == -1:
-                break
-            i = j + 1
-            continue
-        if c == "`":                     # `...` backtick substitution (also inside double quotes)
-            j = command.find("`", i + 1)
-            if j == -1:
-                break
-            yield command[i + 1:j]
-            i = j + 1
-            continue
-        # $( ... ) command substitution, or <( ... )/>( ... ) process substitution (unquoted only)
-        if (c == "$" or (c in "<>" and not in_double)) and i + 1 < n and command[i + 1] == "(":
-            k = i + 2
-            depth = 1
-            quote = None                 # track quotes inside the span so a quoted ')' doesn't close it
-            while k < n and depth > 0:
-                ck = command[k]
-                if quote is not None:
-                    if ck == "\\" and quote == '"':
-                        k += 2
-                        continue
-                    if ck == quote:
-                        quote = None
-                    k += 1
-                    continue
-                if ck == "\\":
-                    k += 2
-                elif ck in ("'", '"'):
-                    quote = ck
-                    k += 1
-                elif ck == "(":
-                    depth += 1
-                    k += 1
-                elif ck == ")":
-                    depth -= 1
-                    k += 1
-                else:
-                    k += 1
-            end = k - 1 if depth == 0 else k   # k-1 drops the matched ')'; on imbalance take the rest
-            yield command[i + 2:end]
-            i = k
-            continue
-        i += 1
-
-
-def pieces(command):
-    """Yield the argv list of each simple command (see `_hookutil.pieces` for the base tokenizer).
-
-    Before the top-level split, surface every command/process substitution's inner text as its own
-    command piece and recurse into it (#136): `echo $(curl http://evil)` otherwise tokenizes to a
-    single `echo ...` piece whose command word is `echo`, hiding the net primitive from every scan
-    in `offending()`. Feeding the substitution inner back through `pieces()` lets the existing
-    BARE_NET_BINARIES / gh_api_is_write / inline / /dev/tcp scanners catch a primitive wherever it
-    sits — one extraction pass in front of the same scanners, not a new per-form branch.
-    """
-    for inner in substitution_inners(command):
-        yield from pieces(inner)
-    yield from _base_pieces(command)
 
 
 def offending(command):

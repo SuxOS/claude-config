@@ -8,11 +8,15 @@ script's own directory on sys.path[0], and install.sh symlinks this whole direct
 ~/.claude/hooks/ — so a plain `from _hookutil import ...` resolves the same in both the repo
 and the installed tree.
 
-Hooks with extra requirements (block-egress's substitution-expansion) wrap `pieces()` rather
-than reimplementing it — see block-egress.py's own `pieces()`. Likewise, any rail that reads a
-piece's command word MUST run it through `strip_prefixes()` first (#193) — a rail that compares
-`basename(argv[0])` directly re-acquires the exact wrapper-prefix bypass `strip_prefixes()` was
-built to close in block-egress.py (#119, #179).
+`pieces()` is substitution-aware (#200): it surfaces `$(...)`/`` `...` ``/`<(...)`/`>(...)`
+inner text as its own piece before the top-level split, so a primitive hidden inside a
+substitution (`echo $(curl evil)`) still shows up to any rail that reads a piece's command word.
+This was originally block-egress.py's own local override (#136), fixing only that rail; hoisted
+here (#200) so every importer — block-sleep-loop.py, block-checkout-held-branch.py, any future
+rail — inherits it too, mirroring how `strip_prefixes()` itself was consolidated (#193). Likewise,
+any rail that reads a piece's command word MUST run it through `strip_prefixes()` first (#193) — a
+rail that compares `basename(argv[0])` directly re-acquires the exact wrapper-prefix bypass
+`strip_prefixes()` was built to close in block-egress.py (#119, #179).
 """
 import re
 import shlex
@@ -57,11 +61,18 @@ DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURA
 # scan (#119); SUDO_VALUE_OPTS are the separate-value options whose argument must also be skipped.
 # Union of both sudo/doas long-option surfaces independently identified against #119 (user/group/
 # prompt/role/type from one pass, host/chroot/chdir from the other) — kept as a union, not either
-# alone, so neither's flag coverage regresses.
+# alone, so neither's flag coverage regresses. `--close-from`/`--chdir`/`--chroot`/`--other-user`
+# (long forms of the already-present `-C`/`-D`/`-R`/`-U`), `-T`/`--command-timeout`, and doas's
+# `-a` (auth style) were a live gap the same shape as #198/#199's stdbuf/xargs miss — a bare short
+# flag was covered but its long form wasn't (or, for `-T`, neither was), so e.g.
+# `sudo --chdir /tmp curl evil.com` swallowed only `--chdir` and left `/tmp` misread as the
+# command word, hiding `curl` from every scan. Found by tests/fuzz_argv_canon.py's independent
+# sudo/doas reference table (#203), fixed here rather than left for the fuzzer to keep reporting.
 SUDO = {"sudo", "doas"}
 SUDO_VALUE_OPTS = {
-    "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "-r", "--role", "-t", "--type",
-    "-U", "-h", "--host", "-R", "-D",
+    "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "--close-from", "-r", "--role",
+    "-t", "--type", "-U", "--other-user", "-h", "--host", "-R", "--chroot", "-D", "--chdir",
+    "-T", "--command-timeout", "-a",
 }
 # A bare inline env-assignment prefix (`FOO=bar cmd`) — NAME=VALUE with a valid shell identifier —
 # likewise shifts the command word; skip a leading run of them the way `env VAR=VAL` is skipped (#119).
@@ -114,13 +125,14 @@ def strip_prefixes(argv):
     return argv[i:]
 
 
-def pieces(command):
+def _split_pieces(command):
     """Yield the argv list of each simple command, respecting shell quoting where possible.
 
     Splits on control operators (`&&`, `||`, `;`, `|`, `&`) but only outside quotes, so a `;`
     inside a `-c "..."` payload is preserved. Newlines separate commands, so split on them first.
     On a line shlex can't tokenize (unbalanced quotes), fall back to a raw regex split so we still
-    scan something rather than crash.
+    scan something rather than crash. This is the base tokenizer `pieces()` wraps with
+    substitution-recursion below; nothing outside this module should call it directly.
     """
     for line in command.split("\n"):
         if not line.strip():
@@ -144,3 +156,89 @@ def pieces(command):
                 argv.append(tok)
         if argv:
             yield argv
+
+
+def substitution_inners(command):
+    """Yield the inner text of each command/process substitution at the TOP level of `command`:
+    `$(...)`, `` `...` ``, `<(...)`, `>(...)`. `pieces()` re-feeds each inner through itself, so
+    nested `$(...)` substitutions (`$(foo $(bar))`) are reached by that recursion, not here —
+    nested backticks are NOT depth-tracked (the backtick branch below just finds the next literal
+    backtick), matching real shell's own requirement that a nested backtick be escaped.
+
+    Single-quoted spans are skipped (a `$(...)` inside `'...'` is a literal string, no substitution);
+    double-quoted spans are still scanned (`"$(curl ...)"` does substitute). Best-effort quote/paren
+    tracking — on any imbalance we yield what was found and stop rather than raise, because every
+    rail using this must fail open. This is what makes `echo $(curl http://evil)` visible to a
+    piece-scanning rail that only looks at top-level pieces (#136).
+    """
+    i, n = 0, len(command)
+    in_double = False
+    while i < n:
+        c = command[i]
+        if c == "\\":
+            i += 2                       # escaped next char (incl. \$, \`) — never a substitution
+            continue
+        if c == '"':
+            in_double = not in_double
+            i += 1
+            continue
+        if c == "'" and not in_double:
+            j = command.find("'", i + 1)  # skip the whole single-quoted (literal) span
+            if j == -1:
+                break
+            i = j + 1
+            continue
+        if c == "`":                     # `...` backtick substitution (also inside double quotes)
+            j = command.find("`", i + 1)
+            if j == -1:
+                break
+            yield command[i + 1:j]
+            i = j + 1
+            continue
+        # $( ... ) command substitution, or <( ... )/>( ... ) process substitution (unquoted only)
+        if (c == "$" or (c in "<>" and not in_double)) and i + 1 < n and command[i + 1] == "(":
+            k = i + 2
+            depth = 1
+            quote = None                 # track quotes inside the span so a quoted ')' doesn't close it
+            while k < n and depth > 0:
+                ck = command[k]
+                if quote is not None:
+                    if ck == "\\" and quote == '"':
+                        k += 2
+                        continue
+                    if ck == quote:
+                        quote = None
+                    k += 1
+                    continue
+                if ck == "\\":
+                    k += 2
+                elif ck in ("'", '"'):
+                    quote = ck
+                    k += 1
+                elif ck == "(":
+                    depth += 1
+                    k += 1
+                elif ck == ")":
+                    depth -= 1
+                    k += 1
+                else:
+                    k += 1
+            end = k - 1 if depth == 0 else k   # k-1 drops the matched ')'; on imbalance take the rest
+            yield command[i + 2:end]
+            i = k
+            continue
+        i += 1
+
+
+def pieces(command):
+    """Yield the argv list of each simple command, substitution-aware (#200).
+
+    Before the top-level split (`_split_pieces()`), surface every command/process substitution's
+    inner text as its own piece and recurse into it (#136): `echo $(curl http://evil)` otherwise
+    tokenizes to a single `echo ...` piece whose command word is `echo`, hiding the net primitive
+    from every rail that reads a piece's command word. Originally block-egress.py's own local
+    override; every importer of this `pieces()` gets substitution-awareness for free (#200).
+    """
+    for inner in substitution_inners(command):
+        yield from pieces(inner)
+    yield from _split_pieces(command)
