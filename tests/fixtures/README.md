@@ -92,13 +92,3 @@ form). Before arming `verify-completion-claim.py` as a live Stop hook (it ships 
 a real `/verify` / `/bet` / `/run` invocation per step 2 above and confirm whether the recorded
 token carries the leading slash — if it does not, the `VERIFY` regex would miss it and the hook
 would false-positive. That confirmation is issue **#109**; this corpus is its home.
-
-## Confirmed — #138 (subagent tool_use name)
-
-`require-delegation-model.py:28` gates on `tool_name != "Agent"` and `settings.json`'s PreToolUse
-matcher is `"Agent"` — an assumption the `agent-*.json` fixtures encode but, until now, only as a
-best-known guess (per the note above), not a live capture. Confirmed: a real `Agent` tool
-delegation made during this issue's own build session recorded `"type":"tool_use","name":"Agent"`
-in the session transcript (entrypoint `claude-code-github-action`, Claude Code v2.1.209) — the
-historical `Task` name does not appear. The hook and matcher are correct as written; no widening
-needed.

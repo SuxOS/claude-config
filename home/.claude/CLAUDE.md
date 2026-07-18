@@ -123,10 +123,6 @@
   token-restricted `SuxOS/.github` repo, so it can't be fixed from here — when you drop an issue,
   say so plainly in your final message (as this file already asks) so a human notices; don't
   assume "released for retry" happens automatically.
-- **The live subagent tool_use name is `"Agent"`, not `"Task"`** (#138, confirmed via a live
-  capture from a build session's own transcript, `claude-code-github-action` entrypoint, Claude
-  Code v2.1.209): `require-delegation-model.py` and `settings.json`'s PreToolUse matcher are
-  correct as written. See `tests/fixtures/README.md`'s "Confirmed — #138" section.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
