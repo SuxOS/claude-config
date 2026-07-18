@@ -23,6 +23,13 @@ a bare `sleep 5`. The loop-keyword check runs the same `strip_prefixes()` over a
 comparing its first word, so a grouped/negated loop-opening piece (`(while ...)`, `{ until ...; }`,
 `! while ...`) is still recognized as a loop — not just the sleep side of the check (#196).
 
+`while sleep 5; do ...; done` / `until sleep 5; do ...; done` puts `sleep` as the loop's OWN
+condition rather than in its body — the idiomatic short form of a polling loop. Since there's no
+`;` between the loop keyword and `sleep` there, `pieces()` yields them as one piece
+(`["while","sleep","5"]`), so the loop-keyword check also runs `strip_prefixes()` over the
+remainder of that same piece and checks whether it starts with `sleep` (#229) — not just whether
+some OTHER piece's command word is `sleep`.
+
 Deliberately does NOT flag a bare `sleep N` with no loop keyword anywhere in the command — a
 single delay (rate-limiting a retry the user explicitly asked for, `sleep 2 && npm run build`) is
 common and legitimate; it's the poll-in-a-loop shape specifically that CLAUDE.md calls out.
@@ -64,6 +71,12 @@ def offending(command):
         stripped = strip_prefixes(argv)
         if stripped and stripped[0] in LOOP_KEYWORDS:
             has_loop = True
+            # `while sleep 5; do ...; done` / `until sleep 5; do ...; done` puts `sleep` as the
+            # loop's OWN condition, in the same piece as the loop keyword (no `;` between them) —
+            # check the remainder of this piece too, not just other pieces' command words.
+            rest = strip_prefixes(stripped[1:])
+            if rest and basename(rest[0]) == "sleep":
+                has_sleep = True
         if _command_word(argv) == "sleep":
             has_sleep = True
     return has_loop and has_sleep
