@@ -110,10 +110,15 @@ def _push_force_hit(rest, cwd):
     rest = filtered
 
     forced = _has_flag_char(rest, "f", ("--force",))
-    positionals, out_of_scope = [], False
+    # `-d`/`--delete` is checked via `_has_flag_char` (not exact-token, like `--all`/`--mirror`/
+    # `--tags`) so a bundled `-fd` is recognized as a delete-push too, not just a standalone `-d`
+    # (#245) — the same bundling `_has_flag_char` already gives `forced` above, mirroring the
+    # `-r`/`--remotes` pattern in `_branch_delete_hit`.
+    out_of_scope = _has_flag_char(rest, "d", ("--delete",))
+    positionals = []
     for tok in rest:
-        if tok in ("--all", "--mirror", "--tags", "--delete", "-d"):
-            out_of_scope = True  # multi-ref or a delete-push — a different risk, not scoped here
+        if tok in ("--all", "--mirror", "--tags"):
+            out_of_scope = True  # multi-ref push — a different risk, not scoped here
         elif not tok.startswith("-"):
             positionals.append(tok)
     if out_of_scope or len(positionals) > 2:
