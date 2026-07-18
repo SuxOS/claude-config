@@ -97,6 +97,12 @@
   decomposes every bundled/glued/separate inline-flag shape in a single walk. A new bypass form
   (another tokenization edge case) should EXTEND that pass, never add a sibling branch — the
   per-form branch drip is exactly what caused #105/#115/#119/#120/#121/#126.
+- **`strip_prefixes()` now lives in `_hookutil.py`, shared by every rail** (#193): `block-egress.py`
+  had the only copy, so `block-sleep-loop.py`/`block-checkout-held-branch.py` independently compared
+  `basename(argv[0])` with no prefix stripping and both re-acquired the wrapper-bypass bug
+  (`command sleep 5`, `env git checkout held`, `sudo …`). Any NEW rail that reads a piece's command
+  word must call `_hookutil.strip_prefixes()` on the argv first — never re-derive its own
+  prefix/wrapper stripping, even a "just basename(argv[0])" shortcut.
 - **Extending `WRAPPERS` in `strip_prefixes()` can silently create a new false positive** (#179):
   a wrapper-shaped word may have an inspection-only flag that reports on the next word instead of
   executing it (`command -v curl` / `-V` prints curl's path, it never runs it). Blindly stripping

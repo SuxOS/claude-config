@@ -20,10 +20,12 @@ runs and blocks the OBVIOUS, common egress forms those docs name that no deny ru
      method wherever it sits, and flags gh's implicit-POST field flags too.
 
 To keep this from being N brittle per-form branches (each a bypass a sibling form slips), argv
-is CANONICALIZED once before scanning: strip every leading prefix (grouping noise, bare
-`NAME=VAL` env assignments, `sudo`/`doas`, value-consuming wrappers) to reach the real command
-word, then read inline-code flags through a single walk that handles bundled/glued/separate
-forms uniformly. One normalization pass, one scanner — not a branch per tokenization quirk.
+is CANONICALIZED once before scanning: `_hookutil.strip_prefixes()` strips every leading prefix
+(grouping noise, bare `NAME=VAL` env assignments, `sudo`/`doas`, value-consuming wrappers) to
+reach the real command word — shared with every other rail that reads a command word (#193), not
+reimplemented here — then this hook reads inline-code flags through a single walk that handles
+bundled/glued/separate forms uniformly. One normalization pass, one scanner — not a branch per
+tokenization quirk.
 
 This is an HONEST speed bump, not a seal. It raises the bar on the casual / accidental / obvious
 path — exactly what the deny list already aims at — but a determined caller still gets through:
@@ -41,37 +43,7 @@ import json
 import re
 import sys
 
-from _hookutil import basename, pieces as _base_pieces
-
-# Leading tokens that merely group/subshell a command; skip them to reach the real command word.
-LEADING_NOISE = {"(", "{", "!"}
-
-# Leading wrappers stripped before reading the real command word. Superset of the set Claude Code
-# strips (timeout/time/nice/nohup/stdbuf/xargs) plus `env`, a common interpreter-indirection form,
-# and the shell builtins `command`/`exec`/`builtin` — the same "shift the command word out of
-# argv[0]" shape (#179): `command curl evil.com` / `exec curl evil.com` reach the network exactly
-# like a bare `curl evil.com` would, so they must land on the same real command word.
-WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env", "command", "exec", "builtin"}
-# Wrapper option flags that consume a following value (so `timeout -s KILL 5 cmd` reaches `cmd`,
-# and `exec -a name cmd` reaches `cmd` rather than stopping on the -a argv[0]-name value).
-WRAPPER_VALUE_OPTS = {
-    "-s", "--signal", "-k", "--kill-after", "-n", "--adjustment", "-I", "-L", "-P", "-a",
-}
-DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
-# Privilege wrappers that take their own options then a command word (`sudo -u user cmd`, `doas`).
-# Treated as value-less wrappers so a `sudo`/`doas` prefix can't shift the command word out of the
-# scan (#119); SUDO_VALUE_OPTS are the separate-value options whose argument must also be skipped.
-# Union of both sudo/doas long-option surfaces independently identified against #119 (user/group/
-# prompt/role/type from one pass, host/chroot/chdir from the other) — kept as a union, not either
-# alone, so neither's flag coverage regresses.
-SUDO = {"sudo", "doas"}
-SUDO_VALUE_OPTS = {
-    "-u", "--user", "-g", "--group", "-p", "--prompt", "-C", "-r", "--role", "-t", "--type",
-    "-U", "-h", "--host", "-R", "-D",
-}
-# A bare inline env-assignment prefix (`FOO=bar cmd`) — NAME=VALUE with a valid shell identifier —
-# likewise shifts the command word; skip a leading run of them the way `env VAR=VAL` is skipped (#119).
-ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+from _hookutil import basename, pieces as _base_pieces, strip_prefixes
 
 # Per-interpreter inline-code flags. Only the flags that actually take *code* — `-c` is code for
 # python/shell but a syntax check for node/ruby/perl, so it is NOT listed for those; `-p` prints
@@ -151,47 +123,6 @@ def canonical_interpreter(cmd):
             if cand in INTERPRETERS:
                 return cand
     return cmd
-
-
-def strip_prefixes(argv):
-    """Drop everything before the real command word, in one pass: grouping noise, bare
-    `NAME=VALUE` env assignments, `sudo`/`doas`, and value-consuming wrappers + their args
-    (`timeout 5 python3` -> `python3`, `FOO=1 sudo -u x curl …` -> `curl …`,
-    `exec -a fake curl …` -> `curl …`). Collapses the whole "a leading prefix shifts the
-    command word out of argv[0]" bypass class (#119, #179). `command -v/-V NAME` is left
-    unstripped since it reports on NAME rather than executing it."""
-    i, n = 0, len(argv)
-    while i < n:
-        tok = argv[i]
-        if tok in LEADING_NOISE:
-            i += 1
-            continue
-        if not tok.startswith("-") and ENV_ASSIGN_RE.match(tok):
-            i += 1  # a bare VAR=VAL assignment sitting before the command word
-            continue
-        base = basename(tok)
-        if base in SUDO:
-            i += 1
-            while i < n and argv[i].startswith("-"):  # sudo/doas own option flags
-                if argv[i] in SUDO_VALUE_OPTS and i + 1 < n and not argv[i + 1].startswith("-"):
-                    i += 1  # ...and that flag's separate value
-                i += 1
-            continue
-        if base not in WRAPPERS:
-            break
-        if base == "command" and i + 1 < n and argv[i + 1] in ("-v", "-V"):
-            break  # `command -v/-V NAME` reports NAME's path/type, it never executes it
-        i += 1
-        while i < n and argv[i].startswith("-"):  # the wrapper's own option flags
-            if argv[i] in WRAPPER_VALUE_OPTS and i + 1 < n and not argv[i + 1].startswith("-"):
-                i += 1  # ...and that flag's separate value
-            i += 1
-        if base == "env":
-            while i < n and "=" in argv[i] and not argv[i].startswith("-"):
-                i += 1  # env's inline VAR=VAL assignments
-        elif base == "timeout" and i < n and DURATION_RE.fullmatch(argv[i]):
-            i += 1  # timeout's mandatory DURATION positional
-    return argv[i:]
 
 
 def inline_payloads(cmd, argv):

@@ -27,7 +27,7 @@ import os
 import subprocess
 import sys
 
-from _hookutil import basename, pieces
+from _hookutil import basename, pieces, strip_prefixes
 
 # git global options that consume a following value, so we can walk past them to the subcommand
 # (`git -C /path checkout foo`, `git -c k=v switch foo`). `--opt=value` forms carry their own value
@@ -48,7 +48,13 @@ def checkout_target(argv):
     Returns None for anything that isn't an unambiguous single-branch switch: a non-git command,
     branch creation (`-b`/`-c`/…), a detach (`--detach`/`-d`), path restore (`--` or >1 positional),
     or an unparsable form. Conservative on purpose — a missed switch is a harmless allow; a
-    mis-parsed one must never be a false block."""
+    mis-parsed one must never be a false block.
+
+    `argv` is run through `strip_prefixes()` first (#193) so a wrapper/prefix word ahead of `git`
+    (`command git checkout held`, `env git checkout held`, `sudo git checkout held`) still reaches
+    the real `git` command word instead of silently bypassing this guard the way a bare
+    `basename(argv[0]) != "git"` check would."""
+    argv = strip_prefixes(argv)
     if not argv or basename(argv[0]) != "git":
         return None
     i, n = 1, len(argv)
