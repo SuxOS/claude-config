@@ -245,6 +245,10 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --detach held\"}}"  "allows a detach at a held branch (holds no branch ref) (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout nonexistent\"}}" "allows checkout of a branch no worktree holds (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"echo git checkout held\"}}"   "allows a non-git command that merely mentions checkout (#123)"
+# #193: a wrapper/prefix word ahead of `git` must not shift the command word out of argv[0].
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"command git checkout held\"}}" "blocks a held checkout behind a command builtin prefix (#193)"
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"env git checkout held\"}}"     "blocks a held checkout behind an env prefix (#193)"
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"sudo git checkout held\"}}"    "blocks a held checkout behind a sudo prefix (#193)"
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout held\"}}"                           "fails open when cwd is absent, never substitutes process cwd (#154)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git -C $heldwt checkout held\"}}" "allows a -C-redirected checkout instead of consulting the wrong repo's cwd (#154)"
@@ -259,6 +263,12 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"until curl -s
 assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"sleep 5 && echo done"}}'                          "allows a bare sleep with no loop (#181)"
 assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"for f in *.sh; do shellcheck --version; done"}}'  "allows a loop with no sleep (#181)"
 assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"echo \"please wait\""}}'                          "allows a command that merely mentions waiting (#181)"
+# #193: a wrapper/prefix word ahead of `sleep` must not shift the command word out of argv[0].
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do command sleep 5; done"}}'          "blocks a sleep behind a command builtin prefix (#193)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do env sleep 5; done"}}'              "blocks a sleep behind an env prefix (#193)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do VAR=1 sleep 5; done"}}'            "blocks a sleep behind an inline env assignment (#193)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do timeout 10 sleep 5; done"}}'       "blocks a sleep behind a timeout prefix (#193)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do sudo sleep 5; done"}}'             "blocks a sleep behind a sudo prefix (#193)"
 assert_exit 0 "$BSL" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSL" '{"tool_name":"Agent","tool_input":{"command":"while true; do sleep 5; done"}}'                 "ignores a non-Bash tool_name"
 

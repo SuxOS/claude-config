@@ -16,6 +16,11 @@ grammar parse. That is a deliberate simplification (the same "speed bump, not a 
 block-egress.py takes): a `sleep` textually alongside an unrelated loop on the same command line
 is a rare false positive, and a real shell-grammar parser is a lot more hook for a marginal gain.
 
+A piece's command word is read through `_hookutil.strip_prefixes()` (#193) — the same
+wrapper/prefix canonicalization block-egress.py uses — so `command sleep 5`, `env sleep 5`,
+`VAR=1 sleep 5`, `timeout 10 sleep 5`, and `sudo sleep 5` are all recognized as `sleep`, not just
+a bare `sleep 5`.
+
 Deliberately does NOT flag a bare `sleep N` with no loop keyword anywhere in the command — a
 single delay (rate-limiting a retry the user explicitly asked for, `sleep 2 && npm run build`) is
 common and legitimate; it's the poll-in-a-loop shape specifically that CLAUDE.md calls out.
@@ -26,7 +31,7 @@ block; exit 0 = allow.
 import json
 import sys
 
-from _hookutil import basename, pieces
+from _hookutil import basename, pieces, strip_prefixes
 
 LOOP_KEYWORDS = {"while", "until", "for"}
 # Compound-statement keywords that can glue onto the same piece as the command they introduce
@@ -36,13 +41,15 @@ LEADING_KEYWORDS = {"do", "then", "else"}
 
 
 def _command_word(argv):
-    """The real command word of a piece, after stripping a leading compound-statement keyword."""
+    """The real command word of a piece, after stripping a leading compound-statement keyword
+    and any wrapper/prefix words (#193)."""
     i = 0
     while i < len(argv) and argv[i] in LEADING_KEYWORDS:
         i += 1
-    if i >= len(argv):
+    argv = strip_prefixes(argv[i:])
+    if not argv:
         return None
-    return basename(argv[i])
+    return basename(argv[0])
 
 
 def offending(command):
