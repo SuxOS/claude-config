@@ -463,6 +463,18 @@ assert_exit 0 "$BDG" 'not-json'                                                 
 assert_exit 0 "$BDG" '{"tool_name":"Agent","tool_input":{"command":"git reset --hard"}}'                                         "ignores a non-Bash tool_name (#230)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"git reset --hard"}}'                                          "fails open when cwd is absent, never substitutes process cwd (#230)"
 
+# gh pr merge / gh release create / npm publish (#242) — unconditional, no repo state needed, so
+# these fire even with no cwd in the envelope at all.
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr merge 123"}}'                                            "blocks gh pr merge (#242)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr merge 123 --squash --auto"}}'                           "blocks gh pr merge regardless of merge-method/auto flags (#242)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh release create v1.0.0"}}'                                  "blocks gh release create (#242)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh release create v1.0.0 --draft"}}'                          "allows gh release create --draft — not visible until a later publish step (#242)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm publish"}}'                                               "blocks npm publish (#242)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm publish --dry-run"}}'                                     "allows npm publish --dry-run — nothing actually goes out (#242)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"sudo npm publish"}}'                                          "blocks npm publish behind a sudo prefix (#242)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"echo gh pr merge 123"}}'                                      "allows a non-gh command that merely mentions pr merge (#242)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr view 123"}}'                                            "allows an ordinary read-only gh pr subcommand (#242)"
+
 rm -rf "$dgrepo" "$dgremote"
 
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="

@@ -11,10 +11,11 @@ exist to turn "from aspiration to guarantee" (#163, #181). Until now nothing mec
 the destructive-git-command class specifically: block-egress.py only looks at network egress,
 block-checkout-held-branch.py only looks at branch switches into a held worktree (#230).
 
-Six independent, narrowly-scoped predicates, each run against every `git` piece of the command.
-Like every other rail here, each is a deliberate "speed bump, not a seal": a missed detection is a
-harmless allow, so every predicate is conservative — anything it can't confidently resolve (a repo
-it can't read, a ref it can't verify, an argv shape it doesn't recognize) is allowed, never blocked.
+Seven independent, narrowly-scoped predicates, each run against every relevant piece of the
+command. Like every other rail here, each is a deliberate "speed bump, not a seal": a missed
+detection is a harmless allow, so six of the seven are conservative — anything they can't
+confidently resolve (a repo they can't read, a ref they can't verify, an argv shape they don't
+recognize) is allowed, never blocked.
 
   - `git push (-f|--force)` (or a `+refspec` shorthand), UNLESS `--force-with-lease` is present
     (git's own safe form already guards this) OR the push is provably a fast-forward of the
@@ -42,6 +43,19 @@ it can't read, a ref it can't verify, an argv shape it doesn't recognize) is all
   - `git stash drop [<stash>]` / `git stash clear`, UNLESS `git stash list` is already empty
     (nothing to lose). Stashed work has no `-d`-vs-`-D` safe alternative and no dry-run preview,
     so any non-empty stash list is treated as something that could be lost (#239).
+  - `gh pr merge` (any form), `gh release create` (UNLESS `--draft`, which stays invisible until a
+    later publish step), or `npm publish` (UNLESS `--dry-run`, which publishes nothing) (#242).
+    Unlike the six above, this predicate has no repo state to consult that would prove the action
+    safe — the Tier-A rule requires an explicit yes before ANY merge/publish, not just a risky one
+    — so, once matched, it fires unconditionally rather than being gated on "would this actually
+    lose something." A direct `git push` to a protected branch (bypassing PR review entirely) is
+    the same class of gap but is deliberately NOT covered here: this hook installs into every repo
+    the user works in (install.sh symlinks hooks/ into `~/.claude/hooks/` globally), and unlike
+    `gh pr merge`/`release create`/`npm publish` — which are unambiguous merge/publish actions in
+    any repo — plenty of ordinary repos push straight to `main` with no PR workflow at all, so a
+    blanket "push to main/master" match would be the false-positive-prone, noisy rail #242 itself
+    warned against. Left for a follow-up with a real scoping signal (e.g. detected branch
+    protection), not guessed here.
 
 A piece's command word is read through `_hookutil.strip_prefixes()`/`git_subcommand()` (#193, #230)
 — the same wrapper/prefix canonicalization and git-global-option walk block-checkout-held-branch.py
@@ -56,7 +70,7 @@ block; exit 0 = allow.
 import json
 import sys
 
-from _hookutil import git_out, git_returncode, git_subcommand, pieces, strip_prefixes
+from _hookutil import basename, git_out, git_returncode, git_subcommand, pieces, strip_prefixes
 
 # checkout flags that mean this isn't a blind path-restore at all (branch creation, detach,
 # interactive) — never the discard-everything case.
@@ -274,6 +288,26 @@ def _stash_drop_hit(rest, cwd):
     return bool(stash_list.strip())
 
 
+def _merge_publish_hit(argv):
+    """Return "merge"/"publish" if `argv` (already run through `strip_prefixes()`) is a `gh pr
+    merge`, `gh release create`, or `npm publish` — else None. Unconditional, not state-gated
+    (#242): there's no repo state that proves a merge/publish safe, so any match is a hit."""
+    if not argv:
+        return None
+    cmd = basename(argv[0])
+    if cmd == "gh" and len(argv) >= 3 and argv[1] == "pr" and argv[2] == "merge":
+        return "merge"
+    if cmd == "gh" and len(argv) >= 3 and argv[1] == "release" and argv[2] == "create":
+        if any(tok == "--draft" or tok == "--draft=true" for tok in argv[3:]):
+            return None  # a draft stays invisible until a later, separate publish step
+        return "publish"
+    if cmd == "npm" and len(argv) >= 2 and argv[1] == "publish":
+        if "--dry-run" in argv[2:]:
+            return None  # prints what would be published; nothing actually goes out
+        return "publish"
+    return None
+
+
 _MESSAGES = {
     "push": (
         "would force-push and, from locally known remote state, is NOT a fast-forward — it would "
@@ -302,13 +336,32 @@ _MESSAGES = {
         "irrecoverably — no `-d`-vs-`-D` safe form and no dry-run preview exist for stash. Confirm "
         "with the user first."
     ),
+    "merge": (
+        "would run `gh pr merge`, completing a PR merge. Confirm with the user first — a merge "
+        "needs an explicit yes regardless of whether it's risky."
+    ),
+    "publish": (
+        "would publish (`gh release create` / `npm publish`), making it visible outside this "
+        "session. Confirm with the user first — a publish needs an explicit yes regardless of "
+        "whether it's risky."
+    ),
 }
 
 
 def offending(command, cwd):
-    """Return (reason, argv) for the first piece that hits one of the six predicates, else None."""
+    """Return (reason, argv) for the first piece that hits one of the seven predicates, else None.
+
+    `_merge_publish_hit()` consults no repo state, so it runs even when `cwd` is None; the other
+    six all read live git state through `cwd` and are skipped entirely when it's unresolved (the
+    caller's fail-open contract, #230) rather than risk consulting the wrong repo (#154)."""
     for argv in pieces(command):
-        sub = git_subcommand(strip_prefixes(argv))
+        stripped = strip_prefixes(argv)
+        merge_publish = _merge_publish_hit(stripped)
+        if merge_publish:
+            return merge_publish, argv
+        if cwd is None:
+            continue
+        sub = git_subcommand(stripped)
         if sub is None:
             continue
         subcommand, rest = sub
@@ -330,11 +383,11 @@ def offending(command, cwd):
 def check(command, cwd):
     """Dispatcher-facing predicate (#163): (command, cwd) -> full block message, or None.
 
-    Fails open (returns None) when `cwd` can't be resolved — every predicate here consults live
-    repo state, same contract as block-checkout-held-branch.py (#154).
+    Six of the seven predicates consult live repo state and fail open (are skipped, not blocked)
+    when `cwd` can't be resolved, same contract as block-checkout-held-branch.py (#154) — but
+    `_merge_publish_hit()` needs no repo state, so `cwd` being absent must not suppress it too;
+    see `offending()`.
     """
-    if cwd is None:
-        return None
     try:
         hit = offending(command, cwd)
     except Exception:
@@ -345,8 +398,8 @@ def check(command, cwd):
     shown = " ".join(argv)
     return (
         f"Destructive-git guard (PreToolUse): `{shown}` {_MESSAGES[reason]} (work skill's Tier-A "
-        "rail: 'never force-push, hard-delete, or do anything irreversible/destructive without an "
-        "explicit yes.')"
+        "rail: 'never force-push, merge/publish without confirmation, hard-delete, or do anything "
+        "irreversible/destructive without an explicit yes.')"
     )
 
 
