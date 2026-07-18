@@ -281,6 +281,7 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"command git checkout held\"}}" "blocks a held checkout behind a command builtin prefix (#193)"
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"env git checkout held\"}}"     "blocks a held checkout behind an env prefix (#193)"
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"sudo git checkout held\"}}"    "blocks a held checkout behind a sudo prefix (#193)"
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"env -S 'git checkout held'\"}}" "blocks a held checkout hidden behind env -S's split-string value (#227)"
 # shellcheck disable=SC2016
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"echo \$(git checkout held)\"}}" "blocks a held checkout hidden inside a \$(...) command substitution (#200)"
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
@@ -307,6 +308,7 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; d
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do timeout 10 sleep 5; done"}}'       "blocks a sleep behind a timeout prefix (#193)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do sudo sleep 5; done"}}'             "blocks a sleep behind a sudo prefix (#193)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do stdbuf -o L sleep 5; done"}}'      "blocks a sleep behind a stdbuf -o L prefix (#198)"
+assert_exit 2 "$BSL" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"while true; do env -S 'sleep 5'; done\"}}" "blocks a sleep hidden behind env -S's split-string value (#227)"
 # #196: a grouping/negation token ahead of the loop keyword must not shift it out of argv[0].
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"(while true; do sleep 5; done)"}}'                "blocks a sleep loop wrapped in a subshell (#196)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"{ until curl -sf http://x; do sleep 2; done; }"}}' "blocks a sleep loop wrapped in a brace group (#196)"
