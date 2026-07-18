@@ -11,10 +11,18 @@
     {"hook": "block-checkout-held-branch.py", "stdin": "pretooluse/bash-checkout-own-branch.json", "cwd_template": "held_branch_repo", "expect_exit": 0, "desc": "allows checkout of the current worktree's own branch, in the real envelope shape (#170)"},
     {"hook": "block-checkout-held-branch.py", "stdin": "pretooluse/agent-generic-claude-no-model.json", "expect_exit": 0, "desc": "block-checkout-held-branch ignores a non-Bash tool_name (real envelope) (#170)"},
 
+    {"hook": "block-sleep-loop.py", "stdin": "pretooluse/bash-sleep-loop.json", "expect_exit": 2, "desc": "blocks a sleep-based polling loop, in the real envelope shape (#191)"},
+    {"hook": "block-sleep-loop.py", "stdin": "pretooluse/bash-sleep-loop-benign.json", "expect_exit": 0, "desc": "allows a bare rate-limiting sleep with no loop, in the real envelope shape (#191)"},
+
+    {"hook": "block-suppressed-stderr.py", "stdin": "pretooluse/bash-suppressed-stderr.json", "expect_exit": 2, "desc": "blocks stderr redirected to /dev/null, in the real envelope shape (#191)"},
+    {"hook": "block-suppressed-stderr.py", "stdin": "pretooluse/bash-suppressed-stderr-benign.json", "expect_exit": 0, "desc": "allows stderr duplicated onto stdout, not discarded, in the real envelope shape (#191)"},
+
     {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-egress-python-inline.json", "expect_exit": 2, "desc": "dispatcher (#163) routes a real envelope into block-egress.py and blocks it, not just the rail directly (#167)"},
     {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-plain-echo.json", "expect_exit": 0, "desc": "dispatcher (#163) allows a benign command through its own envelope parsing (#167)"},
     {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-checkout-held-branch.json", "cwd_template": "held_branch_repo", "expect_exit": 2, "desc": "dispatcher (#163) routes a real envelope into block-checkout-held-branch.py and blocks it (#170)"},
     {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-checkout-own-branch.json", "cwd_template": "held_branch_repo", "expect_exit": 0, "desc": "dispatcher (#163) allows the current branch's own checkout via the checkout rail, real envelope (#170)"},
+    {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-sleep-loop.json", "expect_exit": 2, "desc": "dispatcher (#163) routes a real envelope into block-sleep-loop.py and blocks it (#191)"},
+    {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-suppressed-stderr.json", "expect_exit": 2, "desc": "dispatcher (#163) routes a real envelope into block-suppressed-stderr.py and blocks it (#191)"},
 
     {"hook": "require-delegation-model.py", "stdin": "pretooluse/agent-generic-claude-no-model.json", "expect_exit": 2, "desc": "generic subagent_type=claude with no model= is blocked"},
     {"hook": "require-delegation-model.py", "stdin": "pretooluse/agent-fork-exempt.json", "expect_exit": 0, "desc": "subagent_type=fork is exempt"},

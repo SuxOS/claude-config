@@ -1,0 +1,11 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "/home/user/.claude/projects/example-project/00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "/home/user/example-project",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "while true; do check_status; sleep 5; done",
+    "description": "Poll a status check in a loop with a sleep between attempts"
+  }
+}
