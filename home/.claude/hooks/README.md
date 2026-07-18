@@ -18,7 +18,7 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   non-string `tool_input.command` ONCE, then runs a registered list of pure `check(command, cwd) ->
   message | None` predicates — one per rail, defined in and testable from the rail's own module —
   and prints+exits 2 on the first hit. This is the only entry wired in settings.json under
-  `hooks.PreToolUse` for the `Bash` matcher; the four rails below are loaded by it (via
+  `hooks.PreToolUse` for the `Bash` matcher; the five rails below are loaded by it (via
   `importlib`, since their filenames are hyphenated) rather than run as separate hook processes.
   Each stays directly runnable via stdin for the manual-test recipe below and its own entry in
   `tests/test_hooks.sh`. Add a new rail by giving its module a `check(command, cwd)` function and
@@ -57,6 +57,21 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   itself uses to tell a real `2>` fd-redirect from an ordinary word `2` followed by an unrelated `>`
   (e.g. `ffmpeg -loglevel 2 > /dev/null`).
   Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
+- **`block-destructive-git.py`** — enforces the work skill's Tier-A rail in prose (home/.claude/
+  skills/work/SKILL.md: "never force-push, hard-delete, or do anything irreversible/destructive
+  without an explicit yes", #230). Five narrowly-scoped predicates, each checked against every
+  `git` piece of the command, and each conservative the same way block-checkout-held-branch.py is
+  (a missed detection is a harmless allow; nothing it can't confidently resolve is ever blocked):
+  `git push -f`/`--force` that is provably NOT a fast-forward of the remote-tracking ref known
+  locally (a force-push to a brand-new branch, or one that's still an ancestor relationship, is
+  left alone — `--force-with-lease` is also always allowed, it's git's own safe form); `git reset
+  --hard` over a working tree with uncommitted TRACKED changes (a clean tree has nothing to lose);
+  `git clean` with a force flag where a `-n` dry run with the same flags shows it would actually
+  remove something; `git branch -D`/`--delete --force` on a branch NOT fully merged into HEAD (one
+  that `-d` would already have deleted safely is left alone); and `git checkout -- .`/`git restore
+  .` discarding the WHOLE tree (not a single-file discard) while it has uncommitted tracked
+  changes. Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any
+  error.
 
 ## Available but DISABLED by default
 
