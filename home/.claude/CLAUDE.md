@@ -106,6 +106,16 @@
   (`command sleep 5`, `env git checkout held`, `sudo …`). Any NEW rail that reads a piece's command
   word must call `_hookutil.strip_prefixes()` on the argv first — never re-derive its own
   prefix/wrapper stripping, even a "just basename(argv[0])" shortcut.
+- **`git_subcommand()`/`git_out()`/`git_returncode()` now live in `_hookutil.py` too** (#230), the
+  same "hoist, don't duplicate" move as `strip_prefixes()` (#193): any rail that needs a `git`
+  command's subcommand (past `-C`/`-c`/`--git-dir=`/etc.) or live repo state (status, merge-base,
+  worktree list, ...) should call these instead of re-deriving its own git-argv walk or
+  subprocess-wrapping — `git_out()` collapses a nonzero exit to `None` (for callers where the exit
+  code is just a pass/fail marker), `git_returncode()` preserves it (for callers like `merge-base
+  --is-ancestor` where the exit code IS the answer). A conservative-by-construction pattern worth
+  reusing for any new git-consulting rail: resolve every ref/state check through one of these, and
+  treat any `None`/unresolved result as "allow" — never "block" — so an unreadable repo or a git
+  subprocess quirk degrades to a missed detection, never a false block.
 - **Extending `WRAPPERS` in `strip_prefixes()` can silently create a new false positive** (#179):
   a wrapper-shaped word may have an inspection-only flag that reports on the next word instead of
   executing it (`command -v curl` / `-V` prints curl's path, it never runs it). Blindly stripping

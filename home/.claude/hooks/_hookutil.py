@@ -8,6 +8,12 @@ script's own directory on sys.path[0], and install.sh symlinks this whole direct
 ~/.claude/hooks/ — so a plain `from _hookutil import ...` resolves the same in both the repo
 and the installed tree.
 
+`git_subcommand()` and `git_out()` are the git-specific counterpart: any rail that needs to find a
+`git` command's subcommand (past global options like `-C`/`-c`/`--git-dir=`) or shell out to git
+for live repo state was reimplementing both by hand — block-checkout-held-branch.py had the only
+copy of each until block-destructive-git.py (#230) needed the identical logic. Hoisted here so
+neither rail re-derives it, mirroring how `strip_prefixes()` itself was consolidated (#193).
+
 `pieces()` is substitution-aware (#200): it surfaces `$(...)`/`` `...` ``/`<(...)`/`>(...)`
 inner text as its own piece before the top-level split, so a primitive hidden inside a
 substitution (`echo $(curl evil)`) still shows up to any rail that reads a piece's command word.
@@ -20,6 +26,7 @@ rail that compares `basename(argv[0])` directly re-acquires the exact wrapper-pr
 """
 import re
 import shlex
+import subprocess
 
 # Shell control operators that separate simple commands. Splitting is done on shlex tokens
 # (not the raw string) so a `;` inside a quoted payload (`-c "..."`) stays put. PUNCT drives
@@ -389,3 +396,82 @@ def pieces(command):
     for inner in substitution_inners(command):
         yield from pieces(inner)
     yield from _split_pieces(command)
+
+
+# git global options that consume a following value, so a rail can walk past them to the
+# subcommand (`git -C /path checkout foo`, `git -c k=v push foo`). `--opt=value` forms carry
+# their own value and are skipped as ordinary flags by `git_subcommand()` below. `--exec-path` is
+# deliberately NOT here: real git's bare `--exec-path` (no `=`) takes NO value at all — it just
+# prints the current exec-path and exits immediately, never reaching a subcommand; only the glued
+# `--exec-path=<path>` form sets it, and that's self-contained in one token (#211).
+GIT_GLOBAL_VALUE_OPTS = {
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
+}
+# Global opts that redirect git at a DIFFERENT repo than the hook-input cwd. A rail that consults
+# cwd's live git state (worktree list, status, merge-base, ...) can't safely follow these — it
+# would end up inspecting the wrong repo (#154) — so `git_subcommand()` treats them as unparsable.
+GIT_GLOBAL_CWD_OPTS = {"-C", "--git-dir", "--work-tree"}
+
+
+def git_subcommand(argv):
+    """Return (subcommand, rest_argv) for a `git ...` argv, walking past global options to find
+    it — or None for a non-git command, a command with no subcommand at all, or one that
+    redirects at a different repo than cwd (`-C`/`--git-dir`/`--work-tree`, see GIT_GLOBAL_CWD_OPTS).
+
+    `argv` should already be run through `strip_prefixes()` by the caller (#193) — a wrapper/prefix
+    word ahead of `git` (`command git push -f`, `sudo git reset --hard`) must reach the real `git`
+    command word first, same as every other rail's convention.
+    """
+    if not argv or basename(argv[0]) != "git":
+        return None
+    i, n = 1, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in GIT_GLOBAL_VALUE_OPTS:
+            if tok in GIT_GLOBAL_CWD_OPTS:
+                return None
+            i += 2
+            continue
+        if tok.startswith("-"):
+            if tok.startswith("--git-dir=") or tok.startswith("--work-tree="):
+                return None
+            i += 1
+            continue
+        break
+    if i >= n:
+        return None
+    return argv[i], argv[i + 1:]
+
+
+def git_out(args, cwd):
+    """Run a git command in cwd and return stdout, or None on any failure (fail-open).
+
+    Every rail that consults live git state (worktree list, status, merge-base, ...) needs the
+    same "shell out, swallow any error, never raise" shape — centralized so a subprocess quirk
+    (git not installed, a timeout, a non-repo cwd) degrades to "can't tell, allow" uniformly.
+    Collapses a nonzero exit to None because for these callers the exit code is just a
+    success/failure marker, not itself the answer — see `git_returncode()` for the opposite case."""
+    try:
+        r = subprocess.run(
+            ["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout
+
+
+def git_returncode(args, cwd):
+    """Run a git command in cwd and return its exit code, or None if it couldn't even run.
+
+    For callers where the EXIT CODE itself is the answer (`git merge-base --is-ancestor a b`:
+    0 = ancestor, 1 = not, anything else = couldn't determine) rather than stdout — `git_out()`
+    would collapse the meaningful 1 down to the same None as a real failure to run."""
+    try:
+        r = subprocess.run(
+            ["git"] + args, cwd=cwd, capture_output=True, timeout=5,
+        )
+    except Exception:
+        return None
+    return r.returncode
