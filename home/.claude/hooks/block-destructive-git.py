@@ -55,7 +55,6 @@ import sys
 
 from _hookutil import git_out, git_returncode, git_subcommand, pieces, strip_prefixes
 
-FORCE_PUSH_FLAGS = {"-f", "--force"}
 # checkout flags that mean this isn't a blind path-restore at all (branch creation, detach,
 # interactive) — never the discard-everything case.
 CHECKOUT_SKIP_OPTS = {"-b", "-B", "-c", "-C", "--orphan", "-d", "--detach", "-p", "--patch"}
@@ -94,11 +93,10 @@ def _push_force_hit(rest, cwd):
     if any(tok == "--force-with-lease" or tok.startswith("--force-with-lease=") for tok in rest):
         return False  # git's own safe form — it refuses server-side if the remote moved
 
-    positionals, forced, out_of_scope = [], False, False
+    forced = _has_flag_char(rest, "f", ("--force",))
+    positionals, out_of_scope = [], False
     for tok in rest:
-        if tok in FORCE_PUSH_FLAGS:
-            forced = True
-        elif tok in ("--all", "--mirror", "--tags", "--delete", "-d"):
+        if tok in ("--all", "--mirror", "--tags", "--delete", "-d"):
             out_of_scope = True  # multi-ref or a delete-push — a different risk, not scoped here
         elif not tok.startswith("-"):
             positionals.append(tok)
@@ -178,7 +176,10 @@ def _branch_delete_hit(rest, cwd):
 
 
 def _checkout_discard_target(rest):
-    seen_dashdash, positionals = False, []
+    """"." (bare, or after a `--`) means discard-everything. A pre-`--` tree-ish (`HEAD`, a branch,
+    a tag) is the checkout source, not a path — it must not disqualify the match, so it's tracked
+    separately from the post-`--`/no-`--` positionals that name what gets discarded."""
+    seen_dashdash, positionals, pre_dashdash = False, [], []
     for tok in rest:
         if tok == "--":
             seen_dashdash = True
@@ -187,8 +188,14 @@ def _checkout_discard_target(rest):
             return None  # branch creation / detach / interactive — not a path-restore at all
         if not seen_dashdash and tok.startswith("-"):
             continue
-        positionals.append(tok)
-    return "." if positionals == ["."] else None
+        (positionals if seen_dashdash else pre_dashdash).append(tok)
+    if seen_dashdash:
+        return "." if positionals == ["."] else None
+    if pre_dashdash == ["."]:
+        return "."
+    if len(pre_dashdash) == 2 and pre_dashdash[1] == ".":
+        return "."  # single leading tree-ish (e.g. `HEAD`) followed by the discard-everything "."
+    return None
 
 
 def _restore_discard_target(rest):

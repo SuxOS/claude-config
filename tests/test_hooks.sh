@@ -377,10 +377,14 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 
 # git checkout -- . / git restore .
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- .\"}}"           "allows checkout -- . on a clean tree — nothing to discard (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- .\"}}"      "allows checkout <tree-ish> -- . on a clean tree (#238)"
 echo y >> "$dgrepo/f.txt"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- .\"}}"           "blocks checkout -- . discarding an uncommitted tracked change (#230)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore .\"}}"               "blocks restore . discarding an uncommitted tracked change (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- .\"}}"      "blocks checkout <tree-ish> -- . discarding a tracked change (#238)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout main .\"}}"         "blocks checkout <tree-ish> . (no --) discarding a tracked change (#238)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- f.txt\"}}"       "allows discarding one specific file, not the whole tree (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- f.txt\"}}"  "allows a tree-ish restore of one specific file, not the whole tree (#238)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore --staged .\"}}"      "allows a --staged-only restore — working tree files are untouched (#230)"
 git -C "$dgrepo" checkout -q -- f.txt
 
@@ -405,6 +409,8 @@ echo c >> "$dgrepo/a.txt"
 git -C "$dgrepo" add a.txt
 git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "divergent commit"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch\"}}"  "blocks a force-push that would discard commits on the remote (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -uf origin scratch\"}}" "blocks a bundled -uf (set-upstream+force) push that would discard commits (#235)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --force-with-lease origin scratch\"}}" "allows --force-with-lease — git's own safe form (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a non-force push (#230)"
 
