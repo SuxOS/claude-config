@@ -74,6 +74,13 @@
   documented once — when your own commit message resolves an issue, use `Closes #N`/`Fixes #N`
   (not just `(#N)`) so GitHub auto-closes it instead of leaving it to be rediscovered and
   re-investigated by a later build.
+- **That same grep-HEAD check is blind to a sibling build's fix sitting in an OPEN, unmerged
+  PR** (#190) — a merged commit shows up on a HEAD grep, but a concurrent builder session's
+  branch doesn't merge until its PR lands, so an issue can already be fully resolved by an open
+  PR while `grep -rn '#<N>'` on HEAD finds nothing. Before implementing an assigned issue, also
+  run `gh pr list --state open` and check candidate PRs' bodies/commits (`gh pr view <n> --json
+  body`, `gh pr diff <n>`) for that issue number, not just HEAD — this catches overlap a HEAD-only
+  grep misses and avoids shipping a duplicate implementation that then conflicts at merge time.
 - **Security issues can cite stale line numbers/rules.** The issue-authoring loop can snapshot
   an aggregate/planned state across several in-flight security PRs rather than HEAD, so a
   security issue's cited line numbers or its claim that a deny rule "already exists" may not
