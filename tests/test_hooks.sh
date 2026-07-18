@@ -375,6 +375,16 @@ git -C "$dgrepo" checkout -q main
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git branch -D unmerged-branch\"}}" "blocks branch -D on a branch NOT merged into HEAD (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git branch -d merged-branch\"}}"   "allows the plain -d form (git itself already refuses on unmerged) (#230)"
 
+# git stash drop / git stash clear
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash clear\"}}"               "allows stash clear when the stash list is already empty — nothing to lose (#239)"
+echo w > "$dgrepo/w.txt"
+git -C "$dgrepo" add w.txt
+git -C "$dgrepo" stash push -q -m stashed
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash drop\"}}"                "blocks stash drop when the stash list is non-empty (#239)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash clear\"}}"               "blocks stash clear when the stash list is non-empty (#239)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash list\"}}"                "allows a non-drop/clear stash subcommand (#239)"
+git -C "$dgrepo" stash drop -q
+
 # git checkout -- . / git restore .
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- .\"}}"           "allows checkout -- . on a clean tree — nothing to discard (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- .\"}}"      "allows checkout <tree-ish> -- . on a clean tree (#238)"

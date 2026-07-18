@@ -11,7 +11,7 @@ exist to turn "from aspiration to guarantee" (#163, #181). Until now nothing mec
 the destructive-git-command class specifically: block-egress.py only looks at network egress,
 block-checkout-held-branch.py only looks at branch switches into a held worktree (#230).
 
-Five independent, narrowly-scoped predicates, each run against every `git` piece of the command.
+Six independent, narrowly-scoped predicates, each run against every `git` piece of the command.
 Like every other rail here, each is a deliberate "speed bump, not a seal": a missed detection is a
 harmless allow, so every predicate is conservative — anything it can't confidently resolve (a repo
 it can't read, a ref it can't verify, an argv shape it doesn't recognize) is allowed, never blocked.
@@ -39,6 +39,9 @@ it can't read, a ref it can't verify, an argv shape it doesn't recognize) is all
     working tree has no uncommitted tracked changes. Deliberately narrow to exactly "discard
     EVERYTHING" (`.`, the whole tree) — `git checkout -- some/file.txt` is an ordinary, common,
     deliberate discard of one file and is left alone.
+  - `git stash drop [<stash>]` / `git stash clear`, UNLESS `git stash list` is already empty
+    (nothing to lose). Stashed work has no `-d`-vs-`-D` safe alternative and no dry-run preview,
+    so any non-empty stash list is treated as something that could be lost (#239).
 
 A piece's command word is read through `_hookutil.strip_prefixes()`/`git_subcommand()` (#193, #230)
 — the same wrapper/prefix canonicalization and git-global-option walk block-checkout-held-branch.py
@@ -246,6 +249,18 @@ def _discard_hit(subcommand, rest, cwd):
     return bool(_working_tree_dirty(cwd))
 
 
+def _stash_drop_hit(rest, cwd):
+    """True if this is `git stash drop`/`git stash clear` and `git stash list` isn't already
+    empty — the same "would this actually discard something" gate every other predicate here
+    uses, since stashed work has no `-d`-vs-`-D` safe form and no dry-run preview to fall back on."""
+    if not rest or rest[0] not in ("drop", "clear"):
+        return False
+    stash_list = git_out(["stash", "list"], cwd)
+    if stash_list is None:
+        return False  # can't tell — conservative allow
+    return bool(stash_list.strip())
+
+
 _MESSAGES = {
     "push": (
         "would force-push and, from locally known remote state, is NOT a fast-forward — it would "
@@ -269,11 +284,16 @@ _MESSAGES = {
         "would discard ALL uncommitted tracked changes in the working tree. Confirm with the user "
         "first, or `git stash` before wiping everything."
     ),
+    "stash": (
+        "would `git stash drop`/`git stash clear` a non-empty stash list, discarding stashed work "
+        "irrecoverably — no `-d`-vs-`-D` safe form and no dry-run preview exist for stash. Confirm "
+        "with the user first."
+    ),
 }
 
 
 def offending(command, cwd):
-    """Return (reason, argv) for the first piece that hits one of the five predicates, else None."""
+    """Return (reason, argv) for the first piece that hits one of the six predicates, else None."""
     for argv in pieces(command):
         sub = git_subcommand(strip_prefixes(argv))
         if sub is None:
@@ -289,6 +309,8 @@ def offending(command, cwd):
             return "branch", argv
         if subcommand in ("checkout", "restore") and _discard_hit(subcommand, rest, cwd):
             return "discard", argv
+        if subcommand == "stash" and _stash_drop_hit(rest, cwd):
+            return "stash", argv
     return None
 
 
