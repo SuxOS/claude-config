@@ -148,6 +148,17 @@
   thing it draws cases from (it's how this harness also caught a live sibling gap in xargs's
   `-n`/`-s`/`-d` while being built). Keep a fuzzer's ground truth independent of its SUT's own
   bookkeeping whenever that bookkeeping is exactly what's under test.
+- **"Independent reference table" still means "independently guessed by the same process" — it can
+  encode the SAME wrong mental model as the code under test** (#227, #228): both
+  `_hookutil.WRAPPER_VALUE_OPTS` and `fuzz_argv_canon.py`'s hand-authored table modeled env's `-S`/
+  `--split-string` as "consumes one opaque following token", when real env(1) shell-word-splits its
+  value and that becomes the START of the real command — so the fuzzer's assertion passed while the
+  actual bypass sat there unfound. When a flag/behavior can plausibly be misread the same way by
+  both the implementer and the table author (a wrapper option whose value isn't obviously "just
+  data"), don't stop at a second hand-authored guess — ground it against real execution instead
+  (`tests/fuzz_argv_exec.py`: runs the real binary against an argv-echoing helper, compares
+  `strip_prefixes()`'s prediction to what actually ran) wherever that's safe to do in CI (no real
+  privilege elevation, no execution model that isn't simple exec-passthrough).
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.

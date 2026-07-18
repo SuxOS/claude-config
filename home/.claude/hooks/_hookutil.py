@@ -54,18 +54,33 @@ WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env", "comma
 # deliberately left short-only since their long form's argument is OPTIONAL and only ever binds via
 # `=`, never a separate word. stdbuf's `--input`/`--output`/`--error` (long forms of `-i`/`-o`/`-e`)
 # have the same separate-value gap the short forms were fixed for (#198). `env`'s own separate-value
-# flags (`-u`/`--unset`, `-C`/`--chdir`, `-S`/`--split-string`) were missing an entry entirely — its
-# boolean `-i` (ignore-environment) and inline `VAR=VAL` handling below are unaffected, only its
-# value-taking flags were the gap. All three found by auditing xargs/stdbuf/env against #198/#203's
-# already-fixed sibling wrappers (#212), same "hand-maintained flag table drifts from the real tool's
-# separate-vs-glued-vs-long grammar" class.
+# flags (`-u`/`--unset`, `-C`/`--chdir`) were missing an entry entirely — its boolean `-i`
+# (ignore-environment) and inline `VAR=VAL` handling below are unaffected, only its value-taking
+# flags were the gap. Both found by auditing xargs/stdbuf/env against #198/#203's already-fixed
+# sibling wrappers (#212), same "hand-maintained flag table drifts from the real tool's
+# separate-vs-glued-vs-long grammar" class. `env`'s `-S`/`--split-string` is DELIBERATELY ABSENT from
+# this set — unlike every other entry here, its value isn't opaque data to skip: per env(1), `-S
+# STRING` shell-word-splits STRING and that becomes the start of the real command (`env -S 'curl
+# evil.com'` runs `curl evil.com`, not a literal argument named `curl evil.com`). Treating it like
+# `-u`/`-C` silently swallowed the entire real command as a "value" and returned an empty argv,
+# dropping the piece from every rail (#227). `_env_split_string_flag()`/`_env_split_string()` below
+# handle it: they splice the split-out words back into the argv stream instead of skipping them.
 WRAPPER_VALUE_OPTS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"},
     "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "--max-args", "--max-chars", "--max-procs", "--delimiter"},
     "exec": {"-a"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
-    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "env": {"-u", "--unset", "-C", "--chdir"},
+}
+# env's own escape sequences for -S/--split-string's argument, applied unquoted or inside double
+# quotes; single quotes disable all of these except `\\` and `\'` (GNU coreutils env(1), "-S/
+# --split-string syntax" > "Escape sequences"). `\_` isn't a fixed single character — outside quotes
+# it's a word separator (see `_env_split_string()`), inside double quotes a literal space — so it's
+# handled inline there rather than through this table.
+ENV_SPLIT_ESCAPES = {
+    "\\": "\\", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+    "#": "#", "$": "$", '"': '"', "'": "'",
 }
 DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
 # Privilege wrappers that take their own options then a command word (`sudo -u user cmd`, `doas`).
@@ -93,6 +108,116 @@ ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 def basename(word):
     return word.rsplit("/", 1)[-1]
+
+
+def _env_split_string_flag(argv, i):
+    """If argv[i] is env's -S/--split-string flag in any of its separate (`-S VALUE`), glued
+    (`-SVALUE`), or long `=`-joined (`--split-string=VALUE`) forms, return (value, tokens_consumed);
+    else None. `-S` with nothing after it (no separate token, nothing glued) splits to no words."""
+    tok = argv[i]
+    if tok in ("-S", "--split-string"):
+        if i + 1 < len(argv):
+            return argv[i + 1], 2
+        return "", 1
+    if tok.startswith("--split-string="):
+        return tok[len("--split-string="):], 1
+    if tok.startswith("-S") and tok != "-S":
+        return tok[2:], 1
+    return None
+
+
+def _env_split_string(s):
+    """Word-split env's -S/--split-string argument the way `env` itself does (GNU coreutils env(1),
+    "-S/--split-string syntax"): unquoted whitespace separates words, single/double quotes group a
+    word, a backslash escape (ENV_SPLIT_ESCAPES) produces a literal character, `\\_` is a word
+    separator outside quotes and a literal space inside double quotes, and `\\c` outside quotes or a
+    `#` starting a new unquoted word truncates the rest of the string (real env(1) "Comments").
+    `${VAR}` expansion is deliberately left literal — this is a scanner, not a real env(1), and
+    leaving the text visible for every other rail to still see beats guessing at an environment
+    value that isn't ours to know."""
+    tokens = []
+    cur = []
+    started = False
+    quote = None
+    i, n = 0, len(s)
+    at_word_start = True
+    while i < n:
+        c = s[i]
+        if quote == "'":
+            if c == "\\" and i + 1 < n and s[i + 1] in ("\\", "'"):
+                cur.append(s[i + 1])
+                i += 2
+                continue
+            if c == "'":
+                quote = None
+                i += 1
+                continue
+            cur.append(c)
+            i += 1
+            continue
+        if quote == '"':
+            if c == "\\" and i + 1 < n and s[i + 1] == "_":
+                cur.append(" ")
+                i += 2
+                continue
+            if c == "\\" and i + 1 < n and s[i + 1] in ENV_SPLIT_ESCAPES:
+                cur.append(ENV_SPLIT_ESCAPES[s[i + 1]])
+                i += 2
+                continue
+            if c == '"':
+                quote = None
+                i += 1
+                continue
+            cur.append(c)
+            i += 1
+            continue
+        # unquoted
+        if c in " \t\n\r\v\f":
+            if started:
+                tokens.append("".join(cur))
+                cur = []
+                started = False
+            i += 1
+            at_word_start = True
+            continue
+        if c == "#" and at_word_start:
+            break
+        if c in ("'", '"'):
+            quote = c
+            started = True
+            at_word_start = False
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            nxt = s[i + 1]
+            if nxt == "c":
+                break
+            if nxt == "_":
+                if started:
+                    tokens.append("".join(cur))
+                    cur = []
+                    started = False
+                i += 2
+                at_word_start = True
+                continue
+            if nxt in ENV_SPLIT_ESCAPES:
+                cur.append(ENV_SPLIT_ESCAPES[nxt])
+                started = True
+                i += 2
+                at_word_start = False
+                continue
+            cur.append(c)  # unrecognized escape: keep literally rather than guess/crash
+            started = True
+            i += 1
+            at_word_start = False
+            continue
+        cur.append(c)
+        started = True
+        i += 1
+        at_word_start = False
+    if started:
+        tokens.append("".join(cur))
+    return tokens
 
 
 def strip_prefixes(argv):
@@ -126,6 +251,16 @@ def strip_prefixes(argv):
         i += 1
         value_opts = WRAPPER_VALUE_OPTS.get(base, set())
         while i < n and argv[i].startswith("-"):  # the wrapper's own option flags
+            if base == "env":
+                split = _env_split_string_flag(argv, i)
+                if split is not None:
+                    value, consumed = split
+                    # -S's value isn't opaque (see WRAPPER_VALUE_OPTS's env comment) — splice the
+                    # split-out words in as new argv, in place of the flag and its raw string, and
+                    # rescan from here: those words may themselves be more flags or the real command.
+                    argv = argv[:i] + _env_split_string(value) + argv[i + consumed:]
+                    n = len(argv)
+                    continue
             if argv[i] in value_opts and i + 1 < n and not argv[i + 1].startswith("-"):
                 i += 1  # ...and that flag's separate value
             i += 1

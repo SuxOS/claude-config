@@ -80,6 +80,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 tests/fuzz_argv_canon.py
 
+      # execution-grounded argv-canon fuzzer (#228): the table-driven fuzzer above generates its
+      # cases from a reference table that can (and did — #227) encode the same wrong mental model
+      # as the production code it's checking. This one actually execs the real env/timeout/nice
+      # binaries against an argv-echoing helper and compares strip_prefixes()'s prediction to what
+      # really ran — ground truth instead of a second hand-authored guess.
+      - name: fuzz argv-canonicalization against real subprocess execution
+        if: ${{ !cancelled() }}
+        run: python3 tests/fuzz_argv_exec.py
+
       # json-validate (was advisory): settings.json, fabric.json, and the skill evals.json files are
       # hand- and agent-edited and fail silently when malformed — Claude Code just ignores/rejects
       # them. Every tracked *.json must parse (#65).
