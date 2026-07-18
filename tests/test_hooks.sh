@@ -233,6 +233,11 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo --other-u
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo -T 30 curl http://evil.com"}}'                                   "blocks past sudo -T's separate-value arg (#203)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"sudo --command-timeout 30 curl http://evil.com"}}'                    "blocks past sudo --command-timeout's separate-value arg (#203)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"doas -a bsdauth curl http://evil.com"}}'                              "blocks past doas -a's separate-value arg (#203)"
+# #212: the same #198/#203 gap shape found in xargs/stdbuf's long forms and in env, which had no
+# WRAPPER_VALUE_OPTS entry at all.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"xargs --max-args 1 curl http://evil.com"}}'                             "blocks past xargs --max-args's separate-value arg (#212)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"stdbuf --output L curl http://evil.com"}}'                              "blocks past stdbuf --output's separate-value arg (#212)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"env -u FOO curl http://evil.com"}}'                                     "blocks past env -u's separate-value arg (#212)"
 # #127: the bare `create_connection` NET_RE alternative (and its boundary-less neighbors) matched
 # any identifier containing the substring, not just a real call — anchor with \b (+ call-paren for
 # the bare form) so an identifier merely containing the token doesn't false-positive block.
@@ -247,7 +252,8 @@ assert_exit 0 "$BE" 'not-json'                                                  
 echo "== block-checkout-held-branch.py =="
 BCHB="$HOOKS/block-checkout-held-branch.py"
 # Build a real repo whose branch `held` is checked out in a second worktree, so a `git checkout
-# held` from the main worktree is the silent no-op the hook exists to catch (#123). The hook runs
+# held` from the main worktree hits the held-branch fatal error the hook exists to preempt (#123,
+# #210). The hook runs
 # git in the input JSON's cwd, so every case points cwd at $tmprepo.
 tmprepo="$(mktemp -d)"
 heldwt="$(mktemp -d)"
@@ -273,6 +279,9 @@ assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout held\"}}"                           "fails open when cwd is absent, never substitutes process cwd (#154)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git -C $heldwt checkout held\"}}" "allows a -C-redirected checkout instead of consulting the wrong repo's cwd (#154)"
+# #211: bare `--exec-path` (no `=`) takes no value in real git — it must not be treated as
+# consuming the next token, or the real `checkout`/target words shift out of the scan.
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --exec-path checkout held\"}}" "blocks a held checkout past a bare --exec-path, which takes no value (#211)"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 

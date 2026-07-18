@@ -42,8 +42,11 @@
 - Batch independent tool calls into one message; never poll in a loop — block on one
   `--watch`/`wait` call instead.
 - Isolate parallel git mutators in detached scratch worktrees + explicit refspec pushes —
-  never `git checkout` a branch that might be held by a stale worktree (silent no-op, not
-  an error).
+  never `git checkout` a branch that might be held by a stale worktree. (Re-verified #210: modern
+  git — any version with `git worktree`, 2.5+ — makes this a loud `fatal: ... already used by
+  worktree` error, exit 128, not the silent no-op earlier notes here claimed; the rule to avoid it
+  stands regardless, since hitting that fatal error mid-sequence still wastes a turn re-diagnosing
+  and re-planning around it.)
 - Don't suppress a command's stderr if you might need it to diagnose — `2>/dev/null` on a
   step you'll have to re-debug just moves the cost, it doesn't remove it.
 - Verify shell/OS assumptions before looping a command across N items (zsh glob rules ≠

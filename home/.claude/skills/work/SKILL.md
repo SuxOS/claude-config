@@ -66,8 +66,10 @@ For a drain, a summary: `[DRAINED: <n over p passes>|DRY|CAPPED: <bound>|HALTED|
 Any parallel or cross-repo local git work goes through isolated worktrees:
 
 - **One detached scratch worktree per mutator** — `git worktree add --detach <scratch>/<repo>-<unit> <base-sha>`. Never a named-branch checkout.
-- **Never `git checkout` a branch a worktree may hold** — silent no-op, not an error.
-  Operate detached; push by explicit refspec (`git push origin HEAD:refs/heads/<branch>`).
+- **Never `git checkout` a branch a worktree may hold** — modern git makes this a loud
+  `fatal: ... already used by worktree` error (exit 128), not a silent no-op, but it's still a
+  wasted turn to hit and recover from. Operate detached; push by explicit refspec
+  (`git push origin HEAD:refs/heads/<branch>`).
 - **Verify committer identity before every push** — pre-empt the GH007 reject.
 - **Never touch the primary checkout's current branch.** GC orphaned scratch worktrees at
   start and end; cap concurrent at `cores−2`.
