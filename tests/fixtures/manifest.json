@@ -27,6 +27,7 @@
     {"hook": "pretooluse-bash.py", "stdin": "pretooluse/bash-suppressed-stderr.json", "expect_exit": 2, "desc": "dispatcher (#163) routes a real envelope into block-suppressed-stderr.py and blocks it (#191)"},
 
     {"hook": "require-delegation-model.py", "stdin": "pretooluse/agent-generic-claude-no-model.json", "expect_exit": 2, "desc": "generic subagent_type=claude with no model= is blocked"},
+    {"hook": "require-delegation-model.py", "stdin": "pretooluse/agent-task-generic-claude-no-model.json", "expect_exit": 2, "desc": "the same delegation under the historical tool_name 'Task' is also blocked — the gate must fire on either name (#138)"},
     {"hook": "require-delegation-model.py", "stdin": "pretooluse/agent-fork-exempt.json", "expect_exit": 0, "desc": "subagent_type=fork is exempt"},
     {"hook": "require-delegation-model.py", "stdin": "pretooluse/agent-named-explore.json", "expect_exit": 0, "desc": "a named subagent_type (Explore) is exempt"},
     {"hook": "require-delegation-model.py", "stdin": "pretooluse/agent-generic-explicit-model.json", "expect_exit": 0, "desc": "an explicit model= is allowed"},
