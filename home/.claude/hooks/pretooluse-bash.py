@@ -39,6 +39,7 @@ _RAIL_MODULES = (
     "block-checkout-held-branch",
     "block-sleep-loop",
     "block-suppressed-stderr",
+    "block-destructive-git",
 )
 
 

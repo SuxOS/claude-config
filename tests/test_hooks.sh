@@ -305,6 +305,12 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; d
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"(while true; do sleep 5; done)"}}'                "blocks a sleep loop wrapped in a subshell (#196)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"{ until curl -sf http://x; do sleep 2; done; }"}}' "blocks a sleep loop wrapped in a brace group (#196)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"! while true; do sleep 5; done"}}'                "blocks a negated sleep loop (#196)"
+# #229: `sleep` as the loop's OWN condition (no `;` before it) lands in the same piece as the loop
+# keyword — must still be recognized, not just a `sleep` in a later piece/the loop body.
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while sleep 5; do check_status; done"}}'           "blocks sleep as the while loop condition itself (#229)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"until sleep 2; do check_status; done"}}'           "blocks sleep as the until loop condition itself (#229)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while command sleep 5; do check_status; done"}}'   "blocks sleep-as-condition behind a command builtin prefix (#229)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"! while sleep 5; do check_status; done"}}'         "blocks a negated sleep-as-condition loop (#229)"
 # #200: a sleep hidden inside a $(...) command substitution nested in a loop piece must still be
 # seen — `_hookutil.pieces()` recurses into substitutions, so this piece surfaces as its own
 # `sleep 5` rather than staying buried inside `echo`'s argument.
@@ -332,9 +338,109 @@ assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSS" '{"tool_name":"Agent","tool_input":{"command":"curl http://x 2>/dev/null"}}'                    "ignores a non-Bash tool_name"
 
+echo "== block-destructive-git.py =="
+BDG="$HOOKS/block-destructive-git.py"
+# Every predicate here reads live repo state from cwd, so build a throwaway repo (#230), same
+# pattern block-checkout-held-branch.py's tests use.
+dgrepo="$(mktemp -d)"
+git -C "$dgrepo" init -q -b main
+git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+
+# git reset --hard
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git reset --hard\"}}"            "allows reset --hard on a clean tree — nothing to lose (#230)"
+echo x > "$dgrepo/f.txt"
+git -C "$dgrepo" add f.txt
+git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "add f"
+echo y >> "$dgrepo/f.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git reset --hard\"}}"            "blocks reset --hard over an uncommitted tracked change (#230)"
+git -C "$dgrepo" checkout -q -- f.txt
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git reset --soft HEAD~1\"}}"     "allows a non-hard reset (#230)"
+
+# git clean
+echo untracked > "$dgrepo/u.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -fd\"}}"               "blocks clean -fd when an untracked file would actually be removed (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -nfd\"}}"              "allows clean when -n/--dry-run is set, even combined with force (#230)"
+rm -f "$dgrepo/u.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -f\"}}"                "allows clean -f when there is nothing untracked to remove (#230)"
+
+# git branch -D
+git -C "$dgrepo" branch merged-branch
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git branch -D merged-branch\"}}" "allows branch -D on a branch already merged into HEAD — -d would succeed too (#230)"
+git -C "$dgrepo" branch -D merged-branch >/dev/null
+git -C "$dgrepo" branch unmerged-branch
+git -C "$dgrepo" checkout -q unmerged-branch
+echo z > "$dgrepo/g.txt"
+git -C "$dgrepo" add g.txt
+git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "unmerged commit"
+git -C "$dgrepo" checkout -q main
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git branch -D unmerged-branch\"}}" "blocks branch -D on a branch NOT merged into HEAD (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git branch -d merged-branch\"}}"   "allows the plain -d form (git itself already refuses on unmerged) (#230)"
+
+# git stash drop / git stash clear
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash clear\"}}"               "allows stash clear when the stash list is already empty — nothing to lose (#239)"
+echo w > "$dgrepo/w.txt"
+git -C "$dgrepo" add w.txt
+git -C "$dgrepo" stash push -q -m stashed
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash drop\"}}"                "blocks stash drop when the stash list is non-empty (#239)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash clear\"}}"               "blocks stash clear when the stash list is non-empty (#239)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash list\"}}"                "allows a non-drop/clear stash subcommand (#239)"
+git -C "$dgrepo" stash drop -q
+
+# git checkout -- . / git restore .
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- .\"}}"           "allows checkout -- . on a clean tree — nothing to discard (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- .\"}}"      "allows checkout <tree-ish> -- . on a clean tree (#238)"
+echo y >> "$dgrepo/f.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- .\"}}"           "blocks checkout -- . discarding an uncommitted tracked change (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore .\"}}"               "blocks restore . discarding an uncommitted tracked change (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- .\"}}"      "blocks checkout <tree-ish> -- . discarding a tracked change (#238)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout main .\"}}"         "blocks checkout <tree-ish> . (no --) discarding a tracked change (#238)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- f.txt\"}}"       "allows discarding one specific file, not the whole tree (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- f.txt\"}}"  "allows a tree-ish restore of one specific file, not the whole tree (#238)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore --staged .\"}}"      "allows a --staged-only restore — working tree files are untouched (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore -s HEAD .\"}}"        "blocks restore -s <tree> . (separate-token --source), not the staged toggle (#240)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore -S .\"}}"             "allows restore -S . (short --staged) — working tree files are untouched (#240)"
+git -C "$dgrepo" checkout -q -- f.txt
+
+# git push -f / --force: needs a real remote to reason about fast-forward-ness.
+dgremote="$(mktemp -d)"
+git -C "$dgremote" init -q --bare -b main
+git -C "$dgrepo" remote add origin "$dgremote"
+git -C "$dgrepo" push -q origin main
+git -C "$dgrepo" checkout -q -b scratch
+echo a > "$dgrepo/a.txt"
+git -C "$dgrepo" add a.txt
+git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "scratch commit"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch\"}}"  "allows force-push of a brand-new branch never pushed before — nothing to lose (#230)"
+git -C "$dgrepo" push -q origin scratch
+echo b >> "$dgrepo/a.txt"
+git -C "$dgrepo" add a.txt
+git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "ff commit"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch\"}}"  "allows a fast-forward force-push (#230)"
+git -C "$dgrepo" push -q origin scratch
+git -C "$dgrepo" reset -q --hard HEAD~1
+echo c >> "$dgrepo/a.txt"
+git -C "$dgrepo" add a.txt
+git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "divergent commit"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch\"}}"  "blocks a force-push that would discard commits on the remote (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -uf origin scratch\"}}" "blocks a bundled -uf (set-upstream+force) push that would discard commits (#235)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f -o ci.skip origin scratch\"}}" "blocks a force-push with a push-option value token after -f, before the refs (#237)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -o ci.skip -f origin scratch\"}}" "blocks a force-push with a push-option value token before -f (#237)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --force-with-lease origin scratch\"}}" "allows --force-with-lease — git's own safe form (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a non-force push (#230)"
+
+# wrapper/prefix + fail-open/ignore contract, same shape as the other rails
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"sudo git push -f origin scratch\"}}" "blocks a destructive push behind a sudo prefix (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"echo git reset --hard\"}}"       "allows a non-git command that merely mentions reset --hard (#230)"
+assert_exit 0 "$BDG" 'not-json'                                                                                                  "fails open on malformed JSON (#230)"
+assert_exit 0 "$BDG" '{"tool_name":"Agent","tool_input":{"command":"git reset --hard"}}'                                         "ignores a non-Bash tool_name (#230)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"git reset --hard"}}'                                          "fails open when cwd is absent, never substitutes process cwd (#230)"
+
+rm -rf "$dgrepo" "$dgremote"
+
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
 PTB="$HOOKS/pretooluse-bash.py"
-# The dispatcher registers all four rails' check() predicates behind one envelope read — a
+# The dispatcher registers all five rails' check() predicates behind one envelope read — a
 # representative case per rail (full contract already covered above), plus the envelope-level
 # fail-open/ignore cases the dispatcher now owns instead of each rail.
 assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://evil"}}'                                           "dispatches to the egress rail and blocks a bare curl (#163)"
@@ -352,6 +458,9 @@ git -C "$tmprepo" branch held
 git -C "$tmprepo" worktree add -q "$heldwt" held
 assert_exit 2 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held\"}}"           "dispatches to the checkout rail and blocks a held-branch checkout (#163)"
 assert_exit 0 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout main\"}}"           "dispatches to the checkout rail and allows the current branch (#163)"
+echo x > "$tmprepo/f.txt"
+git -C "$tmprepo" add f.txt
+assert_exit 2 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git reset --hard\"}}"            "dispatches to the destructive-git rail and blocks reset --hard over a dirty tree (#230)"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 

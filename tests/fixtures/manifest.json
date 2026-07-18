@@ -13,6 +13,7 @@
 
     {"hook": "block-sleep-loop.py", "stdin": "pretooluse/bash-sleep-loop.json", "expect_exit": 2, "desc": "blocks a sleep-based polling loop, in the real envelope shape (#191)"},
     {"hook": "block-sleep-loop.py", "stdin": "pretooluse/bash-sleep-loop-benign.json", "expect_exit": 0, "desc": "allows a bare rate-limiting sleep with no loop, in the real envelope shape (#191)"},
+    {"hook": "block-sleep-loop.py", "stdin": "pretooluse/bash-sleep-loop-condition.json", "expect_exit": 2, "desc": "blocks sleep as the loop's own condition (while sleep N; do ...), in the real envelope shape (#229)"},
 
     {"hook": "block-suppressed-stderr.py", "stdin": "pretooluse/bash-suppressed-stderr.json", "expect_exit": 2, "desc": "blocks stderr redirected to /dev/null, in the real envelope shape (#191)"},
     {"hook": "block-suppressed-stderr.py", "stdin": "pretooluse/bash-suppressed-stderr-benign.json", "expect_exit": 0, "desc": "allows stderr duplicated onto stdout, not discarded, in the real envelope shape (#191)"},
