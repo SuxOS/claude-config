@@ -27,7 +27,7 @@ NAME set is a much smaller, more stable surface than its flags and hasn't shown 
 re-deriving every axis independently wasn't worth the time for this first version (see the scope
 note at the end of this docstring).
 
-Three ground-truth invariants:
+Ground-truth invariants:
   1. `strip_prefixes(prefix_tokens + REAL_ARGV) == REAL_ARGV` for every generated prefix — no
      wrapper/flag/env-assign/grouping combination may leave a fragment of itself (a flag value, a
      grouping token, ...) sitting in front of the real command word.
@@ -41,10 +41,30 @@ Three ground-truth invariants:
      — the same "real command word survives" property invariant 1 checks at the top level, now
      checked one substitution layer down. The inverse holds for a single-quoted span (`'$(...)'`,
      `` '`...`' ``): those never substitute, so the real argv must NOT be surfaced from one.
+  4. (#220) `block-checkout-held-branch.py`'s `checkout_target(prefix_tokens + ["git", "checkout",
+     "held"])` still returns `"held"` for every generated prefix. Unlike invariant 2, this runs
+     over the FULL generated set (not just the joinable subset) — `checkout_target()` consumes a
+     pre-tokenized argv list, not a shell string, so a grouping token ahead of it is just another
+     list element, never an unbalanced-shell concern.
+  5. (#220) For the same joinable subset invariant 2 uses, `block-sleep-loop.py`'s `offending()`
+     still fires when a generated prefix sits in front of the `sleep` piece of
+     `while true; do <prefix> sleep 5; done` — the polling-loop signal must survive the same
+     wrapper/sudo prefix shapes in front of `sleep` that invariant 1 already guards in front of
+     `curl`.
+  6. (#220) `block-suppressed-stderr.py` is a different shape (a raw-text regex over the whole
+     command line, not an argv walk) — invariants 1/2/4/5 all exploit `strip_prefixes()`'s single
+     canonicalization pass, which this rail doesn't use at all, so reusing the argv generator here
+     would test nothing this rail actually depends on. Its own, smaller invariant: prefix/wrapper
+     TEXT (the same wrapper/sudo word+flag shapes as above, joined into a string) placed ahead of a
+     command ending in `2>/dev/null` or `>/dev/null 2>&1` must not stop `offending()` from still
+     flagging it — a defense against the regex someday growing a start-anchor or similar that would
+     make prefix text silently swallow the match.
 
-On a violation, a simple delta-debugging shrink (repeatedly drop one prefix token at a time while
-the invariant stays violated) reduces the failure to a minimal reproducing case before reporting it
-— the same "give a minimal repro" property Hypothesis's shrinker provides.
+Invariants 1/2/4/5 share one generated-prefix space (`generate_prefixes()`); on a violation, a
+simple delta-debugging shrink (repeatedly drop one prefix token at a time while the invariant stays
+violated) reduces the failure to a minimal reproducing case before reporting it — the same "give a
+minimal repro" property Hypothesis's shrinker provides. Invariant 6 shrinks the same way over its
+own smaller prefix space.
 
 Deliberately out of scope for this first version (real follow-up, not silently dropped): wrapper
 STACKING beyond one sudo/doas layer + one wrapper layer, and NESTED backtick substitution
@@ -72,18 +92,27 @@ from _hookutil import (  # noqa: E402
 )
 
 
-def _load_block_egress():
-    """block-egress.py has a `-` in its filename, so it can't be `import`ed by name."""
-    path = os.path.join(HOOKS_DIR, "block-egress.py")
-    spec = importlib.util.spec_from_file_location("block_egress_under_test", path)
+def _load_hook_module(filename, name):
+    """Every rail's filename has a `-` in it, so none can be `import`ed by name."""
+    path = os.path.join(HOOKS_DIR, filename)
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-BLOCK_EGRESS = _load_block_egress()
+BLOCK_EGRESS = _load_hook_module("block-egress.py", "block_egress_under_test")
+# (#220) the same argv-canonicalization machinery (`strip_prefixes()`/`pieces()`) underlies these
+# two other rails, but until now only block-egress.py's `offending()` had an equivalent invariant —
+# see the module docstring for why that left them unguarded against a prefix-shape regression.
+BLOCK_CHECKOUT = _load_hook_module("block-checkout-held-branch.py", "block_checkout_under_test")
+BLOCK_SLEEP_LOOP = _load_hook_module("block-sleep-loop.py", "block_sleep_loop_under_test")
+# Raw-text regex rail (#220) — not argv-based, so it gets its own smaller invariant below rather
+# than reusing the argv generator's checks directly (see module docstring).
+BLOCK_SUPPRESSED_STDERR = _load_hook_module("block-suppressed-stderr.py", "block_suppressed_stderr_under_test")
 
 REAL_ARGV = ["curl", "http://example.invalid/health"]
+CHECKOUT_ARGV = ["git", "checkout", "held"]
 PLACEHOLDER_VALUE = "VAL"
 
 # Ground truth from each wrapper's own docs/man page — see the module docstring for why this is
@@ -227,6 +256,34 @@ def offending_violation(prefix_tokens):
     return not BLOCK_EGRESS.offending(command)
 
 
+def checkout_target_violation(prefix_tokens):
+    return BLOCK_CHECKOUT.checkout_target(prefix_tokens + CHECKOUT_ARGV) != "held"
+
+
+def sleep_loop_command(prefix_tokens):
+    return "while true; do " + " ".join(prefix_tokens + ["sleep", "5"]) + "; done"
+
+
+def sleep_loop_violation(prefix_tokens):
+    return not BLOCK_SLEEP_LOOP.offending(sleep_loop_command(prefix_tokens))
+
+
+# Two real shapes CLAUDE.md's stderr-suppression rule covers (see block-suppressed-stderr.py's
+# module docstring): the plain `2>/dev/null` redirect, and the `>/dev/null 2>&1` idiom.
+STDERR_SUFFIXES = {
+    "redirect": lambda joined: f"{joined} curl http://example.invalid/health 2>/dev/null",
+    "dup_idiom": lambda joined: f"{joined} curl http://example.invalid/health >/dev/null 2>&1",
+}
+
+
+def stderr_command(prefix_tokens, suffix_key):
+    return STDERR_SUFFIXES[suffix_key](" ".join(prefix_tokens)).strip()
+
+
+def stderr_violation(prefix_tokens, suffix_key):
+    return not BLOCK_SUPPRESSED_STDERR.offending(stderr_command(prefix_tokens, suffix_key))
+
+
 def substitution_violation(prefix_tokens, template):
     return not pieces_surfaces_real_argv(template(" ".join(prefix_tokens + REAL_ARGV)))
 
@@ -277,6 +334,28 @@ def main():
                     "but offending() returned None" % (list(minimal), REAL_ARGV)
                 )
 
+        # #220: checkout_target() consumes a plain argv list, so (unlike invariant 2 above) this
+        # runs over the full generated set, not just the joinable subset.
+        if checkout_target_violation(prefix_tokens):
+            minimal = tuple(shrink(prefix_tokens, checkout_target_violation))
+            if ("checkout", minimal) not in violations:
+                got = BLOCK_CHECKOUT.checkout_target(list(minimal) + CHECKOUT_ARGV)
+                violations[("checkout", minimal)] = (
+                    "block-checkout-held-branch checkout_target() invariant: prefix %r + %r should "
+                    "recover branch %r, got %r" % (list(minimal), CHECKOUT_ARGV, "held", got)
+                )
+
+        # #220: the sleep piece is embedded inside a `while ...; do <prefix> sleep 5; done` shell
+        # string, so this needs the same joinable restriction as the block-egress offending() check.
+        if joinable and sleep_loop_violation(prefix_tokens):
+            minimal = tuple(shrink(prefix_tokens, sleep_loop_violation))
+            if ("sleep_loop", minimal) not in violations:
+                violations[("sleep_loop", minimal)] = (
+                    "block-sleep-loop offending() invariant: prefix %r before the sleep piece of "
+                    "%r should still flag a polling loop, but offending() returned False"
+                    % (list(minimal), sleep_loop_command(list(minimal)))
+                )
+
     # #204: the quoting/substitution axis, nested one level inside each prefix already covered above.
     for prefix_tokens in substitution_prefixes():
         for key, template in SUBSTITUTION_TEMPLATES.items():
@@ -301,6 +380,22 @@ def main():
                         "pieces() literal invariant [%s]: prefix %r inside the single-quoted %r "
                         "must NOT surface %r as its own piece, but it did"
                         % (key, list(minimal), command, REAL_ARGV)
+                    )
+
+    # #220: block-suppressed-stderr.py's raw-text-regex invariant — reuses the same wrapper/sudo
+    # prefix shapes as the substitution axis above (see module docstring for why the full
+    # grouping/env cross product isn't needed for this rail).
+    for prefix_tokens in substitution_prefixes():
+        for suffix_key in STDERR_SUFFIXES:
+            if stderr_violation(prefix_tokens, suffix_key):
+                violates = lambda t, suffix_key=suffix_key: stderr_violation(t, suffix_key)  # noqa: E731
+                minimal = tuple(shrink(prefix_tokens, violates))
+                if ("stderr", suffix_key, minimal) not in violations:
+                    command = stderr_command(list(minimal), suffix_key)
+                    violations[("stderr", suffix_key, minimal)] = (
+                        "block-suppressed-stderr offending() invariant [%s]: prefix text %r before "
+                        "%r should still flag suppressed stderr, but offending() returned False"
+                        % (suffix_key, list(minimal), command)
                     )
 
     violations = list(violations.values())

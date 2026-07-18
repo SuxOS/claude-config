@@ -75,8 +75,9 @@ The exact sequence for "stop the remote workflows, do local surgery, then reenab
    gh workflow enable issue-build.yml --repo <org>/<r>
    ```
 
-Other controls: **requeue** a `needs-human` PR (remove the label so `pr-unstick` retries),
-**park** anything by hand with `hold`, **cancel** by closing the PR/issue.
+Other controls: **requeue** a `needs-human` PR (remove the label so `pr-unstick` retries,
+where that workflow is wired — see the table above for which repos have it), **park**
+anything by hand with `hold`, **cancel** by closing the PR/issue.
 
 ## Output
 
