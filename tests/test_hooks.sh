@@ -269,6 +269,10 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; d
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do VAR=1 sleep 5; done"}}'            "blocks a sleep behind an inline env assignment (#193)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do timeout 10 sleep 5; done"}}'       "blocks a sleep behind a timeout prefix (#193)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while true; do sudo sleep 5; done"}}'             "blocks a sleep behind a sudo prefix (#193)"
+# #196: a grouping/negation token ahead of the loop keyword must not shift it out of argv[0].
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"(while true; do sleep 5; done)"}}'                "blocks a sleep loop wrapped in a subshell (#196)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"{ until curl -sf http://x; do sleep 2; done; }"}}' "blocks a sleep loop wrapped in a brace group (#196)"
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"! while true; do sleep 5; done"}}'                "blocks a negated sleep loop (#196)"
 assert_exit 0 "$BSL" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSL" '{"tool_name":"Agent","tool_input":{"command":"while true; do sleep 5; done"}}'                 "ignores a non-Bash tool_name"
 

@@ -19,7 +19,9 @@ is a rare false positive, and a real shell-grammar parser is a lot more hook for
 A piece's command word is read through `_hookutil.strip_prefixes()` (#193) — the same
 wrapper/prefix canonicalization block-egress.py uses — so `command sleep 5`, `env sleep 5`,
 `VAR=1 sleep 5`, `timeout 10 sleep 5`, and `sudo sleep 5` are all recognized as `sleep`, not just
-a bare `sleep 5`.
+a bare `sleep 5`. The loop-keyword check runs the same `strip_prefixes()` over a piece before
+comparing its first word, so a grouped/negated loop-opening piece (`(while ...)`, `{ until ...; }`,
+`! while ...`) is still recognized as a loop — not just the sleep side of the check (#196).
 
 Deliberately does NOT flag a bare `sleep N` with no loop keyword anywhere in the command — a
 single delay (rate-limiting a retry the user explicitly asked for, `sleep 2 && npm run build`) is
@@ -59,7 +61,8 @@ def offending(command):
     for argv in pieces(command):
         if not argv:
             continue
-        if argv[0] in LOOP_KEYWORDS:
+        stripped = strip_prefixes(argv)
+        if stripped and stripped[0] in LOOP_KEYWORDS:
             has_loop = True
         if _command_word(argv) == "sleep":
             has_sleep = True
