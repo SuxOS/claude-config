@@ -34,24 +34,10 @@ the session (repo convention). Exit 2 = block; exit 0 = allow.
 """
 import json
 import os
-import subprocess
 import sys
 
-from _hookutil import basename, pieces, strip_prefixes
+from _hookutil import git_out, git_subcommand, pieces, strip_prefixes
 
-# git global options that consume a following value, so we can walk past them to the subcommand
-# (`git -C /path checkout foo`, `git -c k=v switch foo`). `--opt=value` forms carry their own value
-# and are skipped as ordinary flags below. `--exec-path` is deliberately NOT here: real git's bare
-# `--exec-path` (no `=`) takes NO value at all — it just prints the current exec-path and exits
-# immediately, never reaching a subcommand (`git --exec-path status` never touches `status`); only
-# the glued `--exec-path=<path>` form sets it, and that's self-contained in one token, already
-# handled by the generic `tok.startswith("-")` fallthrough below. Treating bare `--exec-path` as
-# value-consuming misread the next token as its value instead of (correctly) a no-value flag —
-# harmless in practice since the misparsed invocation is already inert either way, but wrong per
-# git's actual grammar (#211).
-GIT_GLOBAL_VALUE_OPTS = {
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
-}
 # checkout/switch flags that create a branch (take the new name as their value) — NOT a switch into
 # an existing, possibly-held branch, so never the held-branch-switch case.
 CREATE_OPTS = {"-b", "-B", "-c", "-C", "--orphan"}
@@ -71,33 +57,15 @@ def checkout_target(argv):
     (`command git checkout held`, `env git checkout held`, `sudo git checkout held`) still reaches
     the real `git` command word instead of silently bypassing this guard the way a bare
     `basename(argv[0]) != "git"` check would."""
-    argv = strip_prefixes(argv)
-    if not argv or basename(argv[0]) != "git":
+    sub = git_subcommand(strip_prefixes(argv))
+    if sub is None or sub[0] not in ("checkout", "switch"):
         return None
-    i, n = 1, len(argv)
-    while i < n:                      # walk past git global options to the subcommand
-        tok = argv[i]
-        if tok in GIT_GLOBAL_VALUE_OPTS:
-            # `-C <dir>`/`--git-dir <dir>`/`--work-tree <dir>` redirect git at a DIFFERENT repo
-            # than the hook-input cwd — checking cwd's worktrees would consult the wrong repo, so
-            # treat this as unparsable-for-our-purposes and allow (conservative, per #154).
-            if tok in ("-C", "--git-dir", "--work-tree"):
-                return None
-            i += 2
-            continue
-        if tok.startswith("-"):
-            if tok.startswith("--git-dir=") or tok.startswith("--work-tree="):
-                return None
-            i += 1
-            continue
-        break
-    if i >= n or argv[i] not in ("checkout", "switch"):
-        return None
+    _, rest = sub
 
     positionals = []
-    j = i + 1
+    j, n = 0, len(rest)
     while j < n:
-        tok = argv[j]
+        tok = rest[j]
         if tok == "--":
             return None              # path-restore mode, not a branch switch
         if tok in CREATE_OPTS:
@@ -115,19 +83,6 @@ def checkout_target(argv):
     if target.startswith("refs/heads/"):
         target = target[len("refs/heads/"):]
     return target
-
-
-def git_out(args, cwd):
-    """Run a git command in cwd and return stdout, or None on any failure (fail-open)."""
-    try:
-        r = subprocess.run(
-            ["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=5,
-        )
-    except Exception:
-        return None
-    if r.returncode != 0:
-        return None
-    return r.stdout
 
 
 def holding_worktree(target, cwd):
