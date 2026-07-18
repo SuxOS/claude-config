@@ -58,6 +58,10 @@ from _hookutil import git_out, git_returncode, git_subcommand, pieces, strip_pre
 # checkout flags that mean this isn't a blind path-restore at all (branch creation, detach,
 # interactive) — never the discard-everything case.
 CHECKOUT_SKIP_OPTS = {"-b", "-B", "-c", "-C", "--orphan", "-d", "--detach", "-p", "--patch"}
+# `git push` flags that consume a separate following token as their value (#237) — same
+# separate-vs-glued gap GIT_GLOBAL_VALUE_OPTS/WRAPPER_VALUE_OPTS/SUDO_VALUE_OPTS guard against.
+# `--opt=value` forms carry their own value and need no special handling here.
+PUSH_VALUE_OPTS = {"-o", "--push-option", "--receive-pack", "--repo"}
 
 
 def _has_flag_char(rest, chars, long_names=()):
@@ -92,6 +96,15 @@ def _push_force_hit(rest, cwd):
     provably NOT a fast-forward (would discard commits on the remote we haven't merged in)."""
     if any(tok == "--force-with-lease" or tok.startswith("--force-with-lease=") for tok in rest):
         return False  # git's own safe form — it refuses server-side if the remote moved
+
+    filtered, i, n = [], 0, len(rest)
+    while i < n:
+        tok = rest[i]
+        filtered.append(tok)
+        if tok in PUSH_VALUE_OPTS and i + 1 < n:
+            i += 1  # drop the value token entirely — it can't be a flag or a real positional
+        i += 1
+    rest = filtered
 
     forced = _has_flag_char(rest, "f", ("--force",))
     positionals, out_of_scope = [], False
@@ -199,19 +212,28 @@ def _checkout_discard_target(rest):
 
 
 def _restore_discard_target(rest):
+    """`-S`/`--staged` (boolean, index-only) is NOT the same flag as `-s`/`--source=<tree>`
+    (takes a value picking the restore source) — real git distinguishes the two despite the
+    near-identical spelling (#240). `-s`/`--source` consumes a following token as its value
+    unless it's already glued via `=`."""
     staged, worktree, positionals = False, False, []
-    for tok in rest:
+    i, n = 0, len(rest)
+    while i < n:
+        tok = rest[i]
         if tok in ("-p", "--patch"):
             return None  # interactive — not a blind discard
-        if tok in ("-s", "--staged"):
+        elif tok in ("-S", "--staged"):
             staged = True
-            continue
-        if tok in ("-W", "--worktree"):
+        elif tok in ("-W", "--worktree"):
             worktree = True
-            continue
-        if tok == "--" or tok.startswith("-"):
-            continue
-        positionals.append(tok)
+        elif tok in ("-s", "--source"):
+            if i + 1 < n:
+                i += 1  # skip the separate-token source tree-ish value
+        elif tok.startswith("--source=") or tok == "--" or tok.startswith("-"):
+            pass
+        else:
+            positionals.append(tok)
+        i += 1
     if staged and not worktree:
         return None  # index-only — working tree files are untouched, much less destructive
     return "." if positionals == ["."] else None
