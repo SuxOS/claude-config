@@ -55,20 +55,25 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   (e.g. `ffmpeg -loglevel 2 > /dev/null`).
   Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
 - **`block-destructive-git.py`** — enforces the work skill's Tier-A rail in prose (home/.claude/
-  skills/work/SKILL.md: "never force-push, hard-delete, or do anything irreversible/destructive
-  without an explicit yes", #230). Five narrowly-scoped predicates, each checked against every
-  `git` piece of the command, and each conservative the same way block-checkout-held-branch.py is
-  (a missed detection is a harmless allow; nothing it can't confidently resolve is ever blocked):
-  `git push -f`/`--force` that is provably NOT a fast-forward of the remote-tracking ref known
-  locally (a force-push to a brand-new branch, or one that's still an ancestor relationship, is
-  left alone — `--force-with-lease` is also always allowed, it's git's own safe form); `git reset
-  --hard` over a working tree with uncommitted TRACKED changes (a clean tree has nothing to lose);
-  `git clean` with a force flag where a `-n` dry run with the same flags shows it would actually
-  remove something; `git branch -D`/`--delete --force` on a branch NOT fully merged into HEAD (one
-  that `-d` would already have deleted safely is left alone); and `git checkout -- .`/`git restore
-  .` discarding the WHOLE tree (not a single-file discard) while it has uncommitted tracked
-  changes. Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any
-  error.
+  skills/work/SKILL.md: "never force-push, merge/publish without confirmation, hard-delete, or do
+  anything irreversible/destructive without an explicit yes", #230, #242). Seven narrowly-scoped
+  predicates, six of them checked against every `git` piece of the command and conservative the
+  same way block-checkout-held-branch.py is (a missed detection is a harmless allow; nothing they
+  can't confidently resolve is ever blocked): `git push -f`/`--force` that is provably NOT a
+  fast-forward of the remote-tracking ref known locally (a force-push to a brand-new branch, or
+  one that's still an ancestor relationship, is left alone — `--force-with-lease` is also always
+  allowed, it's git's own safe form); `git reset --hard` over a working tree with uncommitted
+  TRACKED changes (a clean tree has nothing to lose); `git clean` with a force flag where a `-n`
+  dry run with the same flags shows it would actually remove something; `git branch -D`/`--delete
+  --force` on a branch NOT fully merged into HEAD (one that `-d` would already have deleted safely
+  is left alone); `git checkout -- .`/`git restore .` discarding the WHOLE tree (not a single-file
+  discard) while it has uncommitted tracked changes; and `git stash drop`/`git stash clear` when
+  `git stash list` isn't already empty (#239). The seventh, `gh pr merge`/`gh release create`
+  (unless `--draft`)/`npm publish` (unless `--dry-run`), has no repo state to consult and so fires
+  unconditionally on a match instead (#242) — deliberately NOT extended to a bare `git push` to a
+  protected branch, since this hook installs into every repo the user works in and plenty of those
+  push straight to `main` with no PR workflow at all. Registered with `pretooluse-bash.py` via its
+  `check(command, cwd)`; fails open on any error.
 
 ## Available but DISABLED by default
 
