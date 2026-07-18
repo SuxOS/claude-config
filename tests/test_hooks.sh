@@ -375,13 +375,29 @@ git -C "$dgrepo" checkout -q main
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git branch -D unmerged-branch\"}}" "blocks branch -D on a branch NOT merged into HEAD (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git branch -d merged-branch\"}}"   "allows the plain -d form (git itself already refuses on unmerged) (#230)"
 
+# git stash drop / git stash clear
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash clear\"}}"               "allows stash clear when the stash list is already empty — nothing to lose (#239)"
+echo w > "$dgrepo/w.txt"
+git -C "$dgrepo" add w.txt
+git -C "$dgrepo" stash push -q -m stashed
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash drop\"}}"                "blocks stash drop when the stash list is non-empty (#239)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash clear\"}}"               "blocks stash clear when the stash list is non-empty (#239)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git stash list\"}}"                "allows a non-drop/clear stash subcommand (#239)"
+git -C "$dgrepo" stash drop -q
+
 # git checkout -- . / git restore .
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- .\"}}"           "allows checkout -- . on a clean tree — nothing to discard (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- .\"}}"      "allows checkout <tree-ish> -- . on a clean tree (#238)"
 echo y >> "$dgrepo/f.txt"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- .\"}}"           "blocks checkout -- . discarding an uncommitted tracked change (#230)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore .\"}}"               "blocks restore . discarding an uncommitted tracked change (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- .\"}}"      "blocks checkout <tree-ish> -- . discarding a tracked change (#238)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout main .\"}}"         "blocks checkout <tree-ish> . (no --) discarding a tracked change (#238)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- f.txt\"}}"       "allows discarding one specific file, not the whole tree (#230)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout HEAD -- f.txt\"}}"  "allows a tree-ish restore of one specific file, not the whole tree (#238)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore --staged .\"}}"      "allows a --staged-only restore — working tree files are untouched (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore -s HEAD .\"}}"        "blocks restore -s <tree> . (separate-token --source), not the staged toggle (#240)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore -S .\"}}"             "allows restore -S . (short --staged) — working tree files are untouched (#240)"
 git -C "$dgrepo" checkout -q -- f.txt
 
 # git push -f / --force: needs a real remote to reason about fast-forward-ness.
@@ -405,6 +421,10 @@ echo c >> "$dgrepo/a.txt"
 git -C "$dgrepo" add a.txt
 git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "divergent commit"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch\"}}"  "blocks a force-push that would discard commits on the remote (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -uf origin scratch\"}}" "blocks a bundled -uf (set-upstream+force) push that would discard commits (#235)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f -o ci.skip origin scratch\"}}" "blocks a force-push with a push-option value token after -f, before the refs (#237)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -o ci.skip -f origin scratch\"}}" "blocks a force-push with a push-option value token before -f (#237)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --force-with-lease origin scratch\"}}" "allows --force-with-lease — git's own safe form (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a non-force push (#230)"
 

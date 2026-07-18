@@ -11,7 +11,7 @@ exist to turn "from aspiration to guarantee" (#163, #181). Until now nothing mec
 the destructive-git-command class specifically: block-egress.py only looks at network egress,
 block-checkout-held-branch.py only looks at branch switches into a held worktree (#230).
 
-Five independent, narrowly-scoped predicates, each run against every `git` piece of the command.
+Six independent, narrowly-scoped predicates, each run against every `git` piece of the command.
 Like every other rail here, each is a deliberate "speed bump, not a seal": a missed detection is a
 harmless allow, so every predicate is conservative — anything it can't confidently resolve (a repo
 it can't read, a ref it can't verify, an argv shape it doesn't recognize) is allowed, never blocked.
@@ -39,6 +39,9 @@ it can't read, a ref it can't verify, an argv shape it doesn't recognize) is all
     working tree has no uncommitted tracked changes. Deliberately narrow to exactly "discard
     EVERYTHING" (`.`, the whole tree) — `git checkout -- some/file.txt` is an ordinary, common,
     deliberate discard of one file and is left alone.
+  - `git stash drop [<stash>]` / `git stash clear`, UNLESS `git stash list` is already empty
+    (nothing to lose). Stashed work has no `-d`-vs-`-D` safe alternative and no dry-run preview,
+    so any non-empty stash list is treated as something that could be lost (#239).
 
 A piece's command word is read through `_hookutil.strip_prefixes()`/`git_subcommand()` (#193, #230)
 — the same wrapper/prefix canonicalization and git-global-option walk block-checkout-held-branch.py
@@ -55,10 +58,13 @@ import sys
 
 from _hookutil import git_out, git_returncode, git_subcommand, pieces, strip_prefixes
 
-FORCE_PUSH_FLAGS = {"-f", "--force"}
 # checkout flags that mean this isn't a blind path-restore at all (branch creation, detach,
 # interactive) — never the discard-everything case.
 CHECKOUT_SKIP_OPTS = {"-b", "-B", "-c", "-C", "--orphan", "-d", "--detach", "-p", "--patch"}
+# `git push` flags that consume a separate following token as their value (#237) — same
+# separate-vs-glued gap GIT_GLOBAL_VALUE_OPTS/WRAPPER_VALUE_OPTS/SUDO_VALUE_OPTS guard against.
+# `--opt=value` forms carry their own value and need no special handling here.
+PUSH_VALUE_OPTS = {"-o", "--push-option", "--receive-pack", "--repo"}
 
 
 def _has_flag_char(rest, chars, long_names=()):
@@ -94,11 +100,19 @@ def _push_force_hit(rest, cwd):
     if any(tok == "--force-with-lease" or tok.startswith("--force-with-lease=") for tok in rest):
         return False  # git's own safe form — it refuses server-side if the remote moved
 
-    positionals, forced, out_of_scope = [], False, False
+    filtered, i, n = [], 0, len(rest)
+    while i < n:
+        tok = rest[i]
+        filtered.append(tok)
+        if tok in PUSH_VALUE_OPTS and i + 1 < n:
+            i += 1  # drop the value token entirely — it can't be a flag or a real positional
+        i += 1
+    rest = filtered
+
+    forced = _has_flag_char(rest, "f", ("--force",))
+    positionals, out_of_scope = [], False
     for tok in rest:
-        if tok in FORCE_PUSH_FLAGS:
-            forced = True
-        elif tok in ("--all", "--mirror", "--tags", "--delete", "-d"):
+        if tok in ("--all", "--mirror", "--tags", "--delete", "-d"):
             out_of_scope = True  # multi-ref or a delete-push — a different risk, not scoped here
         elif not tok.startswith("-"):
             positionals.append(tok)
@@ -178,7 +192,10 @@ def _branch_delete_hit(rest, cwd):
 
 
 def _checkout_discard_target(rest):
-    seen_dashdash, positionals = False, []
+    """"." (bare, or after a `--`) means discard-everything. A pre-`--` tree-ish (`HEAD`, a branch,
+    a tag) is the checkout source, not a path — it must not disqualify the match, so it's tracked
+    separately from the post-`--`/no-`--` positionals that name what gets discarded."""
+    seen_dashdash, positionals, pre_dashdash = False, [], []
     for tok in rest:
         if tok == "--":
             seen_dashdash = True
@@ -187,24 +204,39 @@ def _checkout_discard_target(rest):
             return None  # branch creation / detach / interactive — not a path-restore at all
         if not seen_dashdash and tok.startswith("-"):
             continue
-        positionals.append(tok)
-    return "." if positionals == ["."] else None
+        (positionals if seen_dashdash else pre_dashdash).append(tok)
+    if seen_dashdash:
+        return "." if positionals == ["."] else None
+    if pre_dashdash == ["."]:
+        return "."
+    if len(pre_dashdash) == 2 and pre_dashdash[1] == ".":
+        return "."  # single leading tree-ish (e.g. `HEAD`) followed by the discard-everything "."
+    return None
 
 
 def _restore_discard_target(rest):
+    """`-S`/`--staged` (boolean, index-only) is NOT the same flag as `-s`/`--source=<tree>`
+    (takes a value picking the restore source) — real git distinguishes the two despite the
+    near-identical spelling (#240). `-s`/`--source` consumes a following token as its value
+    unless it's already glued via `=`."""
     staged, worktree, positionals = False, False, []
-    for tok in rest:
+    i, n = 0, len(rest)
+    while i < n:
+        tok = rest[i]
         if tok in ("-p", "--patch"):
             return None  # interactive — not a blind discard
-        if tok in ("-s", "--staged"):
+        elif tok in ("-S", "--staged"):
             staged = True
-            continue
-        if tok in ("-W", "--worktree"):
+        elif tok in ("-W", "--worktree"):
             worktree = True
-            continue
-        if tok == "--" or tok.startswith("-"):
-            continue
-        positionals.append(tok)
+        elif tok in ("-s", "--source"):
+            if i + 1 < n:
+                i += 1  # skip the separate-token source tree-ish value
+        elif tok.startswith("--source=") or tok == "--" or tok.startswith("-"):
+            pass
+        else:
+            positionals.append(tok)
+        i += 1
     if staged and not worktree:
         return None  # index-only — working tree files are untouched, much less destructive
     return "." if positionals == ["."] else None
@@ -215,6 +247,18 @@ def _discard_hit(subcommand, rest, cwd):
     if target is None:
         return False
     return bool(_working_tree_dirty(cwd))
+
+
+def _stash_drop_hit(rest, cwd):
+    """True if this is `git stash drop`/`git stash clear` and `git stash list` isn't already
+    empty — the same "would this actually discard something" gate every other predicate here
+    uses, since stashed work has no `-d`-vs-`-D` safe form and no dry-run preview to fall back on."""
+    if not rest or rest[0] not in ("drop", "clear"):
+        return False
+    stash_list = git_out(["stash", "list"], cwd)
+    if stash_list is None:
+        return False  # can't tell — conservative allow
+    return bool(stash_list.strip())
 
 
 _MESSAGES = {
@@ -240,11 +284,16 @@ _MESSAGES = {
         "would discard ALL uncommitted tracked changes in the working tree. Confirm with the user "
         "first, or `git stash` before wiping everything."
     ),
+    "stash": (
+        "would `git stash drop`/`git stash clear` a non-empty stash list, discarding stashed work "
+        "irrecoverably — no `-d`-vs-`-D` safe form and no dry-run preview exist for stash. Confirm "
+        "with the user first."
+    ),
 }
 
 
 def offending(command, cwd):
-    """Return (reason, argv) for the first piece that hits one of the five predicates, else None."""
+    """Return (reason, argv) for the first piece that hits one of the six predicates, else None."""
     for argv in pieces(command):
         sub = git_subcommand(strip_prefixes(argv))
         if sub is None:
@@ -260,6 +309,8 @@ def offending(command, cwd):
             return "branch", argv
         if subcommand in ("checkout", "restore") and _discard_hit(subcommand, rest, cwd):
             return "discard", argv
+        if subcommand == "stash" and _stash_drop_hit(rest, cwd):
+            return "stash", argv
     return None
 
 
