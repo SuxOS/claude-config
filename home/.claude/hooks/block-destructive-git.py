@@ -75,7 +75,15 @@ import subprocess
 import sys
 from urllib.parse import quote
 
-from _hookutil import basename, git_out, git_returncode, git_subcommand, pieces, strip_prefixes
+from _hookutil import (
+    basename,
+    gh_subcommand,
+    git_out,
+    git_returncode,
+    git_subcommand,
+    pieces,
+    strip_prefixes,
+)
 
 # checkout flags that mean this isn't a blind path-restore at all (branch creation, detach,
 # interactive) — never the discard-everything case.
@@ -376,6 +384,37 @@ def _stash_drop_hit(rest, cwd):
     return bool(stash_list.strip())
 
 
+# npm global flags known to take a separate/glued value, so `_merge_publish_hit()` can walk past
+# one sitting ahead of the subcommand (`npm --registry=https://... publish`, #284) the same way
+# `gh_subcommand()` walks past `-R`/`--repo`. npm (a yargs-style CLI, not a fixed-position parser)
+# accepts its global config flags before OR after the subcommand — this is npm's own documented
+# `npm <flags> <command> [args]` usage, not an edge case. Not exhaustive (npm's full config-flag
+# surface is large, per `npm config list -l`); this is the same "hand-audited, not a full grammar
+# parse" simplification as SUDO_VALUE_OPTS/WRAPPER_VALUE_OPTS elsewhere in this module — it covers
+# the flags most plausible ahead of `publish` specifically.
+NPM_GLOBAL_VALUE_OPTS = {"--registry", "--tag", "--otp", "--access", "--workspace", "-w", "--userconfig", "--loglevel"}
+
+
+def _npm_subcommand(argv):
+    """Return (subcommand, rest_argv) for an `npm ...` argv, walking past known global value
+    flags to find it — or None for a non-npm command or one with no subcommand at all."""
+    if not argv or basename(argv[0]) != "npm":
+        return None
+    i, n = 1, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in NPM_GLOBAL_VALUE_OPTS:
+            i += 2  # separate-value form: --registry value / -w value
+            continue
+        if tok.startswith("-"):
+            i += 1  # glued `--flag=value` or a boolean flag
+            continue
+        break
+    if i >= n:
+        return None
+    return argv[i], argv[i + 1:]
+
+
 def _merge_publish_hit(argv):
     """Return "merge"/"publish" if `argv` (already run through `strip_prefixes()`) is a `gh pr
     merge`, `gh release create`, or `npm publish` — else None. Unconditional, not state-gated
@@ -383,16 +422,28 @@ def _merge_publish_hit(argv):
     if not argv:
         return None
     cmd = basename(argv[0])
-    if cmd == "gh" and len(argv) >= 3 and argv[1] == "pr" and argv[2] == "merge":
-        return "merge"
-    if cmd == "gh" and len(argv) >= 3 and argv[1] == "release" and argv[2] == "create":
-        if any(tok == "--draft" or tok == "--draft=true" for tok in argv[3:]):
-            return None  # a draft stays invisible until a later, separate publish step
-        return "publish"
-    if cmd == "npm" and len(argv) >= 2 and argv[1] == "publish":
-        if "--dry-run" in argv[2:]:
-            return None  # prints what would be published; nothing actually goes out
-        return "publish"
+    if cmd == "gh":
+        sub = gh_subcommand(argv)
+        if sub is None:
+            return None
+        subcommand, rest = sub
+        if subcommand == "pr" and len(rest) >= 1 and rest[0] == "merge":
+            return "merge"
+        if subcommand == "release" and len(rest) >= 1 and rest[0] == "create":
+            if any(tok == "--draft" or tok == "--draft=true" for tok in rest[1:]):
+                return None  # a draft stays invisible until a later, separate publish step
+            return "publish"
+        return None
+    if cmd == "npm":
+        sub = _npm_subcommand(argv)
+        if sub is None:
+            return None
+        subcommand, rest = sub
+        if subcommand == "publish":
+            if "--dry-run" in rest:
+                return None  # prints what would be published; nothing actually goes out
+            return "publish"
+        return None
     return None
 
 

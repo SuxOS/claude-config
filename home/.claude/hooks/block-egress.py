@@ -43,7 +43,7 @@ import json
 import re
 import sys
 
-from _hookutil import basename, pieces, strip_prefixes
+from _hookutil import basename, gh_subcommand, pieces, strip_prefixes
 
 # Per-interpreter inline-code flags. Only the flags that actually take *code* — `-c` is code for
 # python/shell but a syntax check for node/ruby/perl, so it is NOT listed for those; `-p` prints
@@ -300,8 +300,12 @@ def offending(command):
                         f"(matched an outbound primitive in its inline-code payload)"
                     )
 
-        if cmd == "gh" and len(argv) >= 2 and argv[1] == "api" and gh_api_is_write(argv):
-            return "a `gh api` call with a write method (POST/PUT/PATCH/DELETE or an implicit-POST field flag)"
+        if cmd == "gh":
+            sub = gh_subcommand(argv)
+            # Re-anchored to a normalized ["gh", "api", ...] so gh_api_is_write()'s own argv[2]
+            # graphql check still lands correctly regardless of a leading `-R`/`--repo` (#284).
+            if sub and sub[0] == "api" and gh_api_is_write(["gh", "api"] + sub[1]):
+                return "a `gh api` call with a write method (POST/PUT/PATCH/DELETE or an implicit-POST field flag)"
 
         if cmd in BARE_NET_BINARIES:
             return (
