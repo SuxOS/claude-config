@@ -88,7 +88,13 @@
   an aggregate/planned state across several in-flight security PRs rather than HEAD, so a
   security issue's cited line numbers or its claim that a deny rule "already exists" may not
   match the live file. Re-derive the fix from `settings.json` at HEAD, never trust the issue's
-  line refs or already-added claims at face value.
+  line refs or already-added claims at face value. This extends to a cited REPRODUCTION against an
+  external tool, not just line numbers/settings state: #208 named `git --super-prefix <path>` as a
+  live global-option gap, but real git (2.54.0) rejects that flag outright ("unknown option", exit
+  129) at the top level — it isn't a general-purpose CLI option at all. Before implementing a fix
+  for a claimed repro against git/gh/npm/etc., run the exact cited command against the real
+  installed binary first; the underlying bug category can still be real (here, `--attr-source`
+  turned out to have the actual gap) even when the specific example cited doesn't reproduce.
 - **This bot's GitHub token is scoped to `SuxOS/claude-config` only** (#156) — a `suxbot[bot]`
   GitHub-App installation token (`ghs_…`): `gh api user` 403s and `gh repo view`/`gh api` against
   any OTHER SuxOS repo (e.g. `SuxOS/.github`) 404s, while this repo works. So an issue that says
