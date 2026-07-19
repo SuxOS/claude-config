@@ -192,7 +192,11 @@ def gh_api_is_write(argv):
     `gh api graphql -f query='...'` read pattern (GraphQL is always POSTed at the HTTP layer, read
     or write). For that one endpoint, an implicit method is instead decided by the field VALUES
     themselves via GRAPHQL_MUTATION_RE. An explicit `-X`/`--method` on graphql is untouched by this
-    carve-out — it still wins outright, exactly like every other endpoint.
+    carve-out — it still wins outright, exactly like every other endpoint. A field value that is
+    itself a `@file` reference (gh's own "read this field from a file" convention) can't be
+    inspected here — that case falls back to the pre-carve-out behavior (block), the same
+    "can't see inside a file" limitation this hook already accepts everywhere else, rather than
+    silently downgrading an unreadable, possibly-mutating query to an allow.
     """
     method = None
     explicit_method = False
@@ -223,6 +227,8 @@ def gh_api_is_write(argv):
                 method = "POST"
 
     if not explicit_method and method == "POST" and len(argv) >= 3 and argv[2] == "graphql":
+        if any(v.split("=", 1)[-1].startswith("@") for v in field_values):
+            return True  # a file-loaded field value can't be inspected — fail toward blocking
         return any(GRAPHQL_MUTATION_RE.search(v) for v in field_values)
     return method in WRITE_METHODS
 
