@@ -312,6 +312,42 @@ def git_subcommand(argv):
     return argv[i], argv[i + 1:]
 
 
+# gh's own global flag that redirects it at a different repo than cwd's. Unlike git's subcommands,
+# gh (a cobra CLI) accepts this BEFORE the subcommand as well as after — `gh --repo owner/repo pr
+# merge 123` and `gh -R owner/repo api ...` are both gh's own documented usage (#284) — so a rail
+# reading argv[1]/argv[2] for the subcommand lands on `--repo`/`-R` instead when it's given first.
+GH_GLOBAL_VALUE_OPTS = {"-R", "--repo"}
+
+
+def gh_subcommand(argv):
+    """Return (subcommand, rest_argv) for a `gh ...` argv, walking past gh's `-R`/`--repo` global
+    flag (in its `-R value` / `-Rvalue` / `--repo value` / `--repo=value` forms) to find it — or
+    None for a non-gh command or one with no subcommand at all.
+
+    `argv` should already be run through `strip_prefixes()` by the caller, same convention as
+    `git_subcommand()`. Mirrors that function's shape; gh has only the one global value-flag
+    (plus boolean `--help`, which never reaches a subcommand and so needs no special handling).
+    """
+    if not argv or basename(argv[0]) != "gh":
+        return None
+    i, n = 1, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in GH_GLOBAL_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("--repo=") or (tok.startswith("-R") and tok != "-R"):
+            i += 1  # glued: --repo=owner/repo / -Rowner/repo
+            continue
+        if tok.startswith("-"):
+            i += 1  # --help or any other boolean flag
+            continue
+        break
+    if i >= n:
+        return None
+    return argv[i], argv[i + 1:]
+
+
 def git_out(args, cwd):
     """Run a git command in cwd and return stdout, or None on any failure (fail-open).
 
