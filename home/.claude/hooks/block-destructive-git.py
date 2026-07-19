@@ -160,6 +160,16 @@ def _push_force_hit(rest, cwd):
         dst = dst if ":" in refspec else src
         if not src or not dst:
             return False  # a delete-refspec (":branch" / "branch:") — out of scope
+        # a refspec destination may be fully-qualified (`git push origin +feature:refs/heads/main`),
+        # not just a short branch name — normalize the same way `_push_dest_branch` does, and fail
+        # open on any other `refs/...` namespace (tags, notes, ...) rather than build a bogus
+        # `refs/remotes/{remote}/refs/heads/...` ref that `rev-parse --verify` can never resolve,
+        # which line 174 would otherwise misread as "brand-new branch, nothing to lose" (#261)
+        heads_prefix = "refs/heads/"
+        if dst.startswith(heads_prefix):
+            dst = dst[len(heads_prefix):]
+        elif dst.startswith("refs/"):
+            return False  # non-branch fully-qualified ref — out of scope, conservative allow
         push_ref, src_ref = f"refs/remotes/{remote}/{dst}", src
     elif len(positionals) == 1:
         branch = git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
