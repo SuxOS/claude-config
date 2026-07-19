@@ -81,18 +81,16 @@ a specific Claude Code version (do this whenever the schema is suspected to have
    byte-for-byte — that structure is the thing under test.
 4. Update `manifest.json` and re-run `bash tests/test_hooks.sh`.
 
-## Known open gap — #109 (slash-command invocation record shape)
+## Resolved — #109 (slash-command invocation record shape) / #83 (mention vs. execution)
 
-`verify-completion-claim.py` treats a `/verify`, `/bet`, or `/run` in the turn as evidence a
-verification ran (its `VERIFY` regex matches `/verify\b` etc.). The `edit-claim-*-slash.jsonl`
-fixtures pin that via the slash reference appearing in **assistant text / a real `pytest`
-`tool_use`** — record shapes that are stable and certain.
-
-What is **not** yet live-validated is the exact record a *user slash-command invocation* writes to
-the transcript. `verify-slash-invocation-only.jsonl` uses the best-guess
-`<command-name>/verify</command-name>` shape, but its assertion is deliberately shape-robust
-(a standalone `/verify` turn edits no product code, so the hook allows regardless of the tag
-form). Before arming `verify-completion-claim.py` as a live Stop hook (it ships DISABLED), capture
-a real `/verify` / `/bet` / `/run` invocation per step 2 above and confirm whether the recorded
-token carries the leading slash — if it does not, the `VERIFY` regex would miss it and the hook
-would false-positive. That confirmation is issue **#109**; this corpus is its home.
+`verify-completion-claim.py` used to treat a `/verify`, `/bet`, or `/run` substring ANYWHERE in
+the serialized turn as evidence a verification ran — including a bare mention in assistant prose
+("I'll confirm with /verify before calling it done") with no actual tool call behind it. #83
+replaced that blob-wide regex with `verification_ran()`, which walks the turn's `tool_use` blocks
+directly: a `Bash` call whose command matches a verify command, a `SlashCommand` call whose
+`input.command` starts with `/verify`/`/bet`/`/run`, or a `Skill` call whose `input.skill` names
+one of them — captured against a live session as the real invocation shapes (#109). The
+`edit-claim-*-slash.jsonl` fixtures now pin the corrected behavior: a slash command named only in
+prose, with no matching tool_use, is NOT evidence and the hook blocks (`expect_exit: 2`).
+`verify-slash-invocation-only.jsonl` still allows, but only because that turn edits no product
+code at all — the hook never reaches the verification check.
