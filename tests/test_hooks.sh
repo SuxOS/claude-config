@@ -526,6 +526,7 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f -o ci.skip origin scratch\"}}" "blocks a force-push with a push-option value token after -f, before the refs (#237)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -o ci.skip -f origin scratch\"}}" "blocks a force-push with a push-option value token before -f (#237)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --exec /usr/lib/git-core/git-receive-pack -f origin scratch\"}}" "blocks a force-push with a --exec value token before the refs — --exec is a documented synonym of --receive-pack (#288)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --force-with-lease origin scratch\"}}" "allows --force-with-lease — git's own safe form (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a non-force push (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch -ofield=1\"}}" "allows a non-force push with a glued push-option value containing an 'f' byte, not misread as -f (#246)"
@@ -574,6 +575,14 @@ assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh -R owner/r
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry=https://registry.npmjs.org publish"}}'          "blocks npm publish behind a leading --registry= (#284)"
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry https://registry.npmjs.org publish"}}'          "blocks npm publish behind a leading separate-value --registry (#284)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry=https://registry.npmjs.org publish --dry-run"}}' "allows npm publish --dry-run behind a leading --registry= (#284)"
+
+# #287: npm config flags outside the original hand-picked set (registry/tag/otp/access/workspace/
+# userconfig/loglevel) also take a separate-token value; missing from NPM_GLOBAL_VALUE_OPTS, their
+# value token was misread as the subcommand and the real `publish` past it went undetected.
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --cache /tmp/npm-cache publish"}}'                           "blocks npm publish behind a leading separate-value --cache (#287)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --editor vim publish"}}'                                     "blocks npm publish behind a leading separate-value --editor (#287)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --cafile /tmp/ca.pem publish"}}'                             "blocks npm publish behind a leading separate-value --cafile (#287)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --color publish"}}'                                          "still correctly resolves the subcommand as publish, not --color's value — --color is deliberately left boolean-only since it can be either (#287)"
 
 # git push straight to a GitHub-protected branch (#252) — gated on a real `gh api
 # repos/{owner}/{repo}/branches/<branch>/protection` check, not a branch-name guess. Stub `gh` on

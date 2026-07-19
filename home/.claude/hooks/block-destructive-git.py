@@ -90,8 +90,12 @@ from _hookutil import (
 CHECKOUT_SKIP_OPTS = {"-b", "-B", "-c", "-C", "--orphan", "-d", "--detach", "-p", "--patch"}
 # `git push` flags that consume a separate following token as their value (#237) — same
 # separate-vs-glued gap GIT_GLOBAL_VALUE_OPTS/WRAPPER_VALUE_OPTS/SUDO_VALUE_OPTS guard against.
-# `--opt=value` forms carry their own value and need no special handling here.
-PUSH_VALUE_OPTS = {"-o", "--push-option", "--receive-pack", "--repo"}
+# `--opt=value` forms carry their own value and need no special handling here. `--exec` is a
+# documented exact synonym of `--receive-pack` (man git-push) — same separate-token-value grammar
+# — and its omission let its value token slip into `positionals`, tripping the `len(positionals) >
+# 2` conservative-allow branch below on an otherwise ordinary `git push --exec <path> -f origin
+# main` (#288).
+PUSH_VALUE_OPTS = {"-o", "--push-option", "--receive-pack", "--repo", "--exec"}
 
 
 def _has_flag_char(rest, chars, long_names=()):
@@ -388,11 +392,35 @@ def _stash_drop_hit(rest, cwd):
 # one sitting ahead of the subcommand (`npm --registry=https://... publish`, #284) the same way
 # `gh_subcommand()` walks past `-R`/`--repo`. npm (a yargs-style CLI, not a fixed-position parser)
 # accepts its global config flags before OR after the subcommand — this is npm's own documented
-# `npm <flags> <command> [args]` usage, not an edge case. Not exhaustive (npm's full config-flag
-# surface is large, per `npm config list -l`); this is the same "hand-audited, not a full grammar
-# parse" simplification as SUDO_VALUE_OPTS/WRAPPER_VALUE_OPTS elsewhere in this module — it covers
-# the flags most plausible ahead of `publish` specifically.
-NPM_GLOBAL_VALUE_OPTS = {"--registry", "--tag", "--otp", "--access", "--workspace", "-w", "--userconfig", "--loglevel"}
+# `npm <flags> <command> [args]` usage, not an edge case. A flag NOT in this set is treated as
+# boolean (see `_npm_subcommand()`), so a real value-taking flag missing from here would have its
+# value token misread as the subcommand and the actual `publish` past it would go undetected (#287).
+# Every entry below is every config npm itself (`@npmcli/config`'s `definitions.js`, npm 10.9.8)
+# defines with a non-boolean type — i.e. every flag that ALWAYS consumes a following token as its
+# value, generated from npm's own source rather than hand-audited against docs. Deliberately
+# excludes `--browser`/`--color`: npm defines both as EITHER boolean OR a value (`--color always`
+# vs. bare `--color`), so unlike every flag below, whether the next token is a value can't be
+# decided without knowing what that token is — treating them as always-boolean (i.e. leaving them
+# out, same as before this audit) is the safe default: it correctly reads `npm --color publish` as
+# subcommand `publish`, whereas always-consuming would misread `publish` itself as `--color`'s
+# value and miss the subcommand entirely.
+NPM_GLOBAL_VALUE_OPTS = {
+    "--_auth", "--access", "--also", "--audit-level", "--auth-type", "--before", "--ca", "--cache",
+    "--cache-max", "--cache-min", "--cafile", "--call", "-c", "--cert", "--cidr", "--cpu", "--depth",
+    "--diff", "--diff-dst-prefix", "--diff-src-prefix", "--diff-unified", "--editor",
+    "--expect-result-count", "--fetch-retries", "--fetch-retry-factor", "--fetch-retry-maxtimeout",
+    "--fetch-retry-mintimeout", "--fetch-timeout", "--git", "--globalconfig", "--heading",
+    "--https-proxy", "--include", "--init-author-email", "--init-author-name", "--init-author-url",
+    "--init-license", "--init-module", "--init-version", "--init.author.email", "--init.author.name",
+    "--init.author.url", "--init.license", "--init.module", "--init.version", "--install-strategy",
+    "--key", "--libc", "--local-address", "--location", "-L", "--lockfile-version", "--loglevel",
+    "--logs-dir", "--logs-max", "--maxsockets", "--message", "-m", "--node-options", "--noproxy",
+    "--omit", "--only", "--os", "--otp", "--pack-destination", "--package", "--prefix", "-C",
+    "--preid", "--provenance-file", "--proxy", "--registry", "--replace-registry-host",
+    "--save-prefix", "--sbom-format", "--sbom-type", "--scope", "--script-shell", "--searchexclude",
+    "--searchlimit", "--searchopts", "--searchstaleness", "--shell", "--tag", "--tag-version-prefix",
+    "--umask", "--user-agent", "--userconfig", "--viewer", "--which", "--workspace", "-w",
+}
 
 
 def _npm_subcommand(argv):
