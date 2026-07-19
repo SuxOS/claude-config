@@ -359,6 +359,25 @@ def gh_subcommand(argv):
     return argv[i], argv[i + 1:]
 
 
+def gh_skip_repo_flag(tokens):
+    """Walk past a leading `-R`/`--repo` (its `-R value` / `-Rvalue` / `--repo value` /
+    `--repo=value` forms) at the front of `tokens` — gh's cobra parser strips this persistent
+    flag at EVERY level of the command tree, not just before the first subcommand word (the same
+    walk `gh_subcommand()` does one level up), so a caller comparing the word right after a
+    subcommand (`gh pr -R owner/repo merge 123`) needs this same walk one level deeper (#301)."""
+    i, n = 0, len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if tok in GH_GLOBAL_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("--repo=") or (tok.startswith("-R") and tok != "-R"):
+            i += 1
+            continue
+        break
+    return tokens[i:]
+
+
 def git_out(args, cwd):
     """Run a git command in cwd and return stdout, or None on any failure (fail-open).
 

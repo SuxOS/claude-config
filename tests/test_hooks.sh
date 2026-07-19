@@ -222,6 +222,13 @@ assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api --pagin
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api --paginate graphql -f query=mutation{addComment(x:1){id}}"}}' "still blocks a gh api graphql mutation behind a leading --paginate (#282)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api -H Accept:x graphql -f query=query{viewer{login}}"}}'         "allows a gh api graphql read query behind a leading separate-value -H (#282)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo api /repos/o/r"}}'                              "allows a gh api read behind a leading --repo (#284)"
+# #301: -R/--repo can also land AFTER the "api" subcommand word but before the endpoint positional
+# (gh's cobra parser strips this persistent flag at every level, not just before the first word) —
+# GH_API_VALUE_OPTS was missing -R/--repo, so the endpoint scan misread the flag's own value as the
+# endpoint and missed the graphql read/write carve-out.
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api -R owner/repo graphql -f query=query{viewer{login}}"}}'        "allows a gh api graphql read query behind an interspersed -R (#301)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api -R owner/repo graphql -f query=mutation{addComment(x:1){id}}"}}' "still blocks a gh api graphql mutation behind an interspersed -R (#301)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api --repo owner/repo /repos/o/r -X DELETE"}}'                     "blocks a gh api write behind an interspersed --repo (#301)"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -e\"require q:net/http; Net::HTTP.get(1)\""}}'                 "blocks ruby -e glued inline egress (#126)"
@@ -482,6 +489,10 @@ rm -f "$dgrepo/u.txt"
 # out of the pattern itself (`-e*.staff` -> corrupted `-e*.sta`, which stops excluding .staff files).
 touch "$dgrepo/a.staff" "$dgrepo/b.staff"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -f -e*.staff\"}}"      "allows clean -f -e*.staff when the exclude pattern covers everything untracked, glued value unmolested (#258)"
+# #299: the same glued -e<pattern> value, now BUNDLED behind -f in one token (`-fe*.staff` =
+# `-f` + `-e*.staff`) — the old code only special-cased a token starting with `-e`, so this fell
+# through to the blanket 'f'-strip and corrupted the pattern (`-fe*.staff` -> `-e*.sta`).
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -fe*.staff\"}}"        "allows bundled clean -fe*.staff — glued exclude pattern survives the bundle (#299)"
 rm -f "$dgrepo/a.staff" "$dgrepo/b.staff"
 
 # git branch -D
@@ -588,6 +599,8 @@ assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr merge 1
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr merge 123 --squash --auto"}}'                           "blocks gh pr merge regardless of merge-method/auto flags (#242)"
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh release create v1.0.0"}}'                                  "blocks gh release create (#242)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh release create v1.0.0 --draft"}}'                          "allows gh release create --draft — not visible until a later publish step (#242)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh release create v1.0.0 -d"}}'                                 "allows gh release create -d (short-form draft) (#297)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh release create v1.0.0 -dp"}}'                               "allows gh release create -dp (bundled draft+prerelease) (#297)"
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm publish"}}'                                               "blocks npm publish (#242)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm publish --dry-run"}}'                                     "allows npm publish --dry-run — nothing actually goes out (#242)"
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"sudo npm publish"}}'                                          "blocks npm publish behind a sudo prefix (#242)"
@@ -604,6 +617,16 @@ assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh -R owner/r
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry=https://registry.npmjs.org publish"}}'          "blocks npm publish behind a leading --registry= (#284)"
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry https://registry.npmjs.org publish"}}'          "blocks npm publish behind a leading separate-value --registry (#284)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --registry=https://registry.npmjs.org publish --dry-run"}}' "allows npm publish --dry-run behind a leading --registry= (#284)"
+
+# #301: -R/--repo can also land AFTER the first subcommand word ("pr"/"release") but before the
+# action word ("merge"/"create") — gh's cobra parser strips this persistent flag at every level of
+# the command tree, not just before the first word. `_merge_publish_hit()` only walked past a
+# leading -R/--repo, so `rest[0]` landed on "-R" instead of "merge"/"create" and missed entirely.
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr -R owner/repo merge 123"}}'                                "blocks gh pr merge behind an interspersed -R (#301)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr --repo owner/repo merge 123 --squash"}}'                   "blocks gh pr merge behind an interspersed --repo (#301)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh release --repo=owner/repo create v1.0.0"}}'                   "blocks gh release create behind an interspersed glued --repo= (#301)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh release -R owner/repo create v1.0.0 --draft"}}'              "still allows --draft behind an interspersed -R (#301)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr -R owner/repo view 123"}}'                                 "allows an ordinary read-only gh pr subcommand behind an interspersed -R (#301)"
 
 # #287: npm config flags outside the original hand-picked set (registry/tag/otp/access/workspace/
 # userconfig/loglevel) also take a separate-token value; missing from NPM_GLOBAL_VALUE_OPTS, their

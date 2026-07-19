@@ -131,10 +131,13 @@ GRAPHQL_MUTATION_RE = re.compile(r"\bmutation\b")
 # `gh api -H 'Accept: x' graphql ...`, #282) instead of assuming the endpoint is always argv[2].
 # Superset of FIELD_FLAGS (already value-taking) plus gh api's other value flags; -X/--method is
 # tracked by its own branch in gh_api_is_write() but also consumes a following value here, same as
-# every other value flag in this set.
+# every other value flag in this set. `-R`/`--repo` (gh's own global repo-override flag, same one
+# `_hookutil.GH_GLOBAL_VALUE_OPTS` walks past for the subcommand) was missing (#301): `gh api -R
+# owner/repo graphql ...` misread `owner/repo` itself as the endpoint, breaking the graphql
+# read/write carve-out below.
 GH_API_VALUE_OPTS = FIELD_FLAGS | {
     "-X", "--method", "-H", "--header", "--cache", "-p", "--preview", "-q", "--jq", "-t",
-    "--template", "--hostname",
+    "--template", "--hostname", "-R", "--repo",
 }
 
 

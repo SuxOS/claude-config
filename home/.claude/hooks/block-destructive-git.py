@@ -77,6 +77,7 @@ from urllib.parse import quote
 
 from _hookutil import (
     basename,
+    gh_skip_repo_flag,
     gh_subcommand,
     git_out,
     git_returncode,
@@ -289,15 +290,22 @@ def _clean_force_hit(rest, cwd):
     for tok in rest:
         if tok in ("-f", "--force"):
             continue
-        if tok.startswith("-e") and tok != "-e" and not tok.startswith("--"):
-            # glued -e<pattern> (git-clean(1)'s only short glued value flag): the pattern is
-            # arbitrary text, not a boolean-flag cluster, so it must reach git verbatim — the
-            # blanket 'f'-strip below would silently corrupt any 'f' byte in the pattern itself
-            # (`-e*.staff` -> `-e*.sta`), changing what the -n preview actually matches (#258).
-            dry_argv.append(tok)
-            continue
         if tok.startswith("-") and not tok.startswith("--"):
-            trimmed = "-" + tok[1:].replace("f", "")
+            cluster = tok[1:]
+            e_idx = cluster.find("e")
+            if e_idx != -1:
+                # `-e` (git-clean(1)'s only short glued-value flag) can itself be bundled behind
+                # other boolean short flags in the same token (`-fe*.staff` = `-f` + `-e*.staff`,
+                # #299) — everything from the FIRST 'e' onward is that flag's arbitrary-text
+                # value, not more boolean-flag chars, so it must reach git verbatim; the blanket
+                # 'f'-strip below would otherwise silently corrupt any 'f' byte in the pattern
+                # itself (`-e*.staff` -> `-e*.sta`), changing what the -n preview matches (#258).
+                booleans = cluster[:e_idx].replace("f", "")
+                if booleans:
+                    dry_argv.append("-" + booleans)
+                dry_argv.append("-" + cluster[e_idx:])
+                continue
+            trimmed = "-" + cluster.replace("f", "")
             if trimmed != "-":
                 dry_argv.append(trimmed)
             continue
@@ -462,10 +470,11 @@ def _merge_publish_hit(argv):
         if sub is None:
             return None
         subcommand, rest = sub
+        rest = gh_skip_repo_flag(rest)  # `gh pr -R owner/repo merge 123` (#301)
         if subcommand == "pr" and len(rest) >= 1 and rest[0] == "merge":
             return "merge"
         if subcommand == "release" and len(rest) >= 1 and rest[0] == "create":
-            if any(tok == "--draft" or tok == "--draft=true" for tok in rest[1:]):
+            if _has_flag_char(rest[1:], "d", ("--draft", "--draft=true")):
                 return None  # a draft stays invisible until a later, separate publish step
             return "publish"
         return None
