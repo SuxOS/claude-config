@@ -37,7 +37,8 @@ if data.get("tool_name") not in SUBAGENT_TOOL_NAMES:
 
 ti = data.get("tool_input") or {}
 
-subagent_type = ti.get("subagent_type") or ""
+subagent_type = ti.get("subagent_type")
+subagent_type = subagent_type if isinstance(subagent_type, str) else ""
 if subagent_type == "fork":
     sys.exit(0)
 
