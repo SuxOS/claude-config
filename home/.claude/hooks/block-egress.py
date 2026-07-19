@@ -115,6 +115,12 @@ DEV_TCP_RE = re.compile(r"/dev/(?:tcp|udp)/")
 # `gh api` write signals: an explicit mutating method, or gh's implicit-POST field/body flags.
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field", "--input"}
+# GraphQL is always POSTed at the HTTP layer even for a read, so `gh api graphql -f query=...`'s
+# implicit-POST field flag can't be distinguished from a real mutation by argv shape alone (#111) —
+# only the query BODY says which. `mutation` is the GraphQL keyword that starts a real mutation
+# operation; an unlabeled or explicit `query` operation (GraphQL allows omitting the keyword) has
+# no reason to contain it.
+GRAPHQL_MUTATION_RE = re.compile(r"\bmutation\b")
 
 
 def canonical_interpreter(cmd):
@@ -180,21 +186,44 @@ def gh_api_is_write(argv):
     long-glued (`--field=x=y`), and short-glued (`-ftitle=x`, `-Fkey=@file`) — the last of which
     is a real state-mutating POST that the exact/long checks alone miss (#121), mirroring the
     glued `-XPOST` method handling.
+
+    `gh api graphql` gets one carve-out (#111): with NO explicit `-X`/`--method`, the generic
+    "any field flag implies POST" heuristic above would hard-block the standard
+    `gh api graphql -f query='...'` read pattern (GraphQL is always POSTed at the HTTP layer, read
+    or write). For that one endpoint, an implicit method is instead decided by the field VALUES
+    themselves via GRAPHQL_MUTATION_RE. An explicit `-X`/`--method` on graphql is untouched by this
+    carve-out — it still wins outright, exactly like every other endpoint.
     """
     method = None
+    explicit_method = False
+    field_values = []
     for j, tok in enumerate(argv):
         if tok in ("-X", "--method"):
             if j + 1 < len(argv):
                 method = argv[j + 1].upper()
+                explicit_method = True
         elif tok.startswith("-X") and len(tok) > 2:
             method = tok[2:].upper()
+            explicit_method = True
         elif tok.startswith("--method="):
             method = tok.split("=", 1)[1].upper()
-        elif (tok in FIELD_FLAGS or tok.split("=", 1)[0] in FIELD_FLAGS
-              or (len(tok) > 2 and tok[0] == "-" and tok[1] in ("f", "F"))):
+            explicit_method = True
+        elif tok in FIELD_FLAGS:
+            if j + 1 < len(argv):
+                field_values.append(argv[j + 1])
             if method is None:
-                method = "POST"  # gh defaults to POST when any field/body flag is present, incl.
-                                  # glued short forms `-ftitle=x` / `-Fkey=@file` (#121)
+                method = "POST"  # gh defaults to POST when any field/body flag is present (#121)
+        elif "=" in tok and tok.split("=", 1)[0] in FIELD_FLAGS:
+            field_values.append(tok.split("=", 1)[1])  # long-glued: --field=x=y
+            if method is None:
+                method = "POST"
+        elif len(tok) > 2 and tok[0] == "-" and tok[1] in ("f", "F"):
+            field_values.append(tok[2:])  # short-glued: -ftitle=x / -Fkey=@file
+            if method is None:
+                method = "POST"
+
+    if not explicit_method and method == "POST" and len(argv) >= 3 and argv[2] == "graphql":
+        return any(GRAPHQL_MUTATION_RE.search(v) for v in field_values)
     return method in WRITE_METHODS
 
 
