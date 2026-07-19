@@ -26,6 +26,11 @@ stays visible) is a different, larger predicate that's still out of scope; only 
 overwhelmingly common literal ordering is matched. A command that only does `2>&1` (stderr
 duplicated onto stdout, not discarded) is not suppression and is left alone.
 
+Also catches `2>&-` (#205), the POSIX idiom that closes fd 2 outright rather than redirecting it
+to `/dev/null` — same practical effect (a later stderr write errors out or is silently dropped),
+just the other spelling for "make stderr go away." Same digit-adjacency guard as the `/dev/null`
+form: the `2` must be its own word, glued to the `>`.
+
 Fail-open on any error — a hook bug must never wedge the session (repo convention). Exit 2 =
 block; exit 0 = allow.
 """
@@ -42,10 +47,17 @@ NULL_REDIRECT_RE = re.compile(r"(?:(?<![\w])2|&)>>?[ \t]*/dev/null")
 # the same "own word" guard as above so `21>/dev/null` isn't misread as fd 1), then a literal
 # `2>&1` afterward, in that order.
 STDOUT_NULL_THEN_DUP_RE = re.compile(r"(?<![\w])(?:1)?>>?[ \t]*/dev/null[ \t]+2>&1")
+# `2>&-` (#205): closes fd 2 outright instead of redirecting it — same "own word" digit-adjacency
+# guard as NULL_REDIRECT_RE, with optional whitespace before the `-` target (same as `/dev/null`).
+FD_CLOSE_RE = re.compile(r"(?<![\w])2>&[ \t]*-")
 
 
 def offending(command):
-    return bool(NULL_REDIRECT_RE.search(command) or STDOUT_NULL_THEN_DUP_RE.search(command))
+    return bool(
+        NULL_REDIRECT_RE.search(command)
+        or STDOUT_NULL_THEN_DUP_RE.search(command)
+        or FD_CLOSE_RE.search(command)
+    )
 
 
 def check(command, cwd):
@@ -58,8 +70,8 @@ def check(command, cwd):
     if not offending(command):
         return None
     return (
-        "Suppressed-stderr guard (PreToolUse): this Bash command redirects stderr to /dev/null "
-        "(`2>/dev/null`, `&>/dev/null`, or `>/dev/null 2>&1`). CLAUDE.md dev-speed tactics: \"don't suppress a "
+        "Suppressed-stderr guard (PreToolUse): this Bash command redirects or closes stderr "
+        "(`2>/dev/null`, `&>/dev/null`, `>/dev/null 2>&1`, or `2>&-`). CLAUDE.md dev-speed tactics: \"don't suppress a "
         "command's stderr if you might need it to diagnose — `2>/dev/null` on a step you'll have "
         "to re-debug just moves the cost, it doesn't remove it.\" If this command is already "
         "known-good and just noisy, that's a legitimate case this speed bump can't tell apart — "

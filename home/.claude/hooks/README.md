@@ -6,7 +6,7 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
 
 ## Live
 
-- **`require-delegation-model.py`** — PreToolUse (matcher `Agent`). Enforces cardinal rule #1
+- **`require-delegation-model.py`** — PreToolUse (matcher `Agent|Task`). Enforces cardinal rule #1
   (never inherit the model): blocks an `Agent` delegation with no explicit `model=` when
   `subagent_type` is absent, `general-purpose`, or `claude` — the generic cases that silently
   inherit the orchestrator's session model. Exempts `subagent_type=fork` (inherits by design) and
@@ -34,9 +34,10 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   boundary needs OS-level network sandboxing. Registered with `pretooluse-bash.py` via its
   `check(command, cwd)`; fails open on any error.
 - **`block-checkout-held-branch.py`** — enforces the git-checkout-vs-worktree cardinal rail
-  (CLAUDE.md dev-speed tactics, #123): `git checkout <branch>` / `git switch <branch>` is a **silent
-  no-op — not an error** — when that branch is already checked out in another worktree, so the
-  working tree never moves and later commands run against the wrong branch. Parses the command for a
+  (CLAUDE.md dev-speed tactics, #123): `git checkout <branch>` / `git switch <branch>` raises a
+  **loud `fatal: ... already used by worktree` error, exit 128** — not a silent no-op — when that
+  branch is already checked out in another worktree, wasting a turn re-diagnosing it (#210). Parses
+  the command for a
   real single-branch switch (not creation `-b`/`-c`, not `--detach`, not a `--` path restore),
   consults `git worktree list` for the invoking cwd, and blocks with guidance (work in that worktree,
   or add a detached scratch worktree) when the target is held elsewhere. Registered with
@@ -56,7 +57,7 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
 - **`block-destructive-git.py`** — enforces the work skill's Tier-A rail in prose (home/.claude/
   skills/work/SKILL.md: "never force-push, merge/publish without confirmation, hard-delete, or do
-  anything irreversible/destructive without an explicit yes", #230, #242). Seven narrowly-scoped
+  anything irreversible/destructive without an explicit yes", #230, #242). Eight narrowly-scoped
   predicates, six of them checked against every `git` piece of the command and conservative the
   same way block-checkout-held-branch.py is (a missed detection is a harmless allow; nothing they
   can't confidently resolve is ever blocked): `git push -f`/`--force` that is provably NOT a
@@ -70,9 +71,12 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   discard) while it has uncommitted tracked changes; and `git stash drop`/`git stash clear` when
   `git stash list` isn't already empty (#239). The seventh, `gh pr merge`/`gh release create`
   (unless `--draft`)/`npm publish` (unless `--dry-run`), has no repo state to consult and so fires
-  unconditionally on a match instead (#242) — deliberately NOT extended to a bare `git push` to a
-  protected branch, since this hook installs into every repo the user works in and plenty of those
-  push straight to `main` with no PR workflow at all. Registered with `pretooluse-bash.py` via its
+  unconditionally on a match instead (#242). The eighth, a bare `git push` straight to a branch
+  GitHub reports as protected, asks `gh api repos/{owner}/{repo}/branches/<branch>/protection`
+  rather than guessing from the branch name — this hook installs into every repo the user works in
+  and plenty push straight to `main` with no PR workflow at all, so a blanket name match would be
+  false-positive-prone (#242) — and fails open (not protected) on an unresolved destination, missing
+  `gh`/auth, or any API error (#252). Registered with `pretooluse-bash.py` via its
   `check(command, cwd)`; fails open on any error.
 
 ## Available but DISABLED by default

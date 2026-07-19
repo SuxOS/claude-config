@@ -443,6 +443,8 @@ assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 1>/dev/null 2>&1"}}'                "blocks the idiom with an explicit 1> (#201)"
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x >>/dev/null 2>&1"}}'                "blocks the appending variant of the idiom (#201)"
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&1 >/dev/null"}}'                 "allows the reordered form (stderr dup'd before stdout is redirected, so stderr stays visible) (#201)"
+# #205: `2>&-` closes fd 2 outright — same practical effect as redirecting it to /dev/null.
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&-"}}'                            "blocks the 2>&- fd-close idiom (#205)"
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSS" '{"tool_name":"Agent","tool_input":{"command":"curl http://x 2>/dev/null"}}'                    "ignores a non-Bash tool_name"
 
