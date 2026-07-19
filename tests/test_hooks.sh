@@ -584,6 +584,13 @@ assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --editor 
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --cafile /tmp/ca.pem publish"}}'                             "blocks npm publish behind a leading separate-value --cafile (#287)"
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --color publish"}}'                                          "still correctly resolves the subcommand as publish, not --color's value — --color is deliberately left boolean-only since it can be either (#287)"
 
+# #289: the exact repro from the issue report — npm's leading global flags in their glued
+# `--flag=value` form. --loglevel and --tag were already in NPM_GLOBAL_VALUE_OPTS (added for
+# #284/#287) so this already worked, but was untested in exactly this glued shape; locking it in
+# with its own regression test so the issue closes on a resolving commit.
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --loglevel=silent publish"}}'                                "blocks npm publish behind a leading glued --loglevel= (#289)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --tag=beta publish"}}'                                       "blocks npm publish behind a leading glued --tag= (#289)"
+
 # git push straight to a GitHub-protected branch (#252) — gated on a real `gh api
 # repos/{owner}/{repo}/branches/<branch>/protection` check, not a branch-name guess. Stub `gh` on
 # PATH so the check is deterministic without a real GitHub remote/auth.
