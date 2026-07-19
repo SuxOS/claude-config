@@ -130,6 +130,15 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r -iXDELETE"}}'                                     "blocks a bundled boolean+method short flag gh api -iXDELETE (#271)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r -i"}}'                                            "allows a gh api read with only the boolean -i flag, no method/field (#271)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r"}}'                                              "allows a gh api read (GET, no write flag)"
+# gh api graphql carve-out (#111/#265): distinguish a read query from a real mutation by the query
+# body, but fail CLOSED (block) whenever that body can't be read as a literal argv string.
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query=query{viewer{login}}"}}'                   "allows a gh api graphql read query via -f query= (#111)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query=mutation{addComment(x:1){id}}"}}'          "blocks a gh api graphql mutation via -f query="
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql --input body.json"}}'                              "blocks gh api graphql --input FILE — body unreadable, fails closed (#265)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql --input -"}}'                                      "blocks gh api graphql --input - (stdin) — body unreadable, fails closed (#265)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql --input=body.json"}}'                              "blocks glued gh api graphql --input=FILE — body unreadable, fails closed (#265)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -Fquery=@file.graphql"}}'                          "blocks gh api graphql -F query=@file — body unreadable, fails closed"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -X POST -f query=query{viewer{login}}"}}'          "an explicit -X POST on graphql bypasses the carve-out and still blocks"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                     "allows a plain command"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"

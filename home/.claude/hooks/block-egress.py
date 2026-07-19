@@ -119,6 +119,12 @@ FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field", "--input"}
 # in the same token (`-iXPOST`, `-iFquery=x`), so a fixed-position tok[1] read misses them (#271).
 # `-i`/`--include` is the only one gh api defines today.
 GH_API_BOOL_SHORT_OPTS = "i"
+# GraphQL is always POSTed at the HTTP layer even for a read, so `gh api graphql -f query=...`'s
+# implicit-POST field flag can't be distinguished from a real mutation by argv shape alone (#111) —
+# only the query BODY says which. `mutation` is the GraphQL keyword that starts a real mutation
+# operation; an unlabeled or explicit `query` operation (GraphQL allows omitting the keyword) has
+# no reason to contain it.
+GRAPHQL_MUTATION_RE = re.compile(r"\bmutation\b")
 
 
 def canonical_interpreter(cmd):
@@ -187,17 +193,45 @@ def gh_api_is_write(argv):
     flags ahead of the code letter (`-iXPOST`, `-iFquery=x` — pflag bundling, #271); the bundle
     walk below skips a leading run of GH_API_BOOL_SHORT_OPTS before reading the tail letter,
     mirroring how inline_payloads() walks bundled interpreter flags.
+
+    `gh api graphql` gets one carve-out (#111): with NO explicit `-X`/`--method`, the generic
+    "any field flag implies POST" heuristic above would hard-block the standard
+    `gh api graphql -f query='...'` read pattern (GraphQL is always POSTed at the HTTP layer, read
+    or write). For that one endpoint, an implicit method is instead decided by the field VALUES
+    themselves via GRAPHQL_MUTATION_RE. Any body source this scan can't read as a literal string —
+    a `-f`/`-F` `@file` reference, OR gh's `--input FILE`/`--input -` file-or-stdin body
+    convention (#265: `--input` is a FIELD_FLAGS member so it always implied POST, but a naive
+    carve-out that only checked `-f`/`-F` values for `@file` would scan `--input`'s own value —
+    a bare filename or `-`, never the body text — find no `mutation` substring, and silently
+    ALLOW an unreadable, possibly-mutating body) — fails CLOSED (blocked) here, the same "can't
+    see inside a file" limitation this hook already accepts everywhere else, rather than
+    silently downgrading an unreadable body to an allow.
     """
     method = None
+    explicit_method = False
+    field_values = []
+    unreadable_body = False
     for j, tok in enumerate(argv):
         if tok in ("-X", "--method"):
             if j + 1 < len(argv):
                 method = argv[j + 1].upper()
+                explicit_method = True
         elif tok.startswith("--method="):
             method = tok.split("=", 1)[1].upper()
-        elif tok in FIELD_FLAGS or tok.split("=", 1)[0] in FIELD_FLAGS:
+            explicit_method = True
+        elif tok == "--input" or tok.startswith("--input="):
+            unreadable_body = True  # file path or `-` (stdin), never an inline literal (#265)
+            if method is None:
+                method = "POST"
+        elif tok in FIELD_FLAGS:
+            if j + 1 < len(argv):
+                field_values.append(argv[j + 1])  # separate: -f query=... / --field query=...
             if method is None:
                 method = "POST"  # gh defaults to POST when any field/body flag is present (#121)
+        elif "=" in tok and tok.split("=", 1)[0] in FIELD_FLAGS:
+            field_values.append(tok.split("=", 1)[1])  # long-glued: --field=query=...
+            if method is None:
+                method = "POST"
         elif tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
             k = 1
             while k < len(tok) and tok[k] in GH_API_BOOL_SHORT_OPTS:
@@ -208,10 +242,22 @@ def gh_api_is_write(argv):
             if letter == "X":
                 if tail:
                     method = tail.upper()             # glued: -XPOST / -iXPOST
+                    explicit_method = True
                 elif j + 1 < len(argv):
                     method = argv[j + 1].upper()       # separate: -X POST / -iX POST
-            elif letter in ("f", "F") and method is None:
-                method = "POST"  # glued short field flag, incl. bundled (`-ftitle=x`, `-iFkey=x`)
+                    explicit_method = True
+            elif letter in ("f", "F"):
+                if tail:
+                    field_values.append(tail)              # glued: -ftitle=x / -iFquery=@file
+                elif j + 1 < len(argv):
+                    field_values.append(argv[j + 1])       # separate after bundle: -iF query=...
+                if method is None:
+                    method = "POST"  # glued short field flag, incl. bundled (`-ftitle=x`, `-iFkey=x`)
+
+    if not explicit_method and method == "POST" and len(argv) >= 3 and argv[2] == "graphql":
+        if unreadable_body or any(v.split("=", 1)[-1].startswith("@") for v in field_values):
+            return True  # can't inspect the body as a literal — fail closed, never fall open (#265)
+        return any(GRAPHQL_MUTATION_RE.search(v) for v in field_values)
     return method in WRITE_METHODS
 
 

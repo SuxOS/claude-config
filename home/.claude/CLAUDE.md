@@ -89,6 +89,16 @@
   security issue's cited line numbers or its claim that a deny rule "already exists" may not
   match the live file. Re-derive the fix from `settings.json` at HEAD, never trust the issue's
   line refs or already-added claims at face value.
+- **A security issue's cited code can live ONLY in an open, unmerged sibling PR — not on HEAD at
+  all** (#265, cited `block-egress.py`'s `gh api graphql` mutation-detection carve-out, which
+  only existed in PR #255's diff; #255 itself fail-closes on an unrelated finding and was never
+  merged, so current `main` had no carve-out and the described bypass didn't exist on this branch
+  until the carve-out was rebuilt). Don't assume an issue's cited function/branch exists on HEAD —
+  if a grep for it comes up empty, check whether it's sitting in an open PR (`gh pr list --state
+  open`, `gh pr diff <n>`) before concluding the issue is stale. If so, re-derive the whole
+  feature from CURRENT HEAD, not from the stale PR's diff — HEAD can have moved past that PR's
+  branch point (here, #271's short-flag bundling landed on `main` after #255 branched, so
+  reusing #255's diff verbatim would have silently dropped that handling).
 - **This bot's GitHub token is scoped to `SuxOS/claude-config` only** (#156) — a `suxbot[bot]`
   GitHub-App installation token (`ghs_…`): `gh api user` 403s and `gh repo view`/`gh api` against
   any OTHER SuxOS repo (e.g. `SuxOS/.github`) 404s, while this repo works. So an issue that says
