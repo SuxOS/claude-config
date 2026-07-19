@@ -475,6 +475,33 @@ assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"sudo npm publ
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"echo gh pr merge 123"}}'                                      "allows a non-gh command that merely mentions pr merge (#242)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"gh pr view 123"}}'                                            "allows an ordinary read-only gh pr subcommand (#242)"
 
+# git push straight to a GitHub-protected branch (#252) — gated on a real `gh api
+# repos/{owner}/{repo}/branches/<branch>/protection` check, not a branch-name guess. Stub `gh` on
+# PATH so the check is deterministic without a real GitHub remote/auth.
+dgghstub="$(mktemp -d)"
+cat > "$dgghstub/gh" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */branches/main/protection) exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+exit 1
+EOF
+chmod +x "$dgghstub/gh"
+dgoldpath="$PATH"
+PATH="$dgghstub:$PATH"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"        "blocks a direct push to a branch GitHub reports as protected (#252)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a push to a branch GitHub does NOT report as protected (#252)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD:main\"}}"   "blocks a push whose refspec destination resolves to the protected branch name (#252)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin :main\"}}"       "allows a delete-refspec push — no content pushed, out of scope (#252)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --all origin\"}}"       "allows a multi-ref --all push — too ambiguous to resolve a single destination (#252)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"sudo git push origin main\"}}"   "blocks a direct push to a protected branch behind a sudo prefix (#252)"
+PATH="$dgoldpath"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"        "allows a direct push to main when gh can't confirm protection (no gh/auth/remote) — fail open (#252)"
+rm -rf "$dgghstub"
+
 rm -rf "$dgrepo" "$dgremote"
 
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="

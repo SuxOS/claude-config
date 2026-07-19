@@ -11,9 +11,9 @@ exist to turn "from aspiration to guarantee" (#163, #181). Until now nothing mec
 the destructive-git-command class specifically: block-egress.py only looks at network egress,
 block-checkout-held-branch.py only looks at branch switches into a held worktree (#230).
 
-Seven independent, narrowly-scoped predicates, each run against every relevant piece of the
+Eight independent, narrowly-scoped predicates, each run against every relevant piece of the
 command. Like every other rail here, each is a deliberate "speed bump, not a seal": a missed
-detection is a harmless allow, so six of the seven are conservative — anything they can't
+detection is a harmless allow, so seven of the eight are conservative — anything they can't
 confidently resolve (a repo they can't read, a ref they can't verify, an argv shape they don't
 recognize) is allowed, never blocked.
 
@@ -45,17 +45,20 @@ recognize) is allowed, never blocked.
     so any non-empty stash list is treated as something that could be lost (#239).
   - `gh pr merge` (any form), `gh release create` (UNLESS `--draft`, which stays invisible until a
     later publish step), or `npm publish` (UNLESS `--dry-run`, which publishes nothing) (#242).
-    Unlike the six above, this predicate has no repo state to consult that would prove the action
+    Unlike the other seven, this predicate has no repo state to consult that would prove the action
     safe — the Tier-A rule requires an explicit yes before ANY merge/publish, not just a risky one
     — so, once matched, it fires unconditionally rather than being gated on "would this actually
-    lose something." A direct `git push` to a protected branch (bypassing PR review entirely) is
-    the same class of gap but is deliberately NOT covered here: this hook installs into every repo
-    the user works in (install.sh symlinks hooks/ into `~/.claude/hooks/` globally), and unlike
-    `gh pr merge`/`release create`/`npm publish` — which are unambiguous merge/publish actions in
-    any repo — plenty of ordinary repos push straight to `main` with no PR workflow at all, so a
-    blanket "push to main/master" match would be the false-positive-prone, noisy rail #242 itself
-    warned against. Left for a follow-up with a real scoping signal (e.g. detected branch
-    protection), not guessed here.
+    lose something."
+  - `git push` straight to a branch GitHub reports as protected (bypassing PR review entirely),
+    UNLESS the destination can't be resolved from the argv (a delete-push, a multi-ref
+    `--all`/`--mirror`/`--tags` form, or a detached HEAD) or `gh api
+    repos/{owner}/{repo}/branches/<branch>/protection` doesn't confirm it (#252). This hook installs
+    into every repo the user works in (install.sh symlinks hooks/ into `~/.claude/hooks/` globally),
+    and plenty of ordinary repos push straight to `main` with no PR workflow at all — #242 itself
+    warned that a blanket "push to main/master" name match would be false-positive-prone there, so
+    this asks GitHub whether the branch is ACTUALLY protected rather than guessing from its name.
+    Same fail-open convention as every state-consulting predicate here: no `gh` on PATH, no auth, no
+    GitHub remote, or any API error reads as "not protected," never as a block.
 
 A piece's command word is read through `_hookutil.strip_prefixes()`/`git_subcommand()` (#193, #230)
 — the same wrapper/prefix canonicalization and git-global-option walk block-checkout-held-branch.py
@@ -68,7 +71,9 @@ Fail-open on any error — a hook bug must never wedge the session (repo convent
 block; exit 0 = allow.
 """
 import json
+import subprocess
 import sys
+from urllib.parse import quote
 
 from _hookutil import basename, git_out, git_returncode, git_subcommand, pieces, strip_prefixes
 
@@ -172,6 +177,79 @@ def _push_force_hit(rest, cwd):
         return False  # can't resolve the local side — don't risk a false block
 
     return git_returncode(["merge-base", "--is-ancestor", push_ref, src_ref], cwd) == 1
+
+
+def _push_dest_branch(rest, cwd):
+    """Return the destination branch name this `git push` argv would push to, or None if it
+    can't be confidently resolved (a delete-push, a multi-ref `--all`/`--mirror`/`--tags` form, or
+    a detached/unresolvable HEAD on an implicit push). Same glued-`-o`/PUSH_VALUE_OPTS filtering
+    `_push_force_hit` applies before reading positionals (#246); a bare `git push` or `git push
+    <remote>` (no refspec) is resolved as pushing the current branch under its own name — git's
+    push.default=simple/current behavior (the default since git 2.0) — mirroring the implicit-push
+    branch resolution `_push_force_hit` already does for its own fast-forward check (#252)."""
+    filtered, i, n = [], 0, len(rest)
+    while i < n:
+        tok = rest[i]
+        if tok.startswith("-o") and tok != "-o" and not tok.startswith("--"):
+            i += 1  # glued push-option value (#246) — see _push_force_hit's identical guard
+            continue
+        filtered.append(tok)
+        if tok in PUSH_VALUE_OPTS and i + 1 < n:
+            i += 1
+        i += 1
+    rest = filtered
+
+    if _has_flag_char(rest, "d", ("--delete",)):
+        return None  # a branch delete-push — no content pushed, out of scope
+    positionals = []
+    for tok in rest:
+        if tok in ("--all", "--mirror", "--tags"):
+            return None  # multi-ref push — not a single destination
+        elif not tok.startswith("-"):
+            positionals.append(tok)
+    if len(positionals) > 2:
+        return None  # too ambiguous to reason about safely — conservative allow
+
+    if len(positionals) == 2:
+        _remote, refspec = positionals
+        refspec = refspec[1:] if refspec.startswith("+") else refspec
+        src, _, dst = refspec.partition(":")
+        dst = dst if ":" in refspec else src
+        if not src or not dst:
+            return None  # a delete-refspec (":branch" / "branch:") — no content pushed, out of scope
+        prefix = "refs/heads/"
+        return dst[len(prefix):] if dst.startswith(prefix) else dst
+
+    branch = git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+    if not branch or branch.strip() == "HEAD":
+        return None  # detached HEAD, or can't tell — conservative allow
+    return branch.strip()
+
+
+def _branch_protected(branch, cwd):
+    """True only if GitHub confirms `branch` is a protected branch of cwd's repo. False for
+    everything else — not protected, no `gh` on PATH, `gh` unauthenticated, no GitHub remote
+    configured, a network hiccup, ... — same fail-open contract as every other repo-state check in
+    this file: an unresolved answer must never be read as "protected" (#252). `{owner}`/`{repo}`
+    are `gh api`'s own placeholders, resolved from cwd's git remotes the same way `gh repo view`
+    does; the branch name is substituted literally (percent-encoded, since GitHub's branch-
+    protection endpoint requires a literal `/` in a branch name to be escaped as `%2F`) since we're
+    checking the push's actual destination, not necessarily the branch checked out in cwd."""
+    endpoint = f"repos/{{owner}}/{{repo}}/branches/{quote(branch, safe='')}/protection"
+    try:
+        r = subprocess.run(
+            ["gh", "api", endpoint], cwd=cwd, capture_output=True, timeout=5,
+        )
+    except Exception:
+        return False
+    return r.returncode == 0
+
+
+def _push_protected_hit(rest, cwd):
+    branch = _push_dest_branch(rest, cwd)
+    if branch is None:
+        return False
+    return _branch_protected(branch, cwd)
 
 
 def _reset_hard_hit(rest, cwd):
@@ -314,6 +392,10 @@ _MESSAGES = {
         "discard commits on the remote you haven't merged in. Confirm with the user first, or use "
         "`--force-with-lease` so git itself refuses if the remote moved since your last fetch."
     ),
+    "push-protected": (
+        "would push directly to a branch GitHub reports as protected, bypassing PR review "
+        "entirely. Confirm with the user first, or open a PR instead."
+    ),
     "reset": (
         "would `git reset --hard` over uncommitted tracked changes, discarding them irrecoverably. "
         "Confirm with the user first, or `git stash` instead of resetting."
@@ -349,10 +431,10 @@ _MESSAGES = {
 
 
 def offending(command, cwd):
-    """Return (reason, argv) for the first piece that hits one of the seven predicates, else None.
+    """Return (reason, argv) for the first piece that hits one of the eight predicates, else None.
 
     `_merge_publish_hit()` consults no repo state, so it runs even when `cwd` is None; the other
-    six all read live git state through `cwd` and are skipped entirely when it's unresolved (the
+    seven all read live git state through `cwd` and are skipped entirely when it's unresolved (the
     caller's fail-open contract, #230) rather than risk consulting the wrong repo (#154)."""
     for argv in pieces(command):
         stripped = strip_prefixes(argv)
@@ -367,6 +449,8 @@ def offending(command, cwd):
         subcommand, rest = sub
         if subcommand == "push" and _push_force_hit(rest, cwd):
             return "push", argv
+        if subcommand == "push" and _push_protected_hit(rest, cwd):
+            return "push-protected", argv
         if subcommand == "reset" and _reset_hard_hit(rest, cwd):
             return "reset", argv
         if subcommand == "clean" and _clean_force_hit(rest, cwd):
@@ -383,7 +467,7 @@ def offending(command, cwd):
 def check(command, cwd):
     """Dispatcher-facing predicate (#163): (command, cwd) -> full block message, or None.
 
-    Six of the seven predicates consult live repo state and fail open (are skipped, not blocked)
+    Seven of the eight predicates consult live repo state and fail open (are skipped, not blocked)
     when `cwd` can't be resolved, same contract as block-checkout-held-branch.py (#154) — but
     `_merge_publish_hit()` needs no repo state, so `cwd` being absent must not suppress it too;
     see `offending()`.
