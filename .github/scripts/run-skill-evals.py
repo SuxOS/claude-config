@@ -11,10 +11,10 @@ scenarios that nothing ever executes; the corpus is inert beyond parse/shape che
 This is that runner. For each eval it:
   1. RUN   — invokes the `claude` CLI headless (`-p`) with the eval `prompt`, injecting the skill's
              SKILL.md as an appended system prompt so the skill is "active," plus any fixture
-             `files` as context. Tools are disabled (`--disallowedTools`) so a skill run grades the
-             model's REASONING/RESPONSE (what every current eval rubric actually tests — "asks a
-             clarifying question," "returns the Use/Prompt shape," "refuses to skip test-first"),
-             never triggering real side effects.
+             `files` as context. Tools are disabled (`--allowedTools` with an empty allowlist) so a
+             skill run grades the model's REASONING/RESPONSE (what every current eval rubric actually
+             tests — "asks a clarifying question," "returns the Use/Prompt shape," "refuses to skip
+             test-first"), never triggering real side effects.
   2. GRADE — an LLM judge (a second `claude -p` call) is given the prompt, the `expected_output`
              rubric, and the model's actual response, and must return strict JSON
              {"verdict": "pass"|"fail", "reason": "..."}. expected_output is a prose rubric
@@ -76,15 +76,16 @@ RUN_FRAMING = (
     "the response text (reasoning, questions, and the answer) the skill would give."
 )
 
-# Every tool that could touch the network, the filesystem, or spawn further work. An eval `prompt`
-# is scenario content, not trusted instructions, so the RUN call must be reasoning-only: this is a
-# denylist of every tool name Claude Code ships, not just the "obviously dangerous" ones, so a new
-# tool added later doesn't silently reopen the gap that let WebFetch/WebSearch/Read exfiltrate data
-# once ANTHROPIC_API_KEY is wired into CI (found in review of #140 before it ever went live).
-DISALLOWED_RUN_TOOLS = (
-    "Bash", "Edit", "Write", "Agent", "Task", "Read", "Grep", "Glob",
-    "WebFetch", "WebSearch", "NotebookEdit",
-)
+# An eval `prompt` is scenario content, not trusted instructions, so the RUN call must be
+# reasoning-only: no tool, current or future, may be enabled. A denylist has to be re-audited
+# against Claude Code's full tool surface every time a new tool ships (issue #254 found this drifted
+# — Skill, Workflow, SendMessage, PushNotification, RemoteTrigger, CronCreate/CronDelete/CronList,
+# EnterWorktree/ExitWorktree, Monitor, DesignSync, ScheduleWakeup and the Task* family were all
+# missing from the old tuple). An empty ALLOWLIST fails closed instead: a brand-new tool starts
+# blocked by default and must be deliberately opted in, never silently re-opening the gap that let
+# WebFetch/WebSearch/Read exfiltrate data once ANTHROPIC_API_KEY is wired into CI (found in review of
+# #140 before it ever went live).
+ALLOWED_RUN_TOOLS = ()
 
 
 def discover(skill_filter):
@@ -141,7 +142,7 @@ def build_judge_prompt(prompt, expected_output, response):
     )
 
 
-def call_claude(user_prompt, system_prompt, model, disallowed_tools=DISALLOWED_RUN_TOOLS):
+def call_claude(user_prompt, system_prompt, model, allowed_tools=ALLOWED_RUN_TOOLS):
     """Run one headless `claude -p` turn and return its final text, or raise on CLI failure.
 
     Isolated so the ONE piece that touches the model lives behind a single call: tools are disabled
@@ -152,7 +153,7 @@ def call_claude(user_prompt, system_prompt, model, disallowed_tools=DISALLOWED_R
         "--model", model,
         "--output-format", "json",
         "--append-system-prompt", system_prompt,
-        "--disallowedTools", *disallowed_tools,
+        "--allowedTools", *allowed_tools,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
