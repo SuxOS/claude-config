@@ -172,6 +172,15 @@
   thing it draws cases from (it's how this harness also caught a live sibling gap in xargs's
   `-n`/`-s`/`-d` while being built). Keep a fuzzer's ground truth independent of its SUT's own
   bookkeeping whenever that bookkeeping is exactly what's under test.
+- **When auditing a hand-picked value-flag set (`SUDO_VALUE_OPTS`/`GIT_GLOBAL_VALUE_OPTS`/
+  `NPM_GLOBAL_VALUE_OPTS`-style sets) against a real CLI's full surface, check whether that CLI
+  ships its own machine-readable flag definitions before hand-reading docs** (#287): npm's global
+  config flags are enumerated with exact value-vs-boolean types in
+  `@npmcli/config/lib/definitions/definitions.js`, requirable straight out of a local npm install
+  (`node -e 'require("@npmcli/config/lib/definitions/definitions.js")'`) — this caught both the
+  full value-taking surface AND the two genuinely ambiguous boolean-or-value flags (`--browser`/
+  `--color`) that a docs skim could easily mis-classify either way. Prefer this over a doc-only
+  audit whenever the tool has one; it's exhaustive and exact where docs are prose.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
