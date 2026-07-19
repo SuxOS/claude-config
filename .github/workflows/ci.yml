@@ -57,6 +57,17 @@ jobs:
           printf 'checking: %s\n' "${files[@]}"
           shellcheck "${files[@]}"
 
+      # actionlint (#84): the 7 workflow files under .github/workflows/ are agent-editable and,
+      # until now, never linted — cron expressions, `permissions` blocks, and `if:` expressions
+      # (e.g. issue-build.yml:19) could break silently until they actually fired. Mirrors the
+      # pattern .github itself uses (self-check.yml / actionlint), folded into this required job
+      # for the same reason as the other integrity steps above (see CLAUDE.md).
+      - name: lint GitHub Actions workflow files
+        if: ${{ !cancelled() }}
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
+
       # settings-lint (was an advisory job): lints home/.claude/settings.json for permission rules
       # that fail OPEN with no Claude Code warning (unnamespaced MCP denies, argument-constraining
       # Bash denies, allow/deny overlaps) — the traps settings.README.md documents (#82).
