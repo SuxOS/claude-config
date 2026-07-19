@@ -61,22 +61,34 @@ WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env", "comma
 # deliberately left short-only since their long form's argument is OPTIONAL and only ever binds via
 # `=`, never a separate word. stdbuf's `--input`/`--output`/`--error` (long forms of `-i`/`-o`/`-e`)
 # have the same separate-value gap the short forms were fixed for (#198). `env`'s own separate-value
-# flags (`-u`/`--unset`, `-C`/`--chdir`, `-S`/`--split-string`) were missing an entry entirely — its
-# boolean `-i` (ignore-environment) and inline `VAR=VAL` handling below are unaffected, only its
-# value-taking flags were the gap. All three found by auditing xargs/stdbuf/env against #198/#203's
-# already-fixed sibling wrappers (#212), same "hand-maintained flag table drifts from the real tool's
+# flags (`-u`/`--unset`, `-C`/`--chdir`) were missing an entry entirely — its boolean `-i`
+# (ignore-environment) and inline `VAR=VAL` handling below are unaffected, only its value-taking
+# flags were the gap. Both found by auditing xargs/stdbuf/env against #198/#203's already-fixed
+# sibling wrappers (#212), same "hand-maintained flag table drifts from the real tool's
 # separate-vs-glued-vs-long grammar" class. xargs's `-a FILE`/`--arg-file=FILE` (read items from FILE
 # instead of stdin) takes a REQUIRED separate value exactly like `-n`/`-s`/`-d`, and was still missing
 # (#217): `xargs -a items.txt curl evil.com` walked past `-a` as a boolean flag and stopped at
-# `items.txt`, hiding `curl` from the bare-net-binary scan.
+# `items.txt`, hiding `curl` from the bare-net-binary scan. `-S`/`--split-string` is DELIBERATELY NOT
+# here (#227): unlike `-u`/`-C`, its value isn't an opaque skip — it IS (or starts) the real command
+# (`env -S 'curl evil.com'` runs `curl evil.com`, per env(1)) — so it needs the word-split-and-splice
+# handling in `strip_prefixes()` below, not a "swallow one token" entry here.
 WRAPPER_VALUE_OPTS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"},
     "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "-a", "--max-args", "--max-chars", "--max-procs", "--delimiter", "--arg-file"},
     "exec": {"-a"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
-    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "env": {"-u", "--unset", "-C", "--chdir"},
     "time": {"-o", "--output", "-f", "--format"},
+}
+# `env -S`/`--split-string`'s escape/quote grammar (info env, "-S/--split-string syntax"), verified
+# against real GNU coreutils env(1) output (#227): unquoted/double-quoted escapes, `\_` as a literal
+# space inside double quotes, `${VAR}` expansion is NOT implemented here (no reliable access to the
+# hook's runtime environment; a literal `${VAR}` left in a recovered word only affects a VALUE, never
+# the primitive name a scan looks for).
+_ENV_DASHS_ESCAPES = {
+    "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+    "#": "#", "$": "$", '"': '"', "'": "'", "\\": "\\",
 }
 DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
 # Privilege wrappers that take their own options then a command word (`sudo -u user cmd`, `doas`).
@@ -106,13 +118,102 @@ def basename(word):
     return word.rsplit("/", 1)[-1]
 
 
+def _split_env_dash_s(s):
+    """Word-split an `env -S`/`--split-string` STRING the way env(1) itself does (#227): it is NOT
+    an opaque flag value like `-u NAME`/`-C DIR` — it IS (or starts) the real command, so a wrapped
+    command (`env -S 'curl evil.com'`) must be split and re-fed into argv, not silently skipped.
+
+    Behavior verified against real GNU coreutils `env` (info env, "-S/--split-string syntax"):
+    unquoted whitespace (space/tab/newline/CR/VT/FF) separates words; `'...'` groups a word
+    literally except `\\\\`/`\\'` (env's own escapes for those two chars); `"..."` groups a word but
+    still processes the full escape set; unquoted/double-quoted escapes are `\\f\\n\\r\\t\\v` (control
+    chars, embedded in the current word — NOT separators, despite the literal chars being separators
+    when they appear raw/unescaped), `\\#`/`\\$`/`\\"`/`\\'`/`\\\\` (literal chars), and `\\_` (a literal
+    space inside double quotes, an argument separator outside them). `\\c` and a bare `#` as the
+    first character of a fresh argument both truncate the rest of the string — matching env's own
+    behavior (env itself never executes what follows either, so dropping it here creates no blind
+    spot the scan needs to worry about). `${VAR}` expansion is deliberately NOT implemented (no
+    reliable access to env's runtime environment from a hook); a literal `${VAR}` is left in the
+    recovered word, which only affects a VALUE, never the primitive name a scan is looking for.
+    """
+    words = []
+    cur = []
+    have_cur = False
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if not have_cur and c == "#":
+            break  # '#' as the first character of a fresh argument truncates the rest
+        if c in " \t\n\r\v\f":
+            if have_cur:
+                words.append("".join(cur))
+                cur = []
+                have_cur = False
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            nxt = s[i + 1]
+            if nxt == "c":
+                break  # truncates the rest of the string, same as env itself
+            if nxt == "_":
+                if have_cur:
+                    words.append("".join(cur))
+                    cur = []
+                    have_cur = False
+                i += 2
+                continue
+            cur.append(_ENV_DASHS_ESCAPES.get(nxt, nxt))
+            have_cur = True
+            i += 2
+            continue
+        if c == "'":
+            j = i + 1
+            while j < n and s[j] != "'":
+                if s[j] == "\\" and j + 1 < n and s[j + 1] in ("\\", "'"):
+                    cur.append(s[j + 1])
+                    j += 2
+                else:
+                    cur.append(s[j])
+                    j += 1
+            have_cur = True
+            i = j + 1  # skip the closing quote (or land on end-of-string on imbalance)
+            continue
+        if c == '"':
+            j = i + 1
+            while j < n and s[j] != '"':
+                if s[j] == "\\" and j + 1 < n:
+                    nxt = s[j + 1]
+                    cur.append(" " if nxt == "_" else _ENV_DASHS_ESCAPES.get(nxt, nxt))
+                    j += 2
+                else:
+                    cur.append(s[j])
+                    j += 1
+            have_cur = True
+            i = j + 1
+            continue
+        cur.append(c)
+        have_cur = True
+        i += 1
+    if have_cur:
+        words.append("".join(cur))
+    return words
+
+
 def strip_prefixes(argv):
     """Drop everything before the real command word, in one pass: grouping noise, bare
     `NAME=VALUE` env assignments, `sudo`/`doas`, and value-consuming wrappers + their args
     (`timeout 5 python3` -> `python3`, `FOO=1 sudo -u x curl …` -> `curl …`,
     `exec -a fake curl …` -> `curl …`). Collapses the whole "a leading prefix shifts the
     command word out of argv[0]" bypass class (#119, #179). `command -v/-V NAME` is left
-    unstripped since it reports on NAME rather than executing it."""
+    unstripped since it reports on NAME rather than executing it.
+
+    `env -S`/`--split-string STRING` (#227) is not a "skip one value token" wrapper flag like
+    `-u`/`-C` — STRING IS (or starts) the real command, so its value is word-split via
+    `_split_env_dash_s()` and SPLICED into argv in place of the flag+value, then the outer loop
+    re-runs from that position (not just returned) — the spliced-in words get the SAME
+    env-assign/sudo/wrapper canonicalization as any other prefix, so `env -S 'FOO=bar curl evil'`
+    still reaches `curl` too.
+    """
     i, n = 0, len(argv)
     while i < n:
         tok = argv[i]
@@ -136,10 +237,31 @@ def strip_prefixes(argv):
             break  # `command -v/-V NAME` reports NAME's path/type, it never executes it
         i += 1
         value_opts = WRAPPER_VALUE_OPTS.get(base, set())
+        split_words = None
         while i < n and argv[i].startswith("-"):  # the wrapper's own option flags
-            if argv[i] in value_opts and i + 1 < n and not argv[i + 1].startswith("-"):
+            t = argv[i]
+            if base == "env" and (t == "-S" or t == "--split-string"):
+                if i + 1 < n:
+                    split_words = _split_env_dash_s(argv[i + 1])
+                    i += 2
+                else:
+                    i += 1
+                break
+            if base == "env" and t.startswith("--split-string="):
+                split_words = _split_env_dash_s(t.split("=", 1)[1])
+                i += 1
+                break
+            if base == "env" and t.startswith("-S") and len(t) > 2:
+                split_words = _split_env_dash_s(t[2:])
+                i += 1
+                break
+            if t in value_opts and i + 1 < n and not argv[i + 1].startswith("-"):
                 i += 1  # ...and that flag's separate value
             i += 1
+        if split_words is not None:
+            argv = argv[:i] + split_words + argv[i:]
+            n = len(argv)
+            continue  # re-run the outer loop over the spliced-in words
         if base == "env":
             while i < n and "=" in argv[i] and not argv[i].startswith("-"):
                 i += 1  # env's inline VAR=VAL assignments

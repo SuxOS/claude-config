@@ -125,18 +125,24 @@ PLACEHOLDER_VALUE = "VAL"
 # `--replace`/`--max-lines` (of `-I`/`-L`) are deliberately absent since GNU getopt_long treats their
 # argument as OPTIONAL, which only ever binds via `=`, never a separate following word. stdbuf(1)'s
 # `--input`/`--output`/`--error` are the long forms of `-i`/`-o`/`-e`. env(1)'s own separate-value
-# flags `-u`/`--unset`, `-C`/`--chdir`, `-S`/`--split-string` get their own entry (#212) — its `-i`
-# boolean and inline `VAR=VAL` stay in WRAPPER_EXTRA_SUFFIXES below. xargs's `-a FILE`/`--arg-file=FILE`
-# (read items from FILE instead of stdin) takes a REQUIRED separate value like `-n`/`-s`/`-d` and was
-# missing from this table too (#217), so this fuzzer's independent generator couldn't produce the
-# `xargs -a items.txt curl evil.com` case on its own either.
+# flags `-u`/`--unset`, `-C`/`--chdir` get their own entry (#212) — its `-i` boolean and inline
+# `VAR=VAL` stay in WRAPPER_EXTRA_SUFFIXES below. xargs's `-a FILE`/`--arg-file=FILE` (read items
+# from FILE instead of stdin) takes a REQUIRED separate value like `-n`/`-s`/`-d` and was missing
+# from this table too (#217), so this fuzzer's independent generator couldn't produce the
+# `xargs -a items.txt curl evil.com` case on its own either. `-S`/`--split-string` is deliberately
+# NOT modeled by this generic "flag consumes the next opaque token, REAL_ARGV follows" table (#227):
+# unlike `-u`/`-C`, `-S`'s value IS the real command (word-split, not skipped) — modeling it the same
+# as `-u`/`-C` here is exactly the wrong-model bug #227 found (this table used to generate
+# `["env", "-S", "VAL", *REAL_ARGV]`, which is not how `env -S` actually works and is why the
+# original bug passed this fuzzer undetected). See `env_split_string_variants()` below for its own,
+# correctly-modeled generator.
 REFERENCE_WRAPPER_VALUE_FLAGS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "-a", "--max-args", "--max-chars", "--max-procs", "--delimiter", "--arg-file"},
     "exec": {"-a"},
-    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "env": {"-u", "--unset", "-C", "--chdir"},
     "time": {"-o", "--output", "-f", "--format"},
 }
 
@@ -186,6 +192,29 @@ def sudo_variants():
     for s in sorted(SUDO):
         for opt in sorted(REFERENCE_SUDO_VALUE_FLAGS):
             variants.append([s, opt, PLACEHOLDER_VALUE])
+    return variants
+
+
+def env_split_string_variants():
+    """`env -S`/`--split-string`'s own, correctly-modeled generator (#227). Every other wrapper
+    flag above fits "the flag consumes an opaque value token, REAL_ARGV follows separately" —
+    `-S`'s value does NOT: it IS the real command (word-split, not skipped), so REAL_ARGV must be
+    INSIDE the split string, not appended after it. This is the exact model
+    `REFERENCE_WRAPPER_VALUE_FLAGS`'s generic combinator got wrong before #227 (see its comment) —
+    keeping it a separate, deliberately-independent generator is what makes this fuzzer able to
+    catch that class of bug rather than reproduce it. Each variant also nests one extra prefix
+    INSIDE the split string, since `strip_prefixes()` re-canonicalizes the spliced-in words through
+    its whole outer loop, not just a bare command word (`env -S 'sudo curl ...'` must still reach
+    `curl` too)."""
+    joined = " ".join(REAL_ARGV)
+    variants = []
+    for inner in ("", "FOO=bar ", "sudo ", "timeout 5 "):
+        s = inner + joined
+        variants.append(["env", "-S", s])
+        variants.append(["env", "--split-string", s])
+        variants.append(["env", "--split-string=" + s])
+        variants.append(["env", "-S" + s])
+        variants.append(["env", "-i", "-S", s])  # a preceding unrelated env boolean flag
     return variants
 
 
@@ -358,6 +387,19 @@ def main():
                     "block-sleep-loop offending() invariant: prefix %r before the sleep piece of "
                     "%r should still flag a polling loop, but offending() returned False"
                     % (list(minimal), sleep_loop_command(list(minimal)))
+                )
+
+    # #227: env -S/--split-string's own correctly-modeled invariant — REAL_ARGV lives INSIDE the
+    # split string, not appended after it (see env_split_string_variants()'s docstring for why this
+    # can't reuse the generic prefix+REAL_ARGV combinator above).
+    for argv in env_split_string_variants():
+        if strip_prefixes(argv) != REAL_ARGV:
+            key = ("env_split_string", tuple(argv))
+            if key not in violations:
+                got = strip_prefixes(argv)
+                violations[key] = (
+                    "strip_prefixes() invariant: env -S argv %r should recover %r, got %r"
+                    % (argv, REAL_ARGV, got)
                 )
 
     # #204: the quoting/substitution axis, nested one level inside each prefix already covered above.
