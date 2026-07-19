@@ -112,6 +112,71 @@ assert_exit 0 "$VCC" "{\"transcript_path\":\"$skill_transcript\"}" "does not blo
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$slash_transcript\"}" "does not block a completion claim after a /verify run via the SlashCommand tool (#109)"
 rm -f "$skill_transcript" "$slash_transcript"
 
+# #83: the VERIFY check must inspect actual tool_use calls, not a substring match over the whole
+# serialized turn — a mere MENTION of a verify command's name (in prose, or inside an edited
+# file's own written content) is not evidence the command actually ran, and must still block.
+build_transcript_records() {
+  # $1 = JSON array of records (as a literal), writes jsonl path to stdout
+  local tmp
+  tmp="$(mktemp)"
+  python3 - "$tmp" "$1" <<'PY'
+import json
+import sys
+
+path, records_json = sys.argv[1], sys.argv[2]
+records = json.loads(records_json)
+with open(path, "w") as f:
+    for r in records:
+        f.write(json.dumps(r) + "\n")
+PY
+  echo "$tmp"
+}
+
+mention_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "npm test passes now, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$mention_transcript\"}" "blocks a completion claim that only MENTIONS npm test in prose, with no verify tool call this turn (#83)"
+rm -f "$mention_transcript"
+
+content_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the pytest config"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py", "new_string": "import pytest\n"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Fixed, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$content_transcript\"}" "blocks a completion claim where the verify word only appears in an edited file's own written content (#83)"
+rm -f "$content_transcript"
+
+bash_verify_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "npm test"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "5 passed"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All tests pass now."}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$bash_verify_transcript\"}" "does not block a completion claim after an actual Bash tool_use ran npm test (#83)"
+rm -f "$bash_verify_transcript"
+
 echo "== block-egress.py =="
 BE="$HOOKS/block-egress.py"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import urllib.request; urllib.request.urlopen(1)\""}}' "blocks an interpreter inline-code egress one-liner"
@@ -139,6 +204,10 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql --input=body.json"}}'                              "blocks glued gh api graphql --input=FILE — body unreadable, fails closed (#265)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -Fquery=@file.graphql"}}'                          "blocks gh api graphql -F query=@file — body unreadable, fails closed"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -X POST -f query=query{viewer{login}}"}}'          "an explicit -X POST on graphql bypasses the carve-out and still blocks"
+# shellcheck disable=SC2016
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query=\"$(cat q.graphql)\""}}'                    "blocks gh api graphql -f query=\"\$(cat file)\" — command-substitution value unreadable, fails closed (#283)"
+# shellcheck disable=SC2016
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -f query=\"`cat q.graphql`\""}}'                     "blocks gh api graphql -f query=\"\`cat file\`\" — backtick-substitution value unreadable, fails closed (#283)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                     "allows a plain command"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"

@@ -127,6 +127,16 @@ GH_API_BOOL_SHORT_OPTS = "i"
 GRAPHQL_MUTATION_RE = re.compile(r"\bmutation\b")
 
 
+def _unreadable_field_value(v):
+    """True if a `-f`/`-F` field value isn't a literal this scan can read: an `@file` reference,
+    or embedded command/process substitution (`$(cat mutation.graphql)`, `` `cat x` ``) — shlex
+    keeps the quoted span as one literal token, so the substitution never runs here and the real
+    body text (which could be anything, including a mutation) is invisible to the regex (#283).
+    """
+    val = v.split("=", 1)[-1]
+    return val.startswith("@") or "$(" in val or "`" in val
+
+
 def canonical_interpreter(cmd):
     """Map a possibly-versioned interpreter basename to its INTERPRETERS key, else return cmd.
 
@@ -203,9 +213,11 @@ def gh_api_is_write(argv):
     convention (#265: `--input` is a FIELD_FLAGS member so it always implied POST, but a naive
     carve-out that only checked `-f`/`-F` values for `@file` would scan `--input`'s own value —
     a bare filename or `-`, never the body text — find no `mutation` substring, and silently
-    ALLOW an unreadable, possibly-mutating body) — fails CLOSED (blocked) here, the same "can't
-    see inside a file" limitation this hook already accepts everywhere else, rather than
-    silently downgrading an unreadable body to an allow.
+    ALLOW an unreadable, possibly-mutating body), OR a value embedding command/process substitution
+    (`-f query="$(cat mutation.graphql)"` / backtick form — shlex keeps the quoted span as one
+    literal token, so the substitution never runs here and the real body text is invisible, #283)
+    — fails CLOSED (blocked) here, the same "can't see inside a file" limitation this hook already
+    accepts everywhere else, rather than silently downgrading an unreadable body to an allow.
     """
     method = None
     explicit_method = False
@@ -255,8 +267,8 @@ def gh_api_is_write(argv):
                     method = "POST"  # glued short field flag, incl. bundled (`-ftitle=x`, `-iFkey=x`)
 
     if not explicit_method and method == "POST" and len(argv) >= 3 and argv[2] == "graphql":
-        if unreadable_body or any(v.split("=", 1)[-1].startswith("@") for v in field_values):
-            return True  # can't inspect the body as a literal — fail closed, never fall open (#265)
+        if unreadable_body or any(_unreadable_field_value(v) for v in field_values):
+            return True  # can't inspect the body as a literal — fail closed, never fall open (#265, #283)
         return any(GRAPHQL_MUTATION_RE.search(v) for v in field_values)
     return method in WRITE_METHODS
 

@@ -22,21 +22,20 @@ CLAIM = re.compile(
     r"works now|working now|verified)\b",
     re.I,
 )
-# A verification actually happened if the transcript shows one of these being run this turn.
-# Three alternatives: word-anchored command names (\b…\b), the slash-command skills (which start
-# with '/'), and the Skill tool_use JSON shape (no leading slash on the skill name). The slash
-# forms are kept OUT of the \b(…)\b wrapper on purpose — a leading \b only holds after a word
-# char, so `\b/verify` matches `x/verify` but NOT the normal ` /verify` (space before '/'),
-# silently missing every slash-command invocation (#109/#117). The `"skill":\s*"..."` alternative
-# is kept separately because a Skill tool_use serializes as {"name": "Skill", "input": {"skill":
-# "verify", ...}} — no leading slash at all, so the /verify\b form can't match it either (#109).
-VERIFY = re.compile(
+# A verification actually happened if this turn's records show one of these being RUN — a
+# Bash tool_use whose command matches, a SlashCommand tool_use invoking /verify|/bet|/run, or a
+# Skill tool_use naming one of them. Checked against the tool_use blocks themselves (see
+# verification_ran() below), never against the serialized transcript text — a text/substring
+# match also fires on a mere MENTION of the command name in assistant prose ("I'll run npm test
+# next") or inside an edited file's own content (e.g. a Python file whose new text contains the
+# word "pytest"), neither of which is evidence the command actually ran (#83).
+VERIFY_CMD = re.compile(
     r"\b(?:pytest|npm (?:run )?test|jest|vitest|go test|cargo test|bash -n|"
-    r"make test|tox|ruff|mypy|tsc|playwright|node .*test)\b"
-    r"|/(?:verify|bet|run)\b"
-    r'|"skill":\s*"(?:verify|bet|run)"',
+    r"make test|tox|ruff|mypy|tsc|playwright|node .*test)\b",
     re.I,
 )
+VERIFY_SLASH = re.compile(r"^/(?:verify|bet|run)\b", re.I)
+VERIFY_SKILLS = {"verify", "bet", "run"}
 # Product-code edits (vs docs/config/tests) — a claim over these is the risky kind.
 CODE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".rb", ".java", ".c", ".cpp", ".sh")
 
@@ -67,6 +66,33 @@ def turn_lines(transcript_path):
     return records
 
 
+def verification_ran(records):
+    """True if this turn's records show an actual verification tool call, not just a mention."""
+    for r in records:
+        msg = r.get("message") or r
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = block.get("name")
+            tool_input = block.get("input") or {}
+            if name == "Bash":
+                command = tool_input.get("command")
+                if isinstance(command, str) and VERIFY_CMD.search(command):
+                    return True
+            elif name == "SlashCommand":
+                command = tool_input.get("command")
+                if isinstance(command, str) and VERIFY_SLASH.search(command.strip()):
+                    return True
+            elif name == "Skill":
+                skill = tool_input.get("skill")
+                if isinstance(skill, str) and skill.lower() in VERIFY_SKILLS:
+                    return True
+    return False
+
+
 def edited_file_paths(records):
     """Yield file_path values from Edit/Write tool_use blocks in this turn's records."""
     for r in records:
@@ -95,7 +121,6 @@ def main():
     if not records:
         sys.exit(0)
 
-    blob = json.dumps(records)
     edited_code = any(
         os.path.splitext(path)[1] in CODE_EXT for path in edited_file_paths(records)
     )
@@ -111,7 +136,7 @@ def main():
         sys.exit(0)
     if not CLAIM.search(final_text):
         sys.exit(0)
-    if VERIFY.search(blob):
+    if verification_ran(records):
         sys.exit(0)
 
     print(
