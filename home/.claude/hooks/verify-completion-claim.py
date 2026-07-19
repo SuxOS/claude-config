@@ -37,7 +37,7 @@ VERIFY_CMD = re.compile(
 VERIFY_SLASH = re.compile(r"^/(?:verify|bet|run)\b", re.I)
 VERIFY_SKILLS = {"verify", "bet", "run"}
 # Product-code edits (vs docs/config/tests) — a claim over these is the risky kind.
-CODE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".rb", ".java", ".c", ".cpp", ".sh")
+CODE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".rb", ".java", ".c", ".cpp", ".sh", ".ipynb")
 
 
 def is_tool_result(record):
@@ -94,7 +94,8 @@ def verification_ran(records):
 
 
 def edited_file_paths(records):
-    """Yield file_path values from Edit/Write tool_use blocks in this turn's records."""
+    """Yield file_path values from Edit/Write/NotebookEdit tool_use blocks in this turn's
+    records. NotebookEdit carries its path in `notebook_path`, not `file_path` (#250)."""
     for r in records:
         msg = r.get("message") or r
         content = msg.get("content")
@@ -103,10 +104,18 @@ def edited_file_paths(records):
         for block in content:
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "tool_use" and block.get("name") in ("Edit", "Write"):
-                path = (block.get("input") or {}).get("file_path")
-                if isinstance(path, str):
-                    yield path
+            if block.get("type") != "tool_use":
+                continue
+            name = block.get("name")
+            tool_input = block.get("input") or {}
+            if name in ("Edit", "Write"):
+                path = tool_input.get("file_path")
+            elif name == "NotebookEdit":
+                path = tool_input.get("notebook_path")
+            else:
+                continue
+            if isinstance(path, str):
+                yield path
 
 
 def main():
@@ -127,10 +136,23 @@ def main():
     final_text = ""
     for r in reversed(records):
         msg = r.get("message") or r
-        if (msg.get("role") == "assistant") and isinstance(msg.get("content"), (str, list)):
-            c = msg["content"]
-            final_text = c if isinstance(c, str) else json.dumps(c)
-            break
+        c = msg.get("content")
+        if msg.get("role") != "assistant" or not isinstance(c, (str, list)):
+            continue
+        if isinstance(c, str):
+            final_text = c
+        else:
+            # Only the assistant's own prose (type=='text' blocks), never a tool_use block's
+            # input — json.dumps()-ing the whole content list would also match a completion word
+            # sitting inside a tool CALL (e.g. a Bash tool_use `git commit -m "fix: resolved..."`),
+            # which is not a prose completion claim (#108). Mirrors verification_ran()'s
+            # tool_use-only walk, just for the opposite block type.
+            final_text = " ".join(
+                block.get("text", "")
+                for block in c
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        break
 
     if not edited_code:
         sys.exit(0)

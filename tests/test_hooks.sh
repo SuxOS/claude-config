@@ -8,10 +8,12 @@
 # and blocking nothing). This turns the README's manual test recipe into an enforced gate
 # (#40, #41).
 #
-# Two layers:
+# Three layers:
 #   1. py_compile every tracked *.py — catches syntax / import-time breakage (#40).
 #   2. feed synthetic hook-input JSON to each live hook and assert the exit code
 #      (2 = block, 0 = allow), the contract hooks/README.md documents by hand (#41).
+#   3. real-shape fixture corpus — drive each hook against redacted real Claude Code
+#      transcripts/PreToolUse payloads under tests/fixtures/ (#117).
 #
 # Lives OUTSIDE home/.claude/ on purpose: install.sh symlinks that tree into the user's live
 # config, so repo-/CI-only tooling must not live there (CLAUDE.md). Run: bash tests/test_hooks.sh
@@ -61,6 +63,7 @@ assert_exit 0 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":"Explor
 assert_exit 0 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":"claude","model":"haiku","prompt":"x"}}' "allows an explicit model="
 assert_exit 0 "$RDM" '{"tool_name":"Bash","tool_input":{}}'                                                    "ignores non-Agent tools"
 assert_exit 0 "$RDM" 'not-json'                                                                                "fails open on malformed JSON"
+assert_exit 2 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":{"foo":"bar"},"prompt":"x"}}'         "coerces a non-string subagent_type to generic instead of crashing with TypeError (#272)"
 
 echo "== verify-completion-claim.py =="
 VCC="$HOOKS/verify-completion-claim.py"
@@ -176,6 +179,37 @@ bash_verify_transcript="$(build_transcript_records '[
 ]')"
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$bash_verify_transcript\"}" "does not block a completion claim after an actual Bash tool_use ran npm test (#83)"
 rm -f "$bash_verify_transcript"
+
+# #108: a completion word sitting inside a tool_use's own INPUT (a Bash command, a file edit's
+# new text) must not trip CLAIM — only the assistant's own prose (type=='text' blocks) counts.
+tool_input_claim_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please commit the fix"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py", "new_string": "resolved = True\n"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "git commit -m \"fix: resolved the crash\""}}
+  ]}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$tool_input_claim_transcript\"}" "does not block on a completion word inside a tool_use input, with no assistant prose claim (#108)"
+rm -f "$tool_input_claim_transcript"
+
+# #250: a notebook edited exclusively via NotebookEdit must count as product code.
+notebook_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the notebook"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "NotebookEdit", "input": {"notebook_path": "analysis.ipynb", "new_source": "x = 1"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Fixed, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$notebook_transcript\"}" "blocks a completion claim over a notebook edited only via NotebookEdit, with no verification (#250)"
+rm -f "$notebook_transcript"
 
 echo "== block-egress.py =="
 BE="$HOOKS/block-egress.py"
