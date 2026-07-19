@@ -81,10 +81,12 @@ RUN_FRAMING = (
 # against Claude Code's full tool surface every time a new tool ships (issue #254 found this drifted
 # — Skill, Workflow, SendMessage, PushNotification, RemoteTrigger, CronCreate/CronDelete/CronList,
 # EnterWorktree/ExitWorktree, Monitor, DesignSync, ScheduleWakeup and the Task* family were all
-# missing from the old tuple). An empty ALLOWLIST fails closed instead: a brand-new tool starts
-# blocked by default and must be deliberately opted in, never silently re-opening the gap that let
-# WebFetch/WebSearch/Read exfiltrate data once ANTHROPIC_API_KEY is wired into CI (found in review of
-# #140 before it ever went live).
+# missing from the old tuple) — and it never covered MCP tool names (`mcp__*`) at all, so any MCP
+# server the invoking environment has configured (#266) stayed reachable regardless of this list.
+# An empty ALLOWLIST fails closed against both gaps at once: a brand-new built-in tool AND any
+# MCP tool alike start blocked by default and must be deliberately opted in, never silently
+# re-opening the gap that let WebFetch/WebSearch/Read exfiltrate data once ANTHROPIC_API_KEY was
+# wired into CI (found in review of #140 before it ever went live).
 ALLOWED_RUN_TOOLS = ()
 
 
