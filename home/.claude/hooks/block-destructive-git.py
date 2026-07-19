@@ -289,6 +289,13 @@ def _clean_force_hit(rest, cwd):
     for tok in rest:
         if tok in ("-f", "--force"):
             continue
+        if tok.startswith("-e") and tok != "-e" and not tok.startswith("--"):
+            # glued -e<pattern> (git-clean(1)'s only short glued value flag): the pattern is
+            # arbitrary text, not a boolean-flag cluster, so it must reach git verbatim — the
+            # blanket 'f'-strip below would silently corrupt any 'f' byte in the pattern itself
+            # (`-e*.staff` -> `-e*.sta`), changing what the -n preview actually matches (#258).
+            dry_argv.append(tok)
+            continue
         if tok.startswith("-") and not tok.startswith("--"):
             trimmed = "-" + tok[1:].replace("f", "")
             if trimmed != "-":

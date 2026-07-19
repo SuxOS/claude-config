@@ -156,6 +156,15 @@ def _split_pieces(command):
     On a line shlex can't tokenize (unbalanced quotes), fall back to a raw regex split so we still
     scan something rather than crash. This is the base tokenizer `pieces()` wraps with
     substitution-recursion below; nothing outside this module should call it directly.
+
+    A bare `(`/`)` subshell-grouping token — `PUNCT` includes them so shlex splits them out even
+    glued to a word (`main)` -> `main`, `)`) — is dropped rather than appended to a piece's argv
+    (#290): unlike `&&`/`;`/etc, `OPERATOR_RE` doesn't treat them as piece separators, so an
+    unmatched one (any bare subshell, `(cd dir && git push -f origin main)`) previously rode along
+    into the argv positional callers count (`_push_force_hit`'s `len(positionals) > 2` and similar
+    gates in block-destructive-git.py/block-checkout-held-branch.py), silently changing the count
+    and skipping the confirmation. `((`/`))` (arithmetic) tokenize as their own two-char token, not
+    a bare `(`/`)`, so arithmetic expressions are untouched by this filter.
     """
     for line in command.split("\n"):
         if not line.strip():
@@ -175,6 +184,8 @@ def _split_pieces(command):
                 if argv:
                     yield argv
                 argv = []
+            elif tok in ("(", ")"):
+                continue
             else:
                 argv.append(tok)
         if argv:
