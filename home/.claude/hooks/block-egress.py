@@ -125,6 +125,37 @@ GH_API_BOOL_SHORT_OPTS = "i"
 # operation; an unlabeled or explicit `query` operation (GraphQL allows omitting the keyword) has
 # no reason to contain it.
 GRAPHQL_MUTATION_RE = re.compile(r"\bmutation\b")
+# gh api's own flags that take a value in their separate-token form (`-H value`, as opposed to a
+# glued `--header=value`, which is one self-contained token), so a scan for the REST/GraphQL
+# endpoint positional can walk past one sitting ahead of it (`gh api --paginate graphql ...`,
+# `gh api -H 'Accept: x' graphql ...`, #282) instead of assuming the endpoint is always argv[2].
+# Superset of FIELD_FLAGS (already value-taking) plus gh api's other value flags; -X/--method is
+# tracked by its own branch in gh_api_is_write() but also consumes a following value here, same as
+# every other value flag in this set.
+GH_API_VALUE_OPTS = FIELD_FLAGS | {
+    "-X", "--method", "-H", "--header", "--cache", "-p", "--preview", "-q", "--jq", "-t",
+    "--template", "--hostname",
+}
+
+
+def _gh_api_endpoint(argv):
+    """Return the first positional token (the REST/GraphQL endpoint) in a `gh api ...` argv
+    already anchored to `["gh", "api", ...rest]`, walking past gh api's own leading flags — the
+    same shape as `gh_subcommand()`/npm's `_npm_subcommand()` walking past a CLI's global flags —
+    or None if there's no positional at all. A glued `--flag=value` or bare boolean short flag is
+    one self-contained token either way; only a `GH_API_VALUE_OPTS` token needs its separate next
+    token skipped too."""
+    i, n = 2, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in GH_API_VALUE_OPTS:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return tok
+    return None
 
 
 def _unreadable_field_value(v):
@@ -266,7 +297,7 @@ def gh_api_is_write(argv):
                 if method is None:
                     method = "POST"  # glued short field flag, incl. bundled (`-ftitle=x`, `-iFkey=x`)
 
-    if not explicit_method and method == "POST" and len(argv) >= 3 and argv[2] == "graphql":
+    if not explicit_method and method == "POST" and _gh_api_endpoint(argv) == "graphql":
         if unreadable_body or any(_unreadable_field_value(v) for v in field_values):
             return True  # can't inspect the body as a literal — fail closed, never fall open (#265, #283)
         return any(GRAPHQL_MUTATION_RE.search(v) for v in field_values)
