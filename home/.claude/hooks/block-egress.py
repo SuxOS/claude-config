@@ -115,6 +115,10 @@ DEV_TCP_RE = re.compile(r"/dev/(?:tcp|udp)/")
 # `gh api` write signals: an explicit mutating method, or gh's implicit-POST field/body flags.
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field", "--input"}
+# gh api's own boolean short flags — pflag lets these bundle ahead of a value-taking short flag
+# in the same token (`-iXPOST`, `-iFquery=x`), so a fixed-position tok[1] read misses them (#271).
+# `-i`/`--include` is the only one gh api defines today.
+GH_API_BOOL_SHORT_OPTS = "i"
 
 
 def canonical_interpreter(cmd):
@@ -179,22 +183,35 @@ def gh_api_is_write(argv):
     Field/body flags are matched in every shape gh/pflag accepts: exact (`-f`, `--field`),
     long-glued (`--field=x=y`), and short-glued (`-ftitle=x`, `-Fkey=@file`) — the last of which
     is a real state-mutating POST that the exact/long checks alone miss (#121), mirroring the
-    glued `-XPOST` method handling.
+    glued `-XPOST` method handling. A short-option bundle may also carry one of gh's own boolean
+    flags ahead of the code letter (`-iXPOST`, `-iFquery=x` — pflag bundling, #271); the bundle
+    walk below skips a leading run of GH_API_BOOL_SHORT_OPTS before reading the tail letter,
+    mirroring how inline_payloads() walks bundled interpreter flags.
     """
     method = None
     for j, tok in enumerate(argv):
         if tok in ("-X", "--method"):
             if j + 1 < len(argv):
                 method = argv[j + 1].upper()
-        elif tok.startswith("-X") and len(tok) > 2:
-            method = tok[2:].upper()
         elif tok.startswith("--method="):
             method = tok.split("=", 1)[1].upper()
-        elif (tok in FIELD_FLAGS or tok.split("=", 1)[0] in FIELD_FLAGS
-              or (len(tok) > 2 and tok[0] == "-" and tok[1] in ("f", "F"))):
+        elif tok in FIELD_FLAGS or tok.split("=", 1)[0] in FIELD_FLAGS:
             if method is None:
-                method = "POST"  # gh defaults to POST when any field/body flag is present, incl.
-                                  # glued short forms `-ftitle=x` / `-Fkey=@file` (#121)
+                method = "POST"  # gh defaults to POST when any field/body flag is present (#121)
+        elif tok.startswith("-") and not tok.startswith("--") and len(tok) > 1:
+            k = 1
+            while k < len(tok) and tok[k] in GH_API_BOOL_SHORT_OPTS:
+                k += 1
+            if k >= len(tok):
+                continue  # entirely boolean short flags (e.g. bare `-i`) — no code letter reached
+            letter, tail = tok[k], tok[k + 1:]
+            if letter == "X":
+                if tail:
+                    method = tail.upper()             # glued: -XPOST / -iXPOST
+                elif j + 1 < len(argv):
+                    method = argv[j + 1].upper()       # separate: -X POST / -iX POST
+            elif letter in ("f", "F") and method is None:
+                method = "POST"  # glued short field flag, incl. bundled (`-ftitle=x`, `-iFkey=x`)
     return method in WRITE_METHODS
 
 

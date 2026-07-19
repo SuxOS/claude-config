@@ -126,6 +126,9 @@ assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"FOO=bar echo h
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -Ic'"'"'import urllib.request; urllib.request.urlopen(1)'"'"'"}}' "blocks a glued mid-bundle inline flag python3 -Ic (#120)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/issues -ftitle=x"}}'                              "blocks a glued short field flag gh api -ftitle=x (#121)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r/contents -Fkey=@file"}}'                          "blocks a glued short field flag gh api -Fkey=@file (#121)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api graphql -iFquery=mutation{deleteRepo}"}}'                    "blocks a bundled boolean+field short flag gh api -iFquery=x (#271)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r -iXDELETE"}}'                                     "blocks a bundled boolean+method short flag gh api -iXDELETE (#271)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r -i"}}'                                            "allows a gh api read with only the boolean -i flag, no method/field (#271)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api /repos/o/r"}}'                                              "allows a gh api read (GET, no write flag)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                     "allows a plain command"
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
@@ -433,6 +436,7 @@ echo c >> "$dgrepo/a.txt"
 git -C "$dgrepo" add a.txt
 git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "divergent commit"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch\"}}"  "blocks a force-push that would discard commits on the remote (#230)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin +scratch:refs/heads/scratch\"}}" "blocks a force-push whose refspec destination is fully-qualified (refs/heads/...), not just a short name (#261)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -uf origin scratch\"}}" "blocks a bundled -uf (set-upstream+force) push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f -o ci.skip origin scratch\"}}" "blocks a force-push with a push-option value token after -f, before the refs (#237)"
