@@ -59,6 +59,19 @@ Ground-truth invariants:
      command ending in `2>/dev/null` or `>/dev/null 2>&1` must not stop `offending()` from still
      flagging it — a defense against the regex someday growing a start-anchor or similar that would
      make prefix text silently swallow the match.
+  7. (#256) `block-egress.py`'s `gh_api_is_write()` has its own, separate combinatorial surface —
+     explicit `-X`/`--method` vs implicit-POST-via-field-flag, and separate/long/glued shapes for
+     both the method and field flags — covered by `tests/test_hooks.sh` only through hand-picked
+     cases, the same gap shape invariants 1-6 close for `strip_prefixes()`/`pieces()`. For every
+     verb in an independent method-verb table, EVERY shape of `-X`/`--method` carrying that verb
+     must agree on whether the verb is a write method; for every shape of every field/body flag
+     (`-f`/`--raw-field`, `-F`/`--field`, `--input`) with no explicit method present, the call must
+     be a write (gh's implicit-POST-on-field-flag); and an explicit READ verb (GET/HEAD) anywhere
+     in argv must still win over an implicit-POST field flag regardless of which comes first (the
+     method-setting branch in `gh_api_is_write()` is unconditional, so ordering can't flip this —
+     worth asserting explicitly rather than assumed). NOT modeled here: gh's graphql-endpoint
+     carve-out (#111) — its code isn't on this branch yet (open PR #255); extending this axis for
+     that dimension is the natural follow-up once #111 lands.
 
 Invariants 1/2/4/5 share one generated-prefix space (`generate_prefixes()`); on a violation, a
 simple delta-debugging shrink (repeatedly drop one prefix token at a time while the invariant stays
@@ -296,6 +309,67 @@ def literal_violation(prefix_tokens, template):
     return pieces_surfaces_real_argv(template(" ".join(prefix_tokens + REAL_ARGV)))
 
 
+# --- gh api write-detection axis (#256) ----------------------------------------------------
+# A fourth generator axis, independent of the prefix/substitution axes above: fuzzes
+# `gh_api_is_write()`'s method-flag/field-flag combinatorics. Ground truth (which flags exist,
+# which shapes they take) is hand-authored from `gh api --help`'s own docs, deliberately NOT
+# sourced from block-egress.py's WRITE_METHODS/FIELD_FLAGS (the thing under test) — same
+# rationale as REFERENCE_WRAPPER_VALUE_FLAGS above: generating from the production set itself
+# would make a gap in that set invisible to the generator.
+GH_API_ENDPOINT = ["/repos/o/r"]
+REFERENCE_METHOD_FLAGS = {"-X", "--method"}
+REFERENCE_WRITE_VERBS = {"POST", "PUT", "PATCH", "DELETE"}
+REFERENCE_READ_VERBS = {"GET", "HEAD"}
+# short flag -> its long form, per `gh api --help`
+REFERENCE_FIELD_FLAGS_SHORT = {"-f": "--raw-field", "-F": "--field"}
+REFERENCE_FIELD_FLAGS_LONG_ONLY = ["--input"]  # no short alias, per `gh api --help`
+
+
+def gh_api_argv(tail):
+    return ["gh", "api"] + GH_API_ENDPOINT + tail
+
+
+def method_flag_variants(verb):
+    """Every shape `gh api`'s -X/--method flag can carry a verb value in."""
+    variants = []
+    for flag in sorted(REFERENCE_METHOD_FLAGS):
+        variants.append([flag, verb])
+        variants.append([flag + "=" + verb] if flag.startswith("--") else [flag + verb])
+    return variants
+
+
+def field_flag_variants():
+    """Every shape a `gh api` field/body flag can appear in, standalone (no method flag)."""
+    variants = []
+    for short, long in REFERENCE_FIELD_FLAGS_SHORT.items():
+        variants.append([short, "key=val"])
+        variants.append([short + "key=val"])       # glued short form, e.g. -Fkey=@file (#121)
+        variants.append([long, "key=val"])
+        variants.append([long + "=key=val"])
+    for long in REFERENCE_FIELD_FLAGS_LONG_ONLY:
+        variants.append([long, "body.json"])
+        variants.append([long + "=body.json"])
+    return variants
+
+
+def method_verb_violation(verb, shape):
+    expected = verb.upper() in REFERENCE_WRITE_VERBS
+    return BLOCK_EGRESS.gh_api_is_write(gh_api_argv(shape)) != expected
+
+
+def field_flag_violation(shape):
+    # No explicit method present: gh implicitly POSTs when any field/body flag is given, so this
+    # must always read as a write.
+    return not BLOCK_EGRESS.gh_api_is_write(gh_api_argv(shape))
+
+
+def field_flag_explicit_read_violation(shape, read_verb):
+    # An explicit read verb anywhere in argv must win over an implicit-POST field flag, whichever
+    # comes first — gh_api_is_write()'s method-setting branch is unconditional, so this must NOT
+    # be a write regardless of flag order.
+    return BLOCK_EGRESS.gh_api_is_write(gh_api_argv(shape + ["-X", read_verb]))
+
+
 def shrink(prefix_tokens, violates):
     """Delta-debugging-lite: repeatedly drop one token while the invariant stays violated."""
     tokens = list(prefix_tokens)
@@ -400,6 +474,42 @@ def main():
                         "block-suppressed-stderr offending() invariant [%s]: prefix text %r before "
                         "%r should still flag suppressed stderr, but offending() returned False"
                         % (suffix_key, list(minimal), command)
+                    )
+
+    # #256: gh_api_is_write()'s method/field-flag combinatorics — each case is already a minimal
+    # atomic flag shape (no prefix stacking), so no shrink() pass is needed here.
+    all_verbs = REFERENCE_WRITE_VERBS | REFERENCE_READ_VERBS
+    for verb in all_verbs | {v.lower() for v in all_verbs}:  # both cases: gh_api_is_write() upper()s
+        for shape in method_flag_variants(verb):
+            if method_verb_violation(verb, shape):
+                key = ("gh_api_method", tuple(shape))
+                if key not in violations:
+                    expected = verb.upper() in REFERENCE_WRITE_VERBS
+                    violations[key] = (
+                        "gh_api_is_write() invariant: `gh api %s %s` (method flag %r) should be "
+                        "write=%r, got %r"
+                        % (" ".join(GH_API_ENDPOINT), " ".join(shape), shape, expected,
+                           not expected)
+                    )
+
+    for shape in field_flag_variants():
+        if field_flag_violation(shape):
+            key = ("gh_api_field_implicit_post", tuple(shape))
+            if key not in violations:
+                violations[key] = (
+                    "gh_api_is_write() invariant: `gh api %s %s` (field flag with no explicit "
+                    "method) should implicitly POST (write=True), but gh_api_is_write() said False"
+                    % (" ".join(GH_API_ENDPOINT), " ".join(shape))
+                )
+
+        for read_verb in REFERENCE_READ_VERBS:
+            if field_flag_explicit_read_violation(shape, read_verb):
+                key = ("gh_api_field_explicit_read", tuple(shape), read_verb)
+                if key not in violations:
+                    violations[key] = (
+                        "gh_api_is_write() invariant: `gh api %s %s -X %s` (field flag PLUS an "
+                        "explicit read method) should be write=False (explicit method wins), but "
+                        "gh_api_is_write() said True" % (" ".join(GH_API_ENDPOINT), " ".join(shape), read_verb)
                     )
 
     violations = list(violations.values())
