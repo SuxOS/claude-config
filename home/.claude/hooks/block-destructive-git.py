@@ -108,6 +108,28 @@ def _working_tree_dirty(cwd):
     return False
 
 
+# short letters among PUSH_VALUE_OPTS that git also lets bundle after a boolean flag in one
+# cluster (`-fo`, the same short-option bundling `git commit -am` uses) — only `-o`/`--push-option`
+# has a short form.
+PUSH_VALUE_CHARS = "o"
+
+
+def _split_bundled_push_value(tok):
+    """If `tok` is a short-flag cluster (not `--...`, not bare `-o`) with one of PUSH_VALUE_CHARS
+    in it, split at that character: chars before it are plain boolean flags (e.g. "f" in "-fo"),
+    chars after it are that flag's glued value (empty if the value is the following argv token
+    instead, as in `-fo <value>`). Returns None otherwise — a leading value char (`-o...`) is
+    already handled by the glued-`-o` check above this call, and bare `-o` by the separate-value
+    check below it."""
+    if not tok.startswith("-") or tok.startswith("--") or tok == "-o":
+        return None
+    body = tok[1:]
+    for idx, ch in enumerate(body):
+        if ch in PUSH_VALUE_CHARS:
+            return body[:idx], body[idx + 1:]
+    return None
+
+
 def _push_force_hit(rest, cwd):
     """True if this `git push` argv force-pushes and, from locally known remote state, is
     provably NOT a fast-forward (would discard commits on the remote we haven't merged in)."""
@@ -123,6 +145,19 @@ def _push_force_hit(rest, cwd):
             # so a byte in it that happens to be "f" (a very real shape: `-ofield=1`) must not reach
             # `_has_flag_char`'s per-character force-flag scan and false-trigger `forced`. Drop the
             # whole token rather than just excluding it from PUSH_VALUE_OPTS's separate-value skip.
+            i += 1
+            continue
+        bundled = _split_bundled_push_value(tok)
+        if bundled is not None:
+            # a boolean flag bundled ahead of `-o` in one cluster (`-fo`) (#253) — `leading` (e.g.
+            # "f") still needs to reach `_has_flag_char`'s scan, but `-o`'s value (glued in this
+            # token, or the next token if nothing follows `-o` in the cluster) must not leak into
+            # `positionals` uncounted.
+            leading, glued_value = bundled
+            if leading:
+                filtered.append("-" + leading)
+            if not glued_value and i + 1 < n:
+                i += 1  # -o's value comes from the next token — drop it too
             i += 1
             continue
         filtered.append(tok)
@@ -180,10 +215,37 @@ def _reset_hard_hit(rest, cwd):
     return bool(_working_tree_dirty(cwd))
 
 
+# `git clean` value-taking flags (git-clean(1)) — `-e`/`--exclude` is the only one with a short
+# glued form (`-e<pattern>`).
+CLEAN_VALUE_OPTS = {"-e", "--exclude"}
+
+
+def _strip_clean_value_opts(rest):
+    """`rest` with `-e<pattern>` (glued short form) and separate-token `-e <pattern>`/
+    `--exclude <pattern>` tokens dropped. `-e`'s glued value can contain any byte — a real shape
+    like `-en*.log` puts "n" right in the token — and a separate-token value can itself look like a
+    flag, so both must not reach `_has_flag_char`'s per-character scan below (#248), the same
+    value-vs-flag gap `_push_force_hit` closes for `-o` (#246). Used only for that scan — the real
+    dry-run preview further down still gets the untouched `rest` so the exclude pattern keeps
+    applying."""
+    filtered, i, n = [], 0, len(rest)
+    while i < n:
+        tok = rest[i]
+        if tok.startswith("-e") and tok != "-e" and not tok.startswith("--"):
+            i += 1
+            continue
+        filtered.append(tok)
+        if tok in CLEAN_VALUE_OPTS and i + 1 < n:
+            i += 1
+        i += 1
+    return filtered
+
+
 def _clean_force_hit(rest, cwd):
-    if _has_flag_char(rest, "n", ("--dry-run",)):
+    scannable = _strip_clean_value_opts(rest)
+    if _has_flag_char(scannable, "n", ("--dry-run",)):
         return False  # already a preview — nothing is actually deleted regardless of -f
-    if not _has_flag_char(rest, "f", ("--force",)):
+    if not _has_flag_char(scannable, "f", ("--force",)):
         return False
     dry_argv = []
     for tok in rest:

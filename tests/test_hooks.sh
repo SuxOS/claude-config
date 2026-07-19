@@ -374,6 +374,14 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 rm -f "$dgrepo/u.txt"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -f\"}}"                "allows clean -f when there is nothing untracked to remove (#230)"
 
+# #248: a glued -e<pattern> value byte that happens to be "n" must not be misread as -n/--dry-run
+echo untracked > "$dgrepo/u.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -f -en*.log\"}}"       "blocks clean -f -en*.log — the glued exclude pattern's 'n' byte must not spoof -n/--dry-run (#248)"
+rm -f "$dgrepo/u.txt"
+echo excluded > "$dgrepo/nope.log"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git clean -f -en*.log\"}}"       "allows clean -f -en*.log when the only untracked file matches the exclude pattern (#248)"
+rm -f "$dgrepo/nope.log"
+
 # git branch -D
 git -C "$dgrepo" branch merged-branch
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git branch -D merged-branch\"}}" "allows branch -D on a branch already merged into HEAD — -d would succeed too (#230)"
@@ -437,6 +445,7 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f -o ci.skip origin scratch\"}}" "blocks a force-push with a push-option value token after -f, before the refs (#237)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -o ci.skip -f origin scratch\"}}" "blocks a force-push with a push-option value token before -f (#237)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fo ci.skip origin scratch\"}}" "blocks a bundled -fo (force + push-option) push, its value must not leak into positionals (#253)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --force-with-lease origin scratch\"}}" "allows --force-with-lease — git's own safe form (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a non-force push (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch -ofield=1\"}}" "allows a non-force push with a glued push-option value containing an 'f' byte, not misread as -f (#246)"
