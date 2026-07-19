@@ -272,9 +272,17 @@ def pieces(command):
 # their own value and are skipped as ordinary flags by `git_subcommand()` below. `--exec-path` is
 # deliberately NOT here: real git's bare `--exec-path` (no `=`) takes NO value at all — it just
 # prints the current exec-path and exits immediately, never reaching a subcommand; only the glued
-# `--exec-path=<path>` form sets it, and that's self-contained in one token (#211).
+# `--exec-path=<path>` form sets it, and that's self-contained in one token (#211). `--attr-source`
+# was a live gap of the same shape (#208): its bare separate-token form (`git --attr-source main
+# checkout held`) IS consumed by real git (verified against git 2.54.0), unlike `--exec-path`'s.
+# `--super-prefix` (the option #208 originally named) and `--list-cmds` were checked too and are
+# NOT actually gaps: real git rejects both outright as "unknown option" when passed at the top
+# level (neither is a general-purpose CLI global option, `--super-prefix` is internal-only, per
+# `git --help`'s own usage banner and git-core(1) OPTIONS, verified live against git 2.54.0) — every
+# other value-taking option in that OPTIONS list (`-C`, `-c`, `--config-env`, `--git-dir`,
+# `--work-tree`, `--namespace`) was independently re-verified to already be in this set.
 GIT_GLOBAL_VALUE_OPTS = {
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--attr-source",
 }
 # Global opts that redirect git at a DIFFERENT repo than the hook-input cwd. A rail that consults
 # cwd's live git state (worktree list, status, merge-base, ...) can't safely follow these — it

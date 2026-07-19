@@ -294,8 +294,28 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 # #211: bare `--exec-path` (no `=`) takes no value in real git — it must not be treated as
 # consuming the next token, or the real `checkout`/target words shift out of the scan.
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --exec-path checkout held\"}}" "blocks a held checkout past a bare --exec-path, which takes no value (#211)"
+# #208: --attr-source's bare separate-token form IS consumed by real git (verified live, unlike
+# --exec-path's), so it must be walked past too or the literal value token gets misread as the
+# subcommand.
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --attr-source main checkout held\"}}" "blocks a held checkout past a separate-token --attr-source value (#208)"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
+
+# #241: `git checkout -`/`git switch -` (the `cd -`-style previous-branch shorthand) must resolve
+# to the actual previous branch (git's own `@{-1}`) and still be checked against held worktrees.
+prevrepo="$(mktemp -d)"
+prevheldwt="$(mktemp -d)"
+git -C "$prevrepo" init -q -b main
+git -C "$prevrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$prevrepo" checkout -q -b held
+git -C "$prevrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m heldcommit
+git -C "$prevrepo" checkout -q main
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$prevrepo\",\"tool_input\":{\"command\":\"git checkout -\"}}" "allows checkout - when the previous branch (@{-1}) isn't held elsewhere (#241)"
+git -C "$prevrepo" worktree add -q "$prevheldwt" held
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$prevrepo\",\"tool_input\":{\"command\":\"git checkout -\"}}" "blocks checkout - when the previous branch (@{-1}) is held by another worktree (#241)"
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$prevrepo\",\"tool_input\":{\"command\":\"git switch -\"}}"   "blocks switch - when the previous branch (@{-1}) is held by another worktree (#241)"
+git -C "$prevrepo" worktree remove --force "$prevheldwt" 2>/dev/null || true
+rm -rf "$prevrepo" "$prevheldwt"
 
 echo "== block-sleep-loop.py =="
 BSL="$HOOKS/block-sleep-loop.py"

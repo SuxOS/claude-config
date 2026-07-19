@@ -72,6 +72,10 @@ def checkout_target(argv):
             return None              # creating a branch, not switching into an existing one
         if tok in DETACH_OPTS:
             return None              # detached HEAD, holds no branch ref
+        if tok == "-":
+            positionals.append(tok)  # `checkout -`/`switch -`: the previous-branch shorthand (#241),
+            j += 1                   # not a flag — the bare "-" IS the (sole) positional target
+            continue
         if tok.startswith("-"):
             j += 1                   # some other flag (-f/-q/--track/…); value-taking forms are rare
             continue                 # and only cause a harmless miss, never a false block
@@ -113,6 +117,14 @@ def offending(command, cwd):
         target = checkout_target(argv)
         if not target:
             continue
+        if target == "-":
+            # `checkout -`/`switch -`, the `cd -`-style previous-branch shorthand (#241) — resolve
+            # it to the actual branch name via git's own `@{-1}` so `holding_worktree()` can match
+            # it by name, same as any other target.
+            target = git_out(["rev-parse", "--abbrev-ref", "@{-1}"], cwd)
+            if not target:
+                continue          # can't resolve — conservative allow
+            target = target.strip()
         held = holding_worktree(target, cwd)
         if held:
             return target, held
