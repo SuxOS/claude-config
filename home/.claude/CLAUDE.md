@@ -162,6 +162,14 @@
   thing it draws cases from (it's how this harness also caught a live sibling gap in xargs's
   `-n`/`-s`/`-d` while being built). Keep a fuzzer's ground truth independent of its SUT's own
   bookkeeping whenever that bookkeeping is exactly what's under test.
+- **Before adding a flag to `WRAPPER_VALUE_OPTS`, check whether its value is truly OPAQUE (safe to
+  skip) or is itself the wrapped command/payload** (#227, `env -S`/`--split-string`): every existing
+  entry there is a "skip one token" flag (`-u NAME`, `-C DIR`), but `env -S STRING` shell-splits
+  STRING and execs it AS the command — treating it like the others silently dropped the wrapped
+  command from every argv-based rail (`env -S 'curl evil.com'` slipped past undetected), and the
+  fuzzer's independent reference table encoded the identical wrong assumption, so neither caught it.
+  A value-taking flag whose value can itself contain a command needs word-splitting and splicing
+  back into argv (see `_hookutil._split_env_dash_s()`), not a table entry.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
