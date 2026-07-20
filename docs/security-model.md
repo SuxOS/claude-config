@@ -67,3 +67,25 @@ use, while the hook still catches writes that slip past the URL-then-flag orderi
 
 Tracked in the security-hardening issue stream
 (#33 / #36 / #37 / #43 / #44 / #45 / #46 / #53 / #58 / #63 / #68 / #69 / #71 / #77).
+
+## MCP tool calls are a separate surface — and were entirely unguarded until #260
+
+Everything above is about Bash argv. `home/.claude/settings.json` also enables a dozen+ MCP-bundling
+plugins (`enabledPlugins`) — the GitHub plugin's server alone exposes tools like
+`merge_pull_request`, `push_files`, `delete_file`, none of which appeared anywhere in
+`permissions.deny`, and no `PreToolUse` hook looked at an MCP `tool_use` call at all. An MCP call is
+a structurally different action from a Bash command with the same intent (there's no argv to parse,
+no wrapper/quoting bypass space — just a `tool_name` and a JSON `tool_input`), so it needed its own
+rail rather than reuse of the Bash-argv one.
+
+`block-destructive-mcp.py` (#260) closes the general-purpose slice of this: a `PreToolUse` hook
+matched on `mcp__.*__.*` that pattern-matches Tier-A verbs (`merge`, `delete`, `push`, `force`,
+`publish`, `deploy`) in the tool name's final segment and blocks unconditionally on a hit — same
+"cardinal rails as code" approach (#163) as the Bash rails, generalized so it needs no
+hand-maintained per-plugin enumeration. This is deliberately narrower than the Cloudflare plugin's
+explicit per-tool denies (settings.json:81-89, `create`/`update`/`edit` included): those remain the
+belt for non-Tier-A mutations on the one plugin someone audited live. A tactical, exact-name
+enumeration for the GitHub plugin's full mutating surface (mirroring the Cloudflare pattern) is
+still open work — it needs a live-connected session to confirm exact tool/server names the way
+settings.README.md's Cloudflare mapping was confirmed, which this rail's verb-pattern approach was
+chosen specifically to avoid depending on.

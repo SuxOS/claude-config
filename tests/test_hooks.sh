@@ -413,6 +413,10 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout -b brandnew\"}}" "allows creating a new branch (not a switch into a held one) (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held -- file.txt\"}}" "allows a path restore from a held branch (-- paths, not a switch) (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --detach held\"}}"  "allows a detach at a held branch (holds no branch ref) (#123)"
+# #259: --ignore-other-worktrees tells git itself to skip the collision check, so it would NOT
+# raise the fatal error this hook front-runs — blocking here would be a false positive.
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --ignore-other-worktrees held\"}}" "allows a held switch with --ignore-other-worktrees — git itself skips the check (#259)"
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout --ignore-other-worktrees held\"}}" "allows a held checkout with --ignore-other-worktrees — git itself skips the check (#259)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout nonexistent\"}}" "allows checkout of a branch no worktree holds (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"echo git checkout held\"}}"   "allows a non-git command that merely mentions checkout (#123)"
 # #193: a wrapper/prefix word ahead of `git` must not shift the command word out of argv[0].
@@ -576,6 +580,13 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 git -C "$dgrepo" checkout -q -- f.txt
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "allows checkout -- . <extra pathspec> on a clean tree — nothing to discard (#320)"
 
+# git switch --discard-changes: same discard-everything semantics as checkout -- ./restore .,
+# expressed as a flag rather than a pathspec (#259).
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git switch --discard-changes main\"}}"   "allows switch --discard-changes on a clean tree — nothing to discard (#259)"
+echo y >> "$dgrepo/f.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git switch --discard-changes main\"}}"   "blocks switch --discard-changes discarding an uncommitted tracked change (#259)"
+git -C "$dgrepo" checkout -q -- f.txt
+
 # git push -f / --force: needs a real remote to reason about fast-forward-ness.
 dgremote="$(mktemp -d)"
 git -C "$dgremote" init -q --bare -b main
@@ -710,6 +721,22 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 rm -rf "$dgghstub"
 
 rm -rf "$dgrepo" "$dgremote"
+
+echo "== block-destructive-mcp.py (#260) =="
+BDM="$HOOKS/block-destructive-mcp.py"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__merge_pull_request","tool_input":{}}'    "blocks a namespaced GitHub-plugin merge tool (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__delete_file","tool_input":{}}'            "blocks a namespaced GitHub-plugin delete tool (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__push_files","tool_input":{}}'             "blocks a namespaced GitHub-plugin push tool (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_cloudflare_cloudflare-bindings__r2_bucket_delete","tool_input":{}}' "blocks a namespaced Cloudflare delete tool by verb, independent of the exact-name deny (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__memory__force_reset","tool_input":{}}'                          "blocks a non-plugin (bare server) MCP tool matching a Tier-A verb (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__some_server__deploy-service","tool_input":{}}'                  "blocks a hyphen-separated Tier-A verb token (#260)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__create_repository","tool_input":{}}'      "allows a create tool — not a Tier-A verb (#260)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__list_pull_requests","tool_input":{}}'     "allows a read/list tool (#260)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__get_file_contents","tool_input":{}}'      "allows a get tool (#260)"
+assert_exit 0 "$BDM" '{"tool_name":"Bash","tool_input":{"command":"git push -f"}}'                       "ignores a non-mcp tool_name (#260)"
+assert_exit 0 "$BDM" 'not-json'                                                                          "fails open on malformed JSON (#260)"
+assert_exit 0 "$BDM" '[1,2,3]'                                                                           "fails open on valid-but-non-object top-level JSON (#260)"
+assert_exit 0 "$BDM" '{"tool_name":123,"tool_input":{}}'                                                 "fails open on a non-string tool_name (#260)"
 
 echo "== audit-git-consequences.py (#236 PostToolUse consequence audit) =="
 AGC="$HOOKS/audit-git-consequences.py"
