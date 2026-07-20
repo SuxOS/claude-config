@@ -134,6 +134,16 @@
   reusing for any new git-consulting rail: resolve every ref/state check through one of these, and
   treat any `None`/unresolved result as "allow" — never "block" — so an unreadable repo or a git
   subprocess quirk degrades to a missed detection, never a false block.
+- **A `git_returncode()` result with exactly two meaningful codes (e.g. `merge-base
+  --is-ancestor`'s 0/1) must be tested for BOTH explicitly, not just `== 0`** (#339/#343): treating
+  "not 0" as "definitely the other value" silently folds `None` and any other exit code (128 on a
+  pruned/invalid object, a timeout, ...) into whatever branch handles the non-zero case instead of
+  "unknown, skip" — same trap applies to a `git_out()`-backed helper, which collapses any failure
+  to `None`, so a caller doing `bool(result)` instead of comparing against the specific expected
+  value conflates "ran fine, found nothing" with "couldn't run." To build a real (not mocked)
+  fixture for this class of test, `git reflog expire --expire=now --all && git gc -q --prune=now`
+  on an already-unreachable commit turns its sha into a genuinely invalid git object —
+  `merge-base`/`branch --contains` then fail with real nonzero exits instead of a synthetic error.
 - **Extending `WRAPPERS` in `strip_prefixes()` can silently create a new false positive** (#179):
   a wrapper-shaped word may have an inspection-only flag that reports on the next word instead of
   executing it (`command -v curl` / `-V` prints curl's path, it never runs it). Blindly stripping

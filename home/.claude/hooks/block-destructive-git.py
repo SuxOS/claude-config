@@ -71,6 +71,7 @@ would consult the wrong repo, #154), same as the checkout rail.
 Fail-open on any error — a hook bug must never wedge the session (repo convention). Exit 2 =
 block; exit 0 = allow.
 """
+import os
 import subprocess
 import sys
 from urllib.parse import quote
@@ -345,20 +346,64 @@ def _branch_delete_hit(rest, cwd):
     return False
 
 
-def _checkout_discard_target(rest):
+def _pathspec_from_file_hit(rest, cwd):
+    """`--pathspec-from-file=<file>`/`--pathspec-from-file <file>` (real flags on both
+    git-checkout(1) and git-restore(1)) supply the discard pathspec via a file instead of argv —
+    `git checkout --pathspec-from-file=discard.txt` with a bare '.' inside the file discards the
+    whole tree with zero pathspec tokens for the argv scan to see (#347). Only recognized before a
+    `--`: real git stops option parsing there (live-verified — after `--` the same token is read
+    as a literal, unmatched pathspec and git errors out with nothing discarded), so scanning past
+    it would false-block a command git itself rejects. `<file>` is `-` for stdin — not read here
+    (no stdin content available to the hook, and nothing safe to read it from) — same conservative
+    fail-open as any repo state this hook can't resolve: unreadable or stdin reads as "no match",
+    never a block. `--pathspec-file-nul` switches the element separator from LF to NUL, same as
+    real git."""
+    file_arg, nul_separated = None, False
+    for i, tok in enumerate(rest):
+        if tok == "--":
+            break
+        if tok == "--pathspec-file-nul":
+            nul_separated = True
+        elif tok.startswith("--pathspec-from-file="):
+            file_arg = tok.split("=", 1)[1]
+        elif tok == "--pathspec-from-file" and i + 1 < len(rest):
+            file_arg = rest[i + 1]
+    if not file_arg or file_arg == "-":
+        return None
+    path = file_arg if os.path.isabs(file_arg) else os.path.join(cwd, file_arg)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError:
+        return None
+    entries = content.split("\0") if nul_separated else content.splitlines()
+    return "." if any(entry.strip() == "." for entry in entries) else None
+
+
+def _checkout_discard_target(rest, cwd):
     """"." (bare, or after a `--`) means discard-everything. A pre-`--` tree-ish (`HEAD`, a branch,
     a tag) is the checkout source, not a path — it must not disqualify the match, so it's tracked
     separately from the post-`--`/no-`--` positionals that name what gets discarded."""
     seen_dashdash, positionals, pre_dashdash = False, [], []
-    for tok in rest:
+    i, n = 0, len(rest)
+    while i < n:
+        tok = rest[i]
         if tok == "--":
             seen_dashdash = True
+            i += 1
             continue
         if not seen_dashdash and tok in CHECKOUT_SKIP_OPTS:
             return None  # branch creation / detach / interactive — not a path-restore at all
+        if not seen_dashdash and tok == "--pathspec-from-file" and i + 1 < n:
+            i += 2  # skip the flag and its separate-token file argument (#347)
+            continue
         if not seen_dashdash and tok.startswith("-"):
+            i += 1
             continue
         (positionals if seen_dashdash else pre_dashdash).append(tok)
+        i += 1
+    if _pathspec_from_file_hit(rest, cwd) == ".":
+        return "."
     if seen_dashdash:
         # "." is unioned with any other pathspec, not intersected — `. README.md` still discards
         # everything `.` alone would, so "." anywhere in the list is sufficient (#320)
@@ -378,7 +423,7 @@ def _switch_discard_target(rest):
     return "." if "--discard-changes" in rest else None
 
 
-def _restore_discard_target(rest):
+def _restore_discard_target(rest, cwd):
     """`-S`/`--staged` (boolean, index-only) is NOT the same flag as `-s`/`--source=<tree>`
     (takes a value picking the restore source) — real git distinguishes the two despite the
     near-identical spelling (#240). `-s`/`--source` consumes a following token as its value
@@ -396,6 +441,8 @@ def _restore_discard_target(rest):
         elif tok in ("-s", "--source"):
             if i + 1 < n:
                 i += 1  # skip the separate-token source tree-ish value
+        elif tok == "--pathspec-from-file" and i + 1 < n:
+            i += 1  # skip the separate-token file argument (#347)
         elif tok.startswith("--source=") or tok == "--" or tok.startswith("-"):
             pass
         else:
@@ -403,6 +450,8 @@ def _restore_discard_target(rest):
         i += 1
     if staged and not worktree:
         return None  # index-only — working tree files are untouched, much less destructive
+    if _pathspec_from_file_hit(rest, cwd) == ".":
+        return "."
     # "." is unioned with any other pathspec, not intersected — "." anywhere in the list already
     # discards everything, same as `_checkout_discard_target`'s post-`--` case (#320)
     return "." if "." in positionals else None
@@ -410,11 +459,11 @@ def _restore_discard_target(rest):
 
 def _discard_hit(subcommand, rest, cwd):
     if subcommand == "checkout":
-        target = _checkout_discard_target(rest)
+        target = _checkout_discard_target(rest, cwd)
     elif subcommand == "switch":
         target = _switch_discard_target(rest)
     else:
-        target = _restore_discard_target(rest)
+        target = _restore_discard_target(rest, cwd)
     if target is None:
         return False
     return bool(_working_tree_dirty(cwd))

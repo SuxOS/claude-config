@@ -580,6 +580,25 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 git -C "$dgrepo" checkout -q -- f.txt
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "allows checkout -- . <extra pathspec> on a clean tree — nothing to discard (#320)"
 
+# #347: --pathspec-from-file supplies the discard pathspec via a file instead of argv — a bare
+# '.' inside the referenced file must be read the same conservative, fail-open way
+# _working_tree_dirty() already shells out to git. Live-verified: git only honors this flag
+# BEFORE a `--` (after `--` it's a literal, unmatched pathspec and git errors with nothing
+# discarded), so these cases omit `--`.
+printf '.\n' > "$dgrepo/discard.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=discard.txt\"}}"   "allows checkout --pathspec-from-file=<file containing .> on a clean tree — nothing to discard (#347)"
+echo y >> "$dgrepo/f.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=discard.txt\"}}"   "blocks checkout --pathspec-from-file=<file containing .> discarding a tracked change (#347)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file discard.txt\"}}"    "blocks the separate-token --pathspec-from-file <file> form too (#347)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore --pathspec-from-file=discard.txt\"}}"    "blocks restore --pathspec-from-file=<file containing .> discarding a tracked change (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- --pathspec-from-file=discard.txt\"}}" "allows the post-'--' form — git itself errors there and discards nothing (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=-\"}}"              "allows --pathspec-from-file=- (stdin) — not read by the hook, fails open (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=does-not-exist.txt\"}}" "allows an unreadable --pathspec-from-file target — fails open (#347)"
+printf 'f.txt\n' > "$dgrepo/single.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=single.txt\"}}"     "allows --pathspec-from-file naming one file, not a whole-tree discard (#347)"
+git -C "$dgrepo" checkout -q -- f.txt
+rm -f "$dgrepo/discard.txt" "$dgrepo/single.txt"
+
 # git switch --discard-changes: same discard-everything semantics as checkout -- ./restore .,
 # expressed as a flag rather than a pathspec (#259).
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git switch --discard-changes main\"}}"   "allows switch --discard-changes on a clean tree — nothing to discard (#259)"
@@ -768,6 +787,29 @@ git -C "$agcrepo" merge -q feature2
 assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git merge feature2\"}}" "baseline call after merging feature2 into main (#236)"
 git -C "$agcrepo" branch -d feature2
 assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -d feature2\"}}" "deleting a fully-merged branch is not flagged — its tip is still reachable via main (#236)"
+
+# #339: a `merge-base --is-ancestor` subprocess failure (e.g. a pruned/invalid old_sha object) must
+# degrade to "couldn't tell" (no alarm), not fall through to the reachability check as if it were
+# a definitively-non-fast-forward move.
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "prune-target"
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"echo hi\"}}" "baseline call recording the commit that will be pruned (#339 setup)"
+git -C "$agcrepo" reset -q --hard HEAD~1
+git -C "$agcrepo" reflog expire --expire=now --all
+git -C "$agcrepo" gc -q --prune=now
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git reset --hard HEAD~1\"}}" "a merge-base failure on a pruned/invalid object degrades to unknown, not a false alarm (#339)"
+
+# #343: a `git branch -a --contains` subprocess failure in _reachable() (same pruned-object cause)
+# must degrade to "couldn't tell" (no alarm) instead of being indistinguishable from "genuinely
+# not reachable".
+git -C "$agcrepo" checkout -q -b prune-branch
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "prune-branch work"
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call recording the branch that will be deleted and pruned (#343 setup)"
+git -C "$agcrepo" branch -D prune-branch
+git -C "$agcrepo" reflog expire --expire=now --all
+git -C "$agcrepo" gc -q --prune=now
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D prune-branch\"}}" "a _reachable() failure on a pruned/invalid object degrades to unknown, not a false alarm (#343)"
+
 rm -rf "$agcrepo"
 
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
