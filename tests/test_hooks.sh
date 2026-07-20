@@ -565,7 +565,12 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 # discard-everything exact-match check.
 echo y >> "$dgrepo/f.txt"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"(git checkout -- .)\"}}"          "blocks checkout -- . wrapped in a bare subshell — trailing ')' must not corrupt the '.' match (#290)"
+# #320: "." unions with any other pathspec rather than intersecting, so an extra pathspec after
+# "." still discards the whole tree — it must not escape the exact-match ["."] check.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "blocks checkout -- . <extra pathspec> — '.' still discards everything (#320)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore . b.txt\"}}"           "blocks restore . <extra pathspec> — '.' still discards everything (#320)"
 git -C "$dgrepo" checkout -q -- f.txt
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "allows checkout -- . <extra pathspec> on a clean tree — nothing to discard (#320)"
 
 # git push -f / --force: needs a real remote to reason about fast-forward-ness.
 dgremote="$(mktemp -d)"
@@ -589,6 +594,10 @@ git -C "$dgrepo" add a.txt
 git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "divergent commit"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch\"}}"  "blocks a force-push that would discard commits on the remote (#230)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin +scratch:refs/heads/scratch\"}}" "blocks a force-push whose refspec destination is fully-qualified (refs/heads/...), not just a short name (#261)"
+# #319: a bare `HEAD` refspec (no colon) resolves to the current branch's real name — must not be
+# read as a literal branch called "HEAD", which would check refs/remotes/origin/HEAD (the remote's
+# default-branch symref, unset here) instead of the actual diverged destination.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD --force\"}}" "blocks a force-push via a bare 'origin HEAD' refspec that would discard remote commits — HEAD resolves to the real destination branch (#319)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -uf origin scratch\"}}" "blocks a bundled -uf (set-upstream+force) push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f -o ci.skip origin scratch\"}}" "blocks a force-push with a push-option value token after -f, before the refs (#237)"
@@ -680,6 +689,8 @@ chmod +x "$dgghstub/gh"
 dgoldpath="$PATH"
 PATH="$dgghstub:$PATH"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"        "blocks a direct push to a branch GitHub reports as protected (#252)"
+git -C "$dgrepo" checkout -q main
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD\"}}"        "blocks a bare 'git push origin HEAD' (no colon) push whose destination resolves to the protected branch's real name, not a literal branch called HEAD (#319)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a push to a branch GitHub does NOT report as protected (#252)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD:main\"}}"   "blocks a push whose refspec destination resolves to the protected branch name (#252)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin :main\"}}"       "allows a delete-refspec push — no content pushed, out of scope (#252)"
