@@ -90,9 +90,13 @@ def _save_state(path, snapshot):
 
 def _reachable(sha, cwd):
     """True if `sha` is still an ancestor of some current branch/remote-tracking ref — i.e. still
-    kept alive by a live ref, not just sitting unreferenced until git gc reaps it."""
+    kept alive by a live ref, not just sitting unreferenced until git gc reaps it. None (not
+    False) when the git subprocess itself failed — "couldn't tell" must never read as "discarded"
+    (#343)."""
     out = git_out(["branch", "-a", "--contains", sha], cwd)
-    return bool(out and out.strip())
+    if out is None:
+        return None
+    return bool(out.strip())
 
 
 def _consequences(prev, current, cwd):
@@ -102,15 +106,18 @@ def _consequences(prev, current, cwd):
         if new_sha == old_sha:
             continue
         if new_sha is None:
-            if not _reachable(old_sha, cwd):
+            if _reachable(old_sha, cwd) is False:
                 messages.append(
                     f"'{ref}' was removed and its tip commit {old_sha[:12]} is no longer "
                     "reachable from any branch — those commits look discarded"
                 )
             continue
-        if git_returncode(["merge-base", "--is-ancestor", old_sha, new_sha], cwd) == 0:
-            continue  # fast-forward — nothing lost
-        if not _reachable(old_sha, cwd):
+        # 0 = fast-forward (nothing lost). 1 = definitively not an ancestor. Anything else
+        # (None from a failed subprocess, or a non-0/1 git exit like a pruned/missing object)
+        # means "couldn't tell" and must not fall through to the alarm below (#339).
+        if git_returncode(["merge-base", "--is-ancestor", old_sha, new_sha], cwd) != 1:
+            continue
+        if _reachable(old_sha, cwd) is False:
             messages.append(
                 f"'{ref}' moved from {old_sha[:12]} to {new_sha[:12]} in a way that is not a "
                 f"fast-forward, and {old_sha[:12]} is no longer reachable from any branch — "
