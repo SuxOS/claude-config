@@ -181,6 +181,15 @@
   full value-taking surface AND the two genuinely ambiguous boolean-or-value flags (`--browser`/
   `--color`) that a docs skim could easily mis-classify either way. Prefer this over a doc-only
   audit whenever the tool has one; it's exhaustive and exact where docs are prose.
+- **A predicate that recognizes an argv shape via exact list/token equality should first ask
+  whether git's real grammar is a union/superset relation, not an intersection** (#319, #320, the
+  same root mistake filed as two separate issues): `_push_dest_branch`/`_push_force_hit` read a
+  bare `HEAD` refspec (no colon) as a literal branch named "HEAD" instead of resolving it, and
+  `_checkout_discard_target`/`_restore_discard_target` required the pathspec list to equal exactly
+  `["."]`, missing that `.` unions in ANY other pathspec (`git checkout -- . extra.txt` still
+  discards everything). When auditing an exact-equality check (`x == [...]`, a literal ref/token
+  compare) against a git argv shape, check whether "exactly this list" should really be "this
+  token is present" or "this value resolves to X" before trusting the existing check.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.

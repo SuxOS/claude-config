@@ -126,6 +126,14 @@ def _working_tree_dirty(cwd):
     return False
 
 
+def _current_branch(cwd):
+    """Return the current branch name, or None for a detached HEAD or an unresolvable repo state."""
+    branch = git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+    if not branch or branch.strip() == "HEAD":
+        return None
+    return branch.strip()
+
+
 def _push_force_hit(rest, cwd):
     """True if this `git push` argv force-pushes and, from locally known remote state, is
     provably NOT a fast-forward (would discard commits on the remote we haven't merged in)."""
@@ -173,6 +181,13 @@ def _push_force_hit(rest, cwd):
         dst = dst if ":" in refspec else src
         if not src or not dst:
             return False  # a delete-refspec (":branch" / "branch:") — out of scope
+        if ":" not in refspec and dst == "HEAD":
+            # bare `HEAD` (no colon) resolves to the current branch's actual name, not a literal
+            # branch called "HEAD" — same resolution the 1-positional implicit-push case uses (#319)
+            branch = _current_branch(cwd)
+            if branch is None:
+                return False  # detached HEAD, or can't tell — conservative allow
+            dst = branch
         # a refspec destination may be fully-qualified (`git push origin +feature:refs/heads/main`),
         # not just a short branch name — normalize the same way `_push_dest_branch` does, and fail
         # open on any other `refs/...` namespace (tags, notes, ...) rather than build a bogus
@@ -185,10 +200,10 @@ def _push_force_hit(rest, cwd):
             return False  # non-branch fully-qualified ref — out of scope, conservative allow
         push_ref, src_ref = f"refs/remotes/{remote}/{dst}", src
     elif len(positionals) == 1:
-        branch = git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
-        if not branch or branch.strip() == "HEAD":
+        branch = _current_branch(cwd)
+        if branch is None:
             return False  # no branch (detached) or can't tell — conservative allow
-        push_ref, src_ref = f"refs/remotes/{positionals[0]}/{branch.strip()}", "HEAD"
+        push_ref, src_ref = f"refs/remotes/{positionals[0]}/{branch}", "HEAD"
     else:
         push_ref, src_ref = "@{push}", "HEAD"
 
@@ -240,13 +255,13 @@ def _push_dest_branch(rest, cwd):
         dst = dst if ":" in refspec else src
         if not src or not dst:
             return None  # a delete-refspec (":branch" / "branch:") — no content pushed, out of scope
+        if ":" not in refspec and dst == "HEAD":
+            # bare `HEAD` (no colon) resolves to the current branch's actual name (#319)
+            return _current_branch(cwd)
         prefix = "refs/heads/"
         return dst[len(prefix):] if dst.startswith(prefix) else dst
 
-    branch = git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
-    if not branch or branch.strip() == "HEAD":
-        return None  # detached HEAD, or can't tell — conservative allow
-    return branch.strip()
+    return _current_branch(cwd)
 
 
 def _branch_protected(branch, cwd):
@@ -341,11 +356,13 @@ def _checkout_discard_target(rest):
             continue
         (positionals if seen_dashdash else pre_dashdash).append(tok)
     if seen_dashdash:
-        return "." if positionals == ["."] else None
-    if pre_dashdash == ["."]:
-        return "."
-    if len(pre_dashdash) == 2 and pre_dashdash[1] == ".":
-        return "."  # single leading tree-ish (e.g. `HEAD`) followed by the discard-everything "."
+        # "." is unioned with any other pathspec, not intersected — `. README.md` still discards
+        # everything `.` alone would, so "." anywhere in the list is sufficient (#320)
+        return "." if "." in positionals else None
+    if pre_dashdash[:1] == ["."]:
+        return "."  # bare "." (optionally followed by more pathspecs) — already discards everything
+    if len(pre_dashdash) >= 2 and "." in pre_dashdash[1:]:
+        return "."  # single leading tree-ish (e.g. `HEAD`) followed by "." among the pathspecs
     return None
 
 
@@ -374,7 +391,9 @@ def _restore_discard_target(rest):
         i += 1
     if staged and not worktree:
         return None  # index-only — working tree files are untouched, much less destructive
-    return "." if positionals == ["."] else None
+    # "." is unioned with any other pathspec, not intersected — "." anywhere in the list already
+    # discards everything, same as `_checkout_discard_target`'s post-`--` case (#320)
+    return "." if "." in positionals else None
 
 
 def _discard_hit(subcommand, rest, cwd):
