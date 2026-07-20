@@ -79,6 +79,19 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   `gh`/auth, or any API error (#252). Registered with `pretooluse-bash.py` via its
   `check(command, cwd)`; fails open on any error.
 
+- **`audit-git-consequences.py`** — PostToolUse (matcher `Bash`). A complementary, last-resort net
+  behind the PreToolUse argv rails above (#236): instead of recognizing a destructive git COMMAND
+  before it runs, it snapshots the cwd's branch/remote-tracking ref tips (via `git_out()`/
+  `git_returncode()`) after every Bash call and diffs that against the snapshot recorded after the
+  PREVIOUS Bash call in the same repo. A ref that disappeared, or moved to somewhere its old tip
+  isn't reachable from any current ref, means those commits were just discarded — regardless of how
+  the command that did it was spelled, immune by construction to the bundling/wrapper/substitution
+  bypass classes the argv rails keep individually patching. PostToolUse can't undo a completed tool
+  call, so a hit here only prints a loud stderr warning (exit 2) for the model/user to react to, not
+  a block. State is a small per-repo JSON snapshot under `tempfile.gettempdir()`, keyed by a hash of
+  the repo's real toplevel path (so parallel worktrees never share a baseline); fails open on
+  anything unreadable/unwritable/non-repo. Wired in settings.json under `hooks.PostToolUse`.
+
 ## Available but DISABLED by default
 
 - **`verify-completion-claim.py`** — Stop hook. The "no completion claim without fresh evidence"

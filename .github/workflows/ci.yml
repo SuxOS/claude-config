@@ -207,3 +207,24 @@ jobs:
             exit 1
           fi
           echo "install.sh smoke test passed"
+
+      # #334: a missing settings.json source must hard-fail (exit 1) the same way every other
+      # tracked item does via missing=() — never a silent exit-0 no-op. Runs against a scratch
+      # copy of the repo so this doesn't disturb the checkout the step above already verified.
+      - name: install.sh hard-fails when settings.json's source is missing
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          scratch_repo="$(mktemp -d)"
+          cp -r . "$scratch_repo"
+          rm -f "$scratch_repo/home/.claude/settings.json"
+          scratch_home="$(mktemp -d)"
+          if out=$(HOME="$scratch_home" bash "$scratch_repo/install.sh" 2>&1); then
+            echo "install.sh exited 0 with a missing settings.json source — should hard-fail (#334)" >&2
+            echo "$out" >&2
+            exit 1
+          else
+            echo "$out" | grep -q "settings.json" || { echo "expected the error to mention settings.json" >&2; echo "$out" >&2; exit 1; }
+          fi
+          [ -e "$scratch_home/.claude/settings.json" ] && { echo "settings.json should not have been created" >&2; exit 1; }
+          echo "install.sh missing-settings.json hard-fail test passed (#334)"
