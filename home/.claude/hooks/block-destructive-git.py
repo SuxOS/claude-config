@@ -181,9 +181,11 @@ def _push_force_hit(rest, cwd):
         dst = dst if ":" in refspec else src
         if not src or not dst:
             return False  # a delete-refspec (":branch" / "branch:") — out of scope
-        if ":" not in refspec and dst == "HEAD":
+        if ":" not in refspec and dst in ("HEAD", "@"):
             # bare `HEAD` (no colon) resolves to the current branch's actual name, not a literal
-            # branch called "HEAD" — same resolution the 1-positional implicit-push case uses (#319)
+            # branch called "HEAD" — same resolution the 1-positional implicit-push case uses
+            # (#319); `@` is git's documented synonym for `HEAD` in revision/refspec contexts
+            # (git-rev-parse(1)) and hits the exact same literal-branch-name bug (#326)
             branch = _current_branch(cwd)
             if branch is None:
                 return False  # detached HEAD, or can't tell — conservative allow
@@ -255,8 +257,9 @@ def _push_dest_branch(rest, cwd):
         dst = dst if ":" in refspec else src
         if not src or not dst:
             return None  # a delete-refspec (":branch" / "branch:") — no content pushed, out of scope
-        if ":" not in refspec and dst == "HEAD":
-            # bare `HEAD` (no colon) resolves to the current branch's actual name (#319)
+        if ":" not in refspec and dst in ("HEAD", "@"):
+            # bare `HEAD` (no colon) resolves to the current branch's actual name (#319); `@` is
+            # git's documented `HEAD` synonym and hits the same bug (#326)
             return _current_branch(cwd)
         prefix = "refs/heads/"
         return dst[len(prefix):] if dst.startswith(prefix) else dst

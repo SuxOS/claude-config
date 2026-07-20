@@ -90,4 +90,10 @@ elif [ -e "$settings_src" ]; then
   echo
   echo "copied: $settings_dest (from reference $settings_src)"
   echo "settings.json is copied, not symlinked — Claude Code rewrites it in place."
+else
+  # Same hard-failure invariant as the missing=() check above: a missing source must never
+  # be a silent no-op, even for settings.json's separately-handled copy-not-symlink path.
+  printf 'ERROR: source files not found, nothing linked for: %s\n' "settings.json" >&2
+  echo "Repo checkout looks incomplete — re-check out $SRC and re-run." >&2
+  exit 1
 fi

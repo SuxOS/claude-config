@@ -602,6 +602,9 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 # read as a literal branch called "HEAD", which would check refs/remotes/origin/HEAD (the remote's
 # default-branch symref, unset here) instead of the actual diverged destination.
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD --force\"}}" "blocks a force-push via a bare 'origin HEAD' refspec that would discard remote commits — HEAD resolves to the real destination branch (#319)"
+# #326: `@` is git's documented synonym for `HEAD` in revision/refspec contexts and hits the same
+# literal-branch-name bug #319 fixed for `HEAD`.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin @ --force\"}}" "blocks a force-push via a bare 'origin @' refspec that would discard remote commits — '@' resolves to the real destination branch, same as HEAD (#326)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -uf origin scratch\"}}" "blocks a bundled -uf (set-upstream+force) push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f -o ci.skip origin scratch\"}}" "blocks a force-push with a push-option value token after -f, before the refs (#237)"
@@ -696,6 +699,7 @@ PATH="$dgghstub:$PATH"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"        "blocks a direct push to a branch GitHub reports as protected (#252)"
 git -C "$dgrepo" checkout -q main
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD\"}}"        "blocks a bare 'git push origin HEAD' (no colon) push whose destination resolves to the protected branch's real name, not a literal branch called HEAD (#319)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin @\"}}"           "blocks a bare 'git push origin @' (no colon) push whose destination resolves to the protected branch's real name, not a literal branch called '@' (#326)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a push to a branch GitHub does NOT report as protected (#252)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD:main\"}}"   "blocks a push whose refspec destination resolves to the protected branch name (#252)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin :main\"}}"       "allows a delete-refspec push — no content pushed, out of scope (#252)"
@@ -706,6 +710,38 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 rm -rf "$dgghstub"
 
 rm -rf "$dgrepo" "$dgremote"
+
+echo "== audit-git-consequences.py (#236 PostToolUse consequence audit) =="
+AGC="$HOOKS/audit-git-consequences.py"
+assert_exit 0 "$AGC" 'not-json'                                                                    "fails open on malformed JSON (#236)"
+assert_exit 0 "$AGC" '[1,2,3]'                                                                     "fails open on valid-but-non-object top-level JSON (#236)"
+assert_exit 0 "$AGC" '{"tool_name":"Edit","tool_input":{}}'                                        "ignores a non-Bash tool_name (#236)"
+assert_exit 0 "$AGC" '{"tool_name":"Bash","cwd":"/nonexistent-not-a-repo","tool_input":{"command":"echo hi"}}' "fails open on a cwd that is not a git repo (#236)"
+
+agcrepo="$(mktemp -d)"
+git -C "$agcrepo" init -q -b main
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"echo hi\"}}" "first call seen for a repo has no baseline yet — always allow, just records the snapshot (#236)"
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m second
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git commit --allow-empty -m second\"}}" "a fast-forward commit since the last snapshot is not flagged (#236)"
+git -C "$agcrepo" reset -q --hard HEAD~1
+assert_exit 2 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git reset --hard HEAD~1\"}}" "a hard reset that discards a commit unreachable from any other ref is flagged (#236)"
+
+git -C "$agcrepo" checkout -q -b feature
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "feature work"
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call after creating a new unmerged branch — records it, nothing destructive yet (#236)"
+git -C "$agcrepo" branch -D feature
+assert_exit 2 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D feature\"}}" "deleting a branch whose tip commit is unreachable from any other ref is flagged (#236)"
+
+git -C "$agcrepo" checkout -q -b feature2
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "feature2 work"
+git -C "$agcrepo" checkout -q main
+git -C "$agcrepo" merge -q feature2
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git merge feature2\"}}" "baseline call after merging feature2 into main (#236)"
+git -C "$agcrepo" branch -d feature2
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -d feature2\"}}" "deleting a fully-merged branch is not flagged — its tip is still reachable via main (#236)"
+rm -rf "$agcrepo"
 
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
 PTB="$HOOKS/pretooluse-bash.py"

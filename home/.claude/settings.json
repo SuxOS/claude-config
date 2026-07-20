@@ -176,6 +176,14 @@
           { "type": "command", "command": "$HOME/.claude/hooks/pretooluse-bash.py" }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/audit-git-consequences.py" }
+        ]
+      }
     ]
   }
 }
