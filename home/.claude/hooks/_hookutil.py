@@ -190,10 +190,10 @@ def _split_pieces(command):
     glued to a word (`main)` -> `main`, `)`) — is dropped rather than appended to a piece's argv
     (#290): unlike `&&`/`;`/etc, `OPERATOR_RE` doesn't treat them as piece separators, so an
     unmatched one (any bare subshell, `(cd dir && git push -f origin main)`) previously rode along
-    into the argv positional callers count (`_push_force_hit`'s `len(positionals) > 2` and similar
-    gates in block-destructive-git.py/block-checkout-held-branch.py), silently changing the count
-    and skipping the confirmation. `((`/`))` (arithmetic) tokenize as their own two-char token, not
-    a bare `(`/`)`, so arithmetic expressions are untouched by this filter.
+    into the argv positional counts callers gate on (the push predicates in
+    block-destructive-git.py and similar gates in block-checkout-held-branch.py), silently
+    changing the count and skipping the confirmation. `((`/`))` (arithmetic) tokenize as their own
+    two-char token, not a bare `(`/`)`, so arithmetic expressions are untouched by this filter.
     """
     for line in command.split("\n"):
         if not line.strip():
