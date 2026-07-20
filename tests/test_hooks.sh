@@ -580,6 +580,25 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 git -C "$dgrepo" checkout -q -- f.txt
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "allows checkout -- . <extra pathspec> on a clean tree — nothing to discard (#320)"
 
+# #347: --pathspec-from-file supplies the discard pathspec via a file instead of argv — a bare
+# '.' inside the referenced file must be read the same conservative, fail-open way
+# _working_tree_dirty() already shells out to git. Live-verified: git only honors this flag
+# BEFORE a `--` (after `--` it's a literal, unmatched pathspec and git errors with nothing
+# discarded), so these cases omit `--`.
+printf '.\n' > "$dgrepo/discard.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=discard.txt\"}}"   "allows checkout --pathspec-from-file=<file containing .> on a clean tree — nothing to discard (#347)"
+echo y >> "$dgrepo/f.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=discard.txt\"}}"   "blocks checkout --pathspec-from-file=<file containing .> discarding a tracked change (#347)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file discard.txt\"}}"    "blocks the separate-token --pathspec-from-file <file> form too (#347)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore --pathspec-from-file=discard.txt\"}}"    "blocks restore --pathspec-from-file=<file containing .> discarding a tracked change (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- --pathspec-from-file=discard.txt\"}}" "allows the post-'--' form — git itself errors there and discards nothing (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=-\"}}"              "allows --pathspec-from-file=- (stdin) — not read by the hook, fails open (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=does-not-exist.txt\"}}" "allows an unreadable --pathspec-from-file target — fails open (#347)"
+printf 'f.txt\n' > "$dgrepo/single.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=single.txt\"}}"     "allows --pathspec-from-file naming one file, not a whole-tree discard (#347)"
+git -C "$dgrepo" checkout -q -- f.txt
+rm -f "$dgrepo/discard.txt" "$dgrepo/single.txt"
+
 # git switch --discard-changes: same discard-everything semantics as checkout -- ./restore .,
 # expressed as a flag rather than a pathspec (#259).
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git switch --discard-changes main\"}}"   "allows switch --discard-changes on a clean tree — nothing to discard (#259)"
