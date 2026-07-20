@@ -190,6 +190,12 @@
   discards everything). When auditing an exact-equality check (`x == [...]`, a literal ref/token
   compare) against a git argv shape, check whether "exactly this list" should really be "this
   token is present" or "this value resolves to X" before trusting the existing check.
+- **This builder sandbox has outbound network access to public registries** (#322/#303): a `curl`
+  to Docker Hub's or the npm registry's public API succeeds. Issue #303's own text assumed
+  otherwise ("no network access to confirm a specific version tag exists") and left a `:latest`
+  pin for "a human or a future build with live CI feedback" to fix — that assumption was wrong,
+  not a real sandbox constraint. Before deferring a lookup (a digest, a release version, an
+  upstream API shape) as unverifiable, try the live request first.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
