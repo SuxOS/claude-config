@@ -11,8 +11,10 @@ repo missing from the list, or a listed repo with no clone). Only enumerate live
 fabric is absent:
 `gh repo list <org> --limit 1000 --json name,isArchived,updatedAt` (drop archived unless asked).
 
-**Tool choice: `gh` by default; GitHub MCP (`mcp__github__*`) when connected** (needs
-`GITHUB_PERSONAL_ACCESS_TOKEN`; check via `ToolSearch` before assuming). Prefer MCP for
+**Tool choice: `gh` by default; GitHub MCP when connected** (needs
+`GITHUB_PERSONAL_ACCESS_TOKEN`; check via `ToolSearch` before assuming). Its tools are
+namespaced `mcp__plugin_github_github__<tool>` (confirmed from the plugin's `.mcp.json`, see
+`home/.claude/settings.README.md`), not the bare `mcp__github__*` form. Prefer MCP for
 structured calls; `gh` is the always-works fallback. Don't block on the MCP.
 
 ## Fan out — one survey per repo, structured output

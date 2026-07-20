@@ -19,12 +19,16 @@ This scales to every current and future MCP plugin with no hand-maintained enume
 
 The check: split `tool_name` on `__` (the plugin-namespacing delimiter, settings.README.md) and read
 only the FINAL segment — the actual tool name, not the server/plugin namespace, so a coincidentally
-verb-shaped server name can't false-positive every tool from it. Split that segment on `_`/`-` into
-tokens and block if any token is an exact match for a Tier-A verb: merge, delete, push, force,
-publish, deploy — the same verb set work/SKILL.md's cardinal rule names ("force-push, merge/publish,
-hard-delete... irreversible/destructive"). `create`/`update`/`edit`/`list`/`get` tools are
-deliberately NOT in scope here (not Tier-A on their own); the Cloudflare plugin's explicit per-tool
-denies remain the belt for creates until a broader audit widens this rail's verb set.
+verb-shaped server name can't false-positive every tool from it. Camel-case boundaries in that
+segment (`mergePullRequest`) are split into `_`-separated words first, same as the existing
+`_`/`-` handling, so a JS/TS-style MCP server's camelCase tool names tokenize the same way as
+snake_case/kebab-case ones (#355) — otherwise the whole segment lowercases to one fused token
+that never equals a bare verb. Split into tokens and block if any token is an exact match for a
+Tier-A verb: merge, delete, push, force, publish, deploy — the same verb set work/SKILL.md's
+cardinal rule names ("force-push, merge/publish, hard-delete... irreversible/destructive").
+`create`/`update`/`edit`/`list`/`get` tools are deliberately NOT in scope here (not Tier-A on their
+own); the Cloudflare plugin's explicit per-tool denies remain the belt for creates until a broader
+audit widens this rail's verb set.
 
 Unlike the Bash rails, there is no repo state to consult that would prove a merge/delete/push/force/
 publish/deploy MCP call safe (mirrors `block-destructive-git.py`'s `_merge_publish_hit`, #242) and no
@@ -44,6 +48,7 @@ from _hookutil import load_hook_input
 TIER_A_VERBS = {"merge", "delete", "push", "force", "publish", "deploy"}
 
 _TOKEN_SPLIT_RE = re.compile(r"[_\-]+")
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
 def offending_verb(tool_name):
@@ -55,6 +60,7 @@ def offending_verb(tool_name):
     if not isinstance(tool_name, str) or "__" not in tool_name:
         return None
     tool = tool_name.rsplit("__", 1)[-1]
+    tool = _CAMEL_BOUNDARY_RE.sub("_", tool)
     tokens = _TOKEN_SPLIT_RE.split(tool.lower())
     for token in tokens:
         if token in TIER_A_VERBS:

@@ -89,14 +89,20 @@ def _save_state(path, snapshot):
 
 
 def _reachable(sha, cwd):
-    """True if `sha` is still an ancestor of some current branch/remote-tracking ref — i.e. still
-    kept alive by a live ref, not just sitting unreferenced until git gc reaps it. None (not
-    False) when the git subprocess itself failed — "couldn't tell" must never read as "discarded"
-    (#343)."""
+    """True if `sha` is still an ancestor of some current branch/remote-tracking ref OR tag —
+    i.e. still kept alive by a live ref, not just sitting unreferenced until git gc reaps it.
+    None (not False) when the git subprocess itself failed — "couldn't tell" must never read as
+    "discarded" (#343). `branch -a --contains` alone misses a commit whose only remaining
+    reachability is through a tag (#351), so tags are checked too."""
     out = git_out(["branch", "-a", "--contains", sha], cwd)
     if out is None:
         return None
-    return bool(out.strip())
+    if out.strip():
+        return True
+    tags = git_out(["tag", "--contains", sha], cwd)
+    if tags is None:
+        return None
+    return bool(tags.strip())
 
 
 def _consequences(prev, current, cwd):

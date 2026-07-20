@@ -749,6 +749,9 @@ assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__push_files","tool
 assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_cloudflare_cloudflare-bindings__r2_bucket_delete","tool_input":{}}' "blocks a namespaced Cloudflare delete tool by verb, independent of the exact-name deny (#260)"
 assert_exit 2 "$BDM" '{"tool_name":"mcp__memory__force_reset","tool_input":{}}'                          "blocks a non-plugin (bare server) MCP tool matching a Tier-A verb (#260)"
 assert_exit 2 "$BDM" '{"tool_name":"mcp__some_server__deploy-service","tool_input":{}}'                  "blocks a hyphen-separated Tier-A verb token (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__mergePullRequest","tool_input":{}}'       "blocks a camelCase Tier-A verb token (#355)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__deleteFile","tool_input":{}}'              "blocks another camelCase Tier-A verb token (#355)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__createRepository","tool_input":{}}'        "allows a camelCase create tool — not a Tier-A verb (#355)"
 assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__create_repository","tool_input":{}}'      "allows a create tool — not a Tier-A verb (#260)"
 assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__list_pull_requests","tool_input":{}}'     "allows a read/list tool (#260)"
 assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__get_file_contents","tool_input":{}}'      "allows a get tool (#260)"
@@ -809,6 +812,16 @@ git -C "$agcrepo" branch -D prune-branch
 git -C "$agcrepo" reflog expire --expire=now --all
 git -C "$agcrepo" gc -q --prune=now
 assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D prune-branch\"}}" "a _reachable() failure on a pruned/invalid object degrades to unknown, not a false alarm (#343)"
+
+# #351: a commit kept alive only by a tag (no branch containing it) must still read as reachable,
+# not as discarded.
+git -C "$agcrepo" checkout -q -b tag-branch
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "tag-branch work"
+git -C "$agcrepo" tag keepme
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call recording the branch that will be deleted but stays tagged (#351 setup)"
+git -C "$agcrepo" branch -D tag-branch
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D tag-branch\"}}" "deleting a branch whose tip is still reachable via a tag is not flagged as discarded (#351)"
 
 rm -rf "$agcrepo"
 
