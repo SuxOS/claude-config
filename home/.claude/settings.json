@@ -175,6 +175,12 @@
         "hooks": [
           { "type": "command", "command": "$HOME/.claude/hooks/pretooluse-bash.py" }
         ]
+      },
+      {
+        "matcher": "mcp__.*__.*",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/block-destructive-mcp.py" }
+        ]
       }
     ],
     "PostToolUse": [

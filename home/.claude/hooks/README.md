@@ -79,6 +79,18 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   `gh`/auth, or any API error (#252). Registered with `pretooluse-bash.py` via its
   `check(command, cwd)`; fails open on any error.
 
+- **`block-destructive-mcp.py`** — PreToolUse (matcher `mcp__.*__.*`). Extends the Tier-A cardinal
+  rail to MCP tool calls (#260): every other destructive-action guard here only inspects Bash argv
+  text, so an MCP tool call (e.g. the GitHub plugin's `merge_pull_request`/`push_files`/
+  `delete_file`) had zero enforcement under `bypassPermissions`. Splits `tool_name` on the last `__`
+  to isolate the real tool name from its server/plugin namespace, then blocks if any `_`/`-`
+  separated token in it exactly matches a Tier-A verb (`merge`, `delete`, `push`, `force`,
+  `publish`, `deploy`) — the same pattern-match-the-name approach as the Bash rails, generalized so
+  it covers every current and future MCP plugin instead of a hand-maintained per-plugin
+  enumeration. No repo state can prove such a call safe and there's no human to confirm in an
+  autonomous session, so a match blocks unconditionally (mirrors `block-destructive-git.py`'s
+  merge/publish predicate). `create`/`update`/`list`/`get` tools are out of scope — not Tier-A on
+  their own. Fails open on any error or unrecognized tool-name shape.
 - **`audit-git-consequences.py`** — PostToolUse (matcher `Bash`). A complementary, last-resort net
   behind the PreToolUse argv rails above (#236): instead of recognizing a destructive git COMMAND
   before it runs, it snapshots the cwd's branch/remote-tracking ref tips (via `git_out()`/

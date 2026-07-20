@@ -35,10 +35,11 @@ recognize) is allowed, never blocked.
     into HEAD — i.e. `-d` (which refuses on unmerged branches) would have succeeded too, so `-D`
     isn't discarding anything `-d` wouldn't have let through. `--remotes`/`-r` (deleting a local
     remote-tracking ref, trivially recoverable via a re-fetch) is out of scope.
-  - `git checkout -- .` / `git checkout .` / `git restore .` (default or `--worktree` mode — a
-    working-tree-only `--staged` restore doesn't touch files, so it's out of scope), UNLESS the
-    working tree has no uncommitted tracked changes. Deliberately narrow to exactly "discard
-    EVERYTHING" (`.`, the whole tree) — `git checkout -- some/file.txt` is an ordinary, common,
+  - `git checkout -- .` / `git checkout .` / `git restore .` / `git switch --discard-changes`
+    (default or `--worktree` mode — a working-tree-only `--staged` restore doesn't touch files, so
+    it's out of scope), UNLESS the working tree has no uncommitted tracked changes. Deliberately
+    narrow to exactly "discard EVERYTHING" (`.`, the whole tree, or switch's equivalent
+    `--discard-changes` flag, audited #259) — `git checkout -- some/file.txt` is an ordinary, common,
     deliberate discard of one file and is left alone.
   - `git stash drop [<stash>]` / `git stash clear`, UNLESS `git stash list` is already empty
     (nothing to lose). Stashed work has no `-d`-vs-`-D` safe alternative and no dry-run preview,
@@ -369,6 +370,14 @@ def _checkout_discard_target(rest):
     return None
 
 
+def _switch_discard_target(rest):
+    """`git switch --discard-changes` throws away ALL local modifications when switching branches —
+    the same destructive semantics as `checkout .`/`restore .`, but expressed as a boolean flag
+    instead of a `.` pathspec (switch takes a branch, not paths), so it needs its own recognizer
+    rather than reusing `_checkout_discard_target`'s pathspec scan (audited #259)."""
+    return "." if "--discard-changes" in rest else None
+
+
 def _restore_discard_target(rest):
     """`-S`/`--staged` (boolean, index-only) is NOT the same flag as `-s`/`--source=<tree>`
     (takes a value picking the restore source) — real git distinguishes the two despite the
@@ -400,7 +409,12 @@ def _restore_discard_target(rest):
 
 
 def _discard_hit(subcommand, rest, cwd):
-    target = _checkout_discard_target(rest) if subcommand == "checkout" else _restore_discard_target(rest)
+    if subcommand == "checkout":
+        target = _checkout_discard_target(rest)
+    elif subcommand == "switch":
+        target = _switch_discard_target(rest)
+    else:
+        target = _restore_discard_target(rest)
     if target is None:
         return False
     return bool(_working_tree_dirty(cwd))
@@ -576,7 +590,7 @@ def offending(command, cwd):
             return "clean", argv
         if subcommand == "branch" and _branch_delete_hit(rest, cwd):
             return "branch", argv
-        if subcommand in ("checkout", "restore") and _discard_hit(subcommand, rest, cwd):
+        if subcommand in ("checkout", "restore", "switch") and _discard_hit(subcommand, rest, cwd):
             return "discard", argv
         if subcommand == "stash" and _stash_drop_hit(rest, cwd):
             return "stash", argv
