@@ -61,6 +61,14 @@
   constrain Bash arguments, and a plugin MCP deny must be `mcp__plugin_<plugin>_<server>__<tool>`
   or it silently fails open with no warning. Verify the matcher against the live tool surface
   before scoping any rule in `settings.json` (see `home/.claude/settings.README.md`).
+- **A `hooks.PreToolUse` `matcher` string is a THIRD, separate gotcha from the two above** (#260,
+  verified live against the Claude Code hooks docs): it's an unanchored regex whenever it contains
+  any character outside `[A-Za-z0-9_\- ,|]`, but plain `mcp__<server>` (no regex metacharacter)
+  contains ONLY those characters and so is evaluated as an exact string — it matches nothing, not
+  "every tool from that server." To match a whole server (or every MCP tool) the pattern needs an
+  explicit trailing `.*` after each `__` (`mcp__memory__.*`, or `mcp__.*__.*` for all servers/tools)
+  — this is a different mechanism from `permissions.deny`'s glob syntax, so don't assume the two
+  share a wildcard convention.
 - **An issue-build branch can itself lag `origin/main`**, not just an issue's cited line
   numbers — when a sibling build merges first, the branch this build was cut from predates
   that merge. Before editing a shared file (e.g. `block-egress.py`, `tests/test_hooks.sh`),
