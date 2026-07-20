@@ -169,8 +169,7 @@ def main():
     for fixture in fixtures:
         all_problems.extend(lint(fixture))
 
-    if not argv:
-        all_problems.extend(find_missing_fixtures())
+    all_problems.extend(find_missing_fixtures())
 
     if not fixtures and not all_problems:
         print("evals lint: no eval fixtures found")

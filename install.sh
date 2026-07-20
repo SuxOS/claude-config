@@ -10,6 +10,7 @@ DEST="$HOME/.claude"
 mkdir -p "$DEST"
 
 items=(CLAUDE.md)
+shopt -s dotglob
 for entry in "$SRC"/*; do
   name="$(basename "$entry")"
   case "$name" in
@@ -18,6 +19,7 @@ for entry in "$SRC"/*; do
   esac
   items+=("$name")
 done
+shopt -u dotglob
 
 missing=()
 for item in "${items[@]}"; do
