@@ -59,8 +59,10 @@ def _load_checks():
     for module_name in _RAIL_MODULES:
         try:
             checks.append(_load(module_name).check)
-        except Exception:
-            continue  # a broken sibling module degrades to "not enforced", never a crash (#180)
+        except Exception as e:
+            # Still fail-open (#180) — just make the silent degradation visible (#314).
+            print(f"pretooluse-bash: rail {module_name!r} failed to load: {e}", file=sys.stderr)
+            continue
     return tuple(checks)
 
 

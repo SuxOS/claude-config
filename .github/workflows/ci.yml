@@ -64,7 +64,7 @@ jobs:
       # for the same reason as the other integrity steps above (see CLAUDE.md).
       - name: lint GitHub Actions workflow files
         if: ${{ !cancelled() }}
-        uses: docker://rhysd/actionlint:latest
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
         with:
           args: -color
 
@@ -183,6 +183,7 @@ jobs:
           scratch_home="$(mktemp -d)"
           HOME="$scratch_home" bash install.sh
 
+          shopt -s dotglob
           for entry in home/.claude/*; do
             name="$(basename "$entry")"
             case "$name" in
@@ -192,6 +193,7 @@ jobs:
             link="$scratch_home/.claude/$name"
             [ -L "$link" ] || { echo "expected symlink missing: $link" >&2; exit 1; }
           done
+          shopt -u dotglob
           [ -L "$scratch_home/.claude/CLAUDE.md" ] || { echo "expected symlink missing: $scratch_home/.claude/CLAUDE.md" >&2; exit 1; }
           [ -e "$scratch_home/.claude/settings.json" ] || { echo "settings.json not copied" >&2; exit 1; }
 

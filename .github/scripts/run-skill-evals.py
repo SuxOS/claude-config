@@ -260,7 +260,7 @@ def main():
                 print(f"  FAIL:  {tag} — {res['reason']}")
 
     print(f"\nskill-evals: {passed} passed, {failed} failed, {errored} errored, of {total}")
-    if args.gate and (failed or errored):
+    if errored or (args.gate and failed):
         return 1
     return 0
 
