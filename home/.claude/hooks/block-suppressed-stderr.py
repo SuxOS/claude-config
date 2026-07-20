@@ -34,9 +34,10 @@ form: the `2` must be its own word, glued to the `>`.
 Fail-open on any error — a hook bug must never wedge the session (repo convention). Exit 2 =
 block; exit 0 = allow.
 """
-import json
 import re
 import sys
+
+from _hookutil import hook_tool_input, load_hook_input
 
 # `2` or `&` immediately (no whitespace) before `>`/`>>`, then optional whitespace, then the
 # literal redirect target. `(?<![\w])` before the `2` requires it to be its own word — not the
@@ -80,15 +81,14 @@ def check(command, cwd):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 

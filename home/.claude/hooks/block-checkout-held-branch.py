@@ -32,11 +32,10 @@ Deliberately narrow to keep false positives near zero — it fires ONLY when all
 Anything it can't parse cleanly is allowed. Fail-open on any error — a hook bug must never wedge
 the session (repo convention). Exit 2 = block; exit 0 = allow.
 """
-import json
 import os
 import sys
 
-from _hookutil import git_out, git_subcommand, pieces, strip_prefixes
+from _hookutil import git_out, git_subcommand, hook_tool_input, load_hook_input, pieces, strip_prefixes
 
 # checkout/switch flags that create a branch (take the new name as their value) — NOT a switch into
 # an existing, possibly-held branch, so never the held-branch-switch case.
@@ -145,15 +144,14 @@ def check(command, cwd):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 

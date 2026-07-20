@@ -70,7 +70,6 @@ would consult the wrong repo, #154), same as the checkout rail.
 Fail-open on any error — a hook bug must never wedge the session (repo convention). Exit 2 =
 block; exit 0 = allow.
 """
-import json
 import subprocess
 import sys
 from urllib.parse import quote
@@ -81,6 +80,8 @@ from _hookutil import (
     git_out,
     git_returncode,
     git_subcommand,
+    hook_tool_input,
+    load_hook_input,
     pieces,
     strip_prefixes,
 )
@@ -584,15 +585,14 @@ def check(command, cwd):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 
