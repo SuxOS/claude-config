@@ -67,6 +67,24 @@ assert_exit 0 "$RDM" '[1,2,3]'                                                  
 assert_exit 0 "$RDM" '{"tool_name":"Agent","tool_input":[1,2,3]}'                                              "fails open on non-object tool_input (#318)"
 assert_exit 2 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":{"foo":"bar"},"prompt":"x"}}'         "coerces a non-string subagent_type to generic instead of crashing with TypeError (#272)"
 
+echo "== block-config-tamper.py =="
+BCT="$HOOKS/block-config-tamper.py"
+# Isolate from whatever the real $HOME happens to be in this environment — the hook resolves the
+# live path from $HOME/.claude, so pin it to a throwaway dir for a deterministic test.
+bcthome="$(mktemp -d)"
+mkdir -p "$bcthome/.claude/hooks"
+HOME="$bcthome" assert_exit 2 "$BCT" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$bcthome/.claude/settings.json\",\"old_string\":\"a\",\"new_string\":\"b\"}}" "blocks an Edit of the live settings.json (#243)"
+HOME="$bcthome" assert_exit 2 "$BCT" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bcthome/.claude/settings.json\",\"content\":\"{}\"}}" "blocks a Write (full overwrite) of the live settings.json (#243)"
+HOME="$bcthome" assert_exit 2 "$BCT" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$bcthome/.claude/hooks/block-egress.py\",\"old_string\":\"a\",\"new_string\":\"b\"}}" "blocks an Edit of a live hooks/*.py file (#243)"
+HOME="$bcthome" assert_exit 2 "$BCT" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bcthome/.claude/hooks/new-hook.py\",\"content\":\"import sys; sys.exit(0)\"}}" "blocks a Write creating a brand-new file under the live hooks/ dir (#243)"
+HOME="$bcthome" assert_exit 0 "$BCT" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"/some/repo/checkout/home/.claude/hooks/block-egress.py\",\"old_string\":\"a\",\"new_string\":\"b\"}}" "allows an Edit of a repo's tracked source path — only the live \$HOME/.claude path is scoped (#243)"
+HOME="$bcthome" assert_exit 0 "$BCT" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$bcthome/.claude/skills/work/SKILL.md\",\"old_string\":\"a\",\"new_string\":\"b\"}}" "allows an Edit of an unrelated live config file (#243)"
+HOME="$bcthome" assert_exit 0 "$BCT" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat $bcthome/.claude/settings.json\"}}" "ignores a non-Edit/Write tool_name, even one with the same path in its input (#243)"
+HOME="$bcthome" assert_exit 0 "$BCT" "{\"tool_name\":\"Edit\",\"tool_input\":{\"old_string\":\"a\",\"new_string\":\"b\"}}" "fails open when file_path is absent (#243)"
+HOME="$bcthome" assert_exit 0 "$BCT" 'not-json' "fails open on malformed JSON (#243)"
+HOME="$bcthome" assert_exit 0 "$BCT" '[1,2,3]' "fails open on valid-but-non-object top-level JSON (#243)"
+HOME="$bcthome" assert_exit 0 "$BCT" '{"tool_name":"Edit","tool_input":[1,2,3]}' "fails open on non-object tool_input (#243)"
+
 echo "== verify-completion-claim.py =="
 VCC="$HOOKS/verify-completion-claim.py"
 assert_exit 0 "$VCC" '{"stop_hook_active":true}'                    "self-limits when stop_hook_active is set"
@@ -618,6 +636,13 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 # the positional count `_push_force_hit` gates on.
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"(cd $dgrepo && git push -f origin scratch)\"}}" "blocks a force-push that would discard commits, wrapped in a bare subshell (#290)"
 
+# #327: `git push <remote> <refspec> <refspec>...` accepts any number of refspecs, not just one —
+# a 3rd positional (2nd refspec) must not make the whole push fall through the force/protected
+# checks untouched.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin +scratch:refs/heads/scratch decoy:decoy-branch\"}}" "blocks a force-push that would discard commits when a 2nd, unrelated refspec rides along (#327)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin decoy:decoy-branch +scratch:refs/heads/scratch\"}}" "blocks a force-push whose forced refspec is the 2nd, not 1st, positional (#327)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch decoy:decoy-branch\"}}" "allows a multi-refspec push with no force flag on any refspec (#327)"
+
 # #245: a bundled -fd (force+delete) must be recognized as an out-of-scope delete-push (a
 # different risk not handled by this fast-forward/ancestor check), not evaluated as an ordinary
 # force-push — which, for a diverged branch like this one, would otherwise wrongly block it.
@@ -704,6 +729,10 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD:main\"}}"   "blocks a push whose refspec destination resolves to the protected branch name (#252)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin :main\"}}"       "allows a delete-refspec push — no content pushed, out of scope (#252)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --all origin\"}}"       "allows a multi-ref --all push — too ambiguous to resolve a single destination (#252)"
+# #327: a 2nd refspec whose destination is the protected branch must still be caught even though
+# the 1st refspec is an unrelated, unprotected destination.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin decoy:decoy-branch HEAD:main\"}}" "blocks a push whose 2nd refspec destination resolves to the protected branch, not just the 1st (#327)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin decoy:decoy-branch other:other-branch\"}}" "allows a multi-refspec push where neither destination is protected (#327)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"sudo git push origin main\"}}"   "blocks a direct push to a protected branch behind a sudo prefix (#252)"
 PATH="$dgoldpath"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"        "allows a direct push to main when gh can't confirm protection (no gh/auth/remote) — fail open (#252)"

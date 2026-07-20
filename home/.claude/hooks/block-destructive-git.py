@@ -134,9 +134,48 @@ def _current_branch(cwd):
     return branch.strip()
 
 
+def _refspec_push_ref(remote, refspec, forced, cwd):
+    """Resolve a single push refspec (as it would land against `remote`) to (push_ref, src_ref,
+    forced), or None if it's a delete-refspec or a non-branch fully-qualified ref — out of scope,
+    the same way the old single-refspec branch of `_push_force_hit` treated them. `forced` is the
+    blanket -f/--force state of the whole push; a leading '+' forces this refspec individually
+    regardless of that."""
+    if refspec.startswith("+"):
+        forced = True
+        refspec = refspec[1:]
+    src, _, dst = refspec.partition(":")
+    dst = dst if ":" in refspec else src
+    if not src or not dst:
+        return None  # a delete-refspec (":branch" / "branch:") — out of scope
+    if ":" not in refspec and dst in ("HEAD", "@"):
+        # bare `HEAD` (no colon) resolves to the current branch's actual name, not a literal
+        # branch called "HEAD" — same resolution the 1-positional implicit-push case uses
+        # (#319); `@` is git's documented synonym for `HEAD` in revision/refspec contexts
+        # (git-rev-parse(1)) and hits the exact same literal-branch-name bug (#326)
+        branch = _current_branch(cwd)
+        if branch is None:
+            return None  # detached HEAD, or can't tell — conservative allow
+        dst = branch
+    # a refspec destination may be fully-qualified (`git push origin +feature:refs/heads/main`),
+    # not just a short branch name — normalize, and fail open on any other `refs/...` namespace
+    # (tags, notes, ...) rather than build a bogus `refs/remotes/{remote}/refs/heads/...` ref that
+    # `rev-parse --verify` can never resolve, which would otherwise misread as "brand-new branch,
+    # nothing to lose" (#261)
+    heads_prefix = "refs/heads/"
+    if dst.startswith(heads_prefix):
+        dst = dst[len(heads_prefix):]
+    elif dst.startswith("refs/"):
+        return None  # non-branch fully-qualified ref — out of scope, conservative allow
+    return f"refs/remotes/{remote}/{dst}", src, forced
+
+
 def _push_force_hit(rest, cwd):
     """True if this `git push` argv force-pushes and, from locally known remote state, is
-    provably NOT a fast-forward (would discard commits on the remote we haven't merged in)."""
+    provably NOT a fast-forward (would discard commits on the remote we haven't merged in).
+
+    `git push <remote> <refspec>...` accepts any number of refspecs in one invocation (git-
+    push(1)) — not just one — so 3+ positionals (remote + 2+ refspecs) is checked the same way
+    as the 2-positional case, refspec by refspec, rather than bailing out entirely (#327)."""
     if any(tok == "--force-with-lease" or tok.startswith("--force-with-lease=") for tok in rest):
         return False  # git's own safe form — it refuses server-side if the remote moved
 
@@ -169,39 +208,27 @@ def _push_force_hit(rest, cwd):
             out_of_scope = True  # multi-ref push — a different risk, not scoped here
         elif not tok.startswith("-"):
             positionals.append(tok)
-    if out_of_scope or len(positionals) > 2:
+    if out_of_scope:
         return False  # too broad/ambiguous to reason about safely — conservative allow
 
-    if len(positionals) == 2:
-        remote, refspec = positionals
-        if refspec.startswith("+"):
-            forced = True
-            refspec = refspec[1:]
-        src, _, dst = refspec.partition(":")
-        dst = dst if ":" in refspec else src
-        if not src or not dst:
-            return False  # a delete-refspec (":branch" / "branch:") — out of scope
-        if ":" not in refspec and dst in ("HEAD", "@"):
-            # bare `HEAD` (no colon) resolves to the current branch's actual name, not a literal
-            # branch called "HEAD" — same resolution the 1-positional implicit-push case uses
-            # (#319); `@` is git's documented synonym for `HEAD` in revision/refspec contexts
-            # (git-rev-parse(1)) and hits the exact same literal-branch-name bug (#326)
-            branch = _current_branch(cwd)
-            if branch is None:
-                return False  # detached HEAD, or can't tell — conservative allow
-            dst = branch
-        # a refspec destination may be fully-qualified (`git push origin +feature:refs/heads/main`),
-        # not just a short branch name — normalize the same way `_push_dest_branch` does, and fail
-        # open on any other `refs/...` namespace (tags, notes, ...) rather than build a bogus
-        # `refs/remotes/{remote}/refs/heads/...` ref that `rev-parse --verify` can never resolve,
-        # which line 174 would otherwise misread as "brand-new branch, nothing to lose" (#261)
-        heads_prefix = "refs/heads/"
-        if dst.startswith(heads_prefix):
-            dst = dst[len(heads_prefix):]
-        elif dst.startswith("refs/"):
-            return False  # non-branch fully-qualified ref — out of scope, conservative allow
-        push_ref, src_ref = f"refs/remotes/{remote}/{dst}", src
-    elif len(positionals) == 1:
+    if len(positionals) >= 2:
+        remote, refspecs = positionals[0], positionals[1:]
+        for refspec in refspecs:
+            resolved = _refspec_push_ref(remote, refspec, forced, cwd)
+            if resolved is None:
+                continue
+            push_ref, src_ref, refspec_forced = resolved
+            if not refspec_forced:
+                continue
+            if not git_out(["rev-parse", "--verify", "--quiet", push_ref], cwd):
+                continue  # remote-tracking ref unknown locally — likely a brand-new branch
+            if not git_out(["rev-parse", "--verify", "--quiet", src_ref], cwd):
+                continue  # can't resolve the local side — don't risk a false block
+            if git_returncode(["merge-base", "--is-ancestor", push_ref, src_ref], cwd) == 1:
+                return True
+        return False
+
+    if len(positionals) == 1:
         branch = _current_branch(cwd)
         if branch is None:
             return False  # no branch (detached) or can't tell — conservative allow
@@ -219,14 +246,32 @@ def _push_force_hit(rest, cwd):
     return git_returncode(["merge-base", "--is-ancestor", push_ref, src_ref], cwd) == 1
 
 
-def _push_dest_branch(rest, cwd):
-    """Return the destination branch name this `git push` argv would push to, or None if it
-    can't be confidently resolved (a delete-push, a multi-ref `--all`/`--mirror`/`--tags` form, or
-    a detached/unresolvable HEAD on an implicit push). Same glued-`-o`/PUSH_VALUE_OPTS filtering
-    `_push_force_hit` applies before reading positionals (#246); a bare `git push` or `git push
-    <remote>` (no refspec) is resolved as pushing the current branch under its own name — git's
-    push.default=simple/current behavior (the default since git 2.0) — mirroring the implicit-push
-    branch resolution `_push_force_hit` already does for its own fast-forward check (#252)."""
+def _refspec_dest_branch(refspec, cwd):
+    """Return the destination branch name a single push refspec resolves to, or None if it's a
+    delete-refspec (no content pushed) or a non-branch fully-qualified ref — out of scope, the
+    same way the old single-refspec branch of `_push_dest_branch` treated them."""
+    refspec = refspec[1:] if refspec.startswith("+") else refspec
+    src, _, dst = refspec.partition(":")
+    dst = dst if ":" in refspec else src
+    if not src or not dst:
+        return None  # a delete-refspec (":branch" / "branch:") — no content pushed, out of scope
+    if ":" not in refspec and dst in ("HEAD", "@"):
+        # bare `HEAD` (no colon) resolves to the current branch's actual name (#319); `@` is
+        # git's documented `HEAD` synonym and hits the same bug (#326)
+        return _current_branch(cwd)
+    prefix = "refs/heads/"
+    return dst[len(prefix):] if dst.startswith(prefix) else dst
+
+
+def _push_dest_branches(rest, cwd):
+    """Return the list of destination branch names this `git push` argv would push to (one per
+    refspec positional — git allows repeating `<refspec>`, git-push(1), not just one, #327), or
+    None if it can't be confidently resolved at all (a delete-push, a multi-ref `--all`/`--mirror`/
+    `--tags` form). Same glued-`-o`/PUSH_VALUE_OPTS filtering `_push_force_hit` applies before
+    reading positionals (#246); a bare `git push` or `git push <remote>` (no refspec) is resolved
+    as pushing the current branch under its own name — git's push.default=simple/current behavior
+    (the default since git 2.0) — mirroring the implicit-push branch resolution `_push_force_hit`
+    already does for its own fast-forward check (#252)."""
     filtered, i, n = [], 0, len(rest)
     while i < n:
         tok = rest[i]
@@ -247,24 +292,15 @@ def _push_dest_branch(rest, cwd):
             return None  # multi-ref push — not a single destination
         elif not tok.startswith("-"):
             positionals.append(tok)
-    if len(positionals) > 2:
-        return None  # too ambiguous to reason about safely — conservative allow
 
-    if len(positionals) == 2:
-        _remote, refspec = positionals
-        refspec = refspec[1:] if refspec.startswith("+") else refspec
-        src, _, dst = refspec.partition(":")
-        dst = dst if ":" in refspec else src
-        if not src or not dst:
-            return None  # a delete-refspec (":branch" / "branch:") — no content pushed, out of scope
-        if ":" not in refspec and dst in ("HEAD", "@"):
-            # bare `HEAD` (no colon) resolves to the current branch's actual name (#319); `@` is
-            # git's documented `HEAD` synonym and hits the same bug (#326)
-            return _current_branch(cwd)
-        prefix = "refs/heads/"
-        return dst[len(prefix):] if dst.startswith(prefix) else dst
+    if len(positionals) >= 2:
+        refspecs = positionals[1:]
+        branches = [_refspec_dest_branch(rs, cwd) for rs in refspecs]
+        branches = [b for b in branches if b is not None]
+        return branches or None
 
-    return _current_branch(cwd)
+    branch = _current_branch(cwd)
+    return [branch] if branch is not None else None
 
 
 def _branch_protected(branch, cwd):
@@ -287,10 +323,10 @@ def _branch_protected(branch, cwd):
 
 
 def _push_protected_hit(rest, cwd):
-    branch = _push_dest_branch(rest, cwd)
-    if branch is None:
+    branches = _push_dest_branches(rest, cwd)
+    if not branches:
         return False
-    return _branch_protected(branch, cwd)
+    return any(_branch_protected(branch, cwd) for branch in branches)
 
 
 def _reset_hard_hit(rest, cwd):

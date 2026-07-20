@@ -13,6 +13,15 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   any other NAMED subagent_type (e.g. `Explore`, `Plan`, `code-reviewer`), since those resolve
   their model from their own agent definition and omitting `model=` there is the recommended,
   rule-compliant usage. Wired in settings.json under `hooks.PreToolUse`.
+- **`block-config-tamper.py`** — PreToolUse (matcher `Edit|Write`). Guards the LIVE installed
+  hook/config surface (`~/.claude/settings.json`, `~/.claude/hooks/*.py`) from being silently
+  weakened by a direct Edit/Write call, in the same session those files are meant to constrain
+  (#243). Scoped to the live `$HOME/.claude/...` path only, never a repo's tracked source — this
+  repo's own normal workflow (edit source in a git checkout, land it via a reviewed PR,
+  `install.sh` re-syncs the live path) never touches that path directly, so the rail never fires
+  on ordinary hook-improvement PRs. Unconditional once matched, like the merge/publish predicate
+  in block-destructive-git.py — there's no repo state that makes a live rewrite of the
+  enforcement surface itself safe. Fails open on any error.
 - **`pretooluse-bash.py`** — PreToolUse (matcher `Bash`). The single envelope dispatcher for every
   Bash-command rail (#163): reads `json.load(sys.stdin)` ONCE, guards `tool_name != "Bash"` and a
   non-string `tool_input.command` ONCE, then runs a registered list of pure `check(command, cwd) ->

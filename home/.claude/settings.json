@@ -175,6 +175,12 @@
         "hooks": [
           { "type": "command", "command": "$HOME/.claude/hooks/pretooluse-bash.py" }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/block-config-tamper.py" }
+        ]
       }
     ],
     "PostToolUse": [
