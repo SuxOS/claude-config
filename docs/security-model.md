@@ -80,12 +80,13 @@ rail rather than reuse of the Bash-argv one.
 
 `block-destructive-mcp.py` (#260) closes the general-purpose slice of this: a `PreToolUse` hook
 matched on `mcp__.*__.*` that pattern-matches Tier-A verbs (`merge`, `delete`, `push`, `force`,
-`publish`, `deploy`) in the tool name's final segment and blocks unconditionally on a hit — same
+`publish`, `deploy`) in the tool name's final segment — including at camelCase boundaries
+(`mergePullRequest`, #355), not just `_`/`-` ones — and blocks unconditionally on a hit — same
 "cardinal rails as code" approach (#163) as the Bash rails, generalized so it needs no
 hand-maintained per-plugin enumeration. This is deliberately narrower than the Cloudflare plugin's
 explicit per-tool denies (settings.json:81-89, `create`/`update`/`edit` included): those remain the
-belt for non-Tier-A mutations on the one plugin someone audited live. A tactical, exact-name
-enumeration for the GitHub plugin's full mutating surface (mirroring the Cloudflare pattern) is
-still open work — it needs a live-connected session to confirm exact tool/server names the way
-settings.README.md's Cloudflare mapping was confirmed, which this rail's verb-pattern approach was
-chosen specifically to avoid depending on.
+belt for non-Tier-A mutations on the one plugin someone audited live. The GitHub plugin now has the
+same tactical, exact-name belt too (#348, settings.json, settings.README.md's "Verified GitHub
+mapping") — tool/server names confirmed from the plugin's own `.mcp.json` and the upstream
+`github/github-mcp-server` README rather than a live `/mcp` session, the same primary-source tier
+the Cloudflare mapping was already confirmed at.

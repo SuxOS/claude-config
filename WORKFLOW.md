@@ -77,7 +77,10 @@ git clone git@github.com:SuxOS/claude-config.git ~/Code/SuxOS/claude-config
 ~/Code/SuxOS/claude-config/install.sh    # symlinks CLAUDE.md, skills/, fabric.json into ~/.claude
 ```
 
-- `gh` CLI: authenticated, works now. GitHub MCP (`mcp__github__*`): plugin enabled, needs
-  `GITHUB_PERSONAL_ACCESS_TOKEN` to connect; `gh` is the working fallback until then.
+- `gh` CLI: authenticated, works now. GitHub MCP: plugin enabled, needs
+  `GITHUB_PERSONAL_ACCESS_TOKEN` to connect. Its tools are namespaced
+  `mcp__plugin_github_github__<tool>` (confirmed from the plugin's `.mcp.json`, see
+  `home/.claude/settings.README.md`), not the bare `mcp__github__*` form; `gh` is the working
+  fallback until then.
 - Hooks: `install.sh` symlinks the dir; merge the `hooks` block from the reference
   `settings.json` into your live `~/.claude/settings.json` and restart.
