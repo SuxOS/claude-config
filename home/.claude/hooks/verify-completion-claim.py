@@ -17,6 +17,8 @@ import os
 import re
 import sys
 
+from _hookutil import load_hook_input
+
 CLAIM = re.compile(
     r"\b(all set|done|fixed|resolved|passing|tests? pass|all green|shipped|merged|complete[d]?|"
     r"works now|working now|verified)\b",
@@ -119,9 +121,8 @@ def edited_file_paths(records):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
     if data.get("stop_hook_active"):  # already forced a continuation once; don't loop
         sys.exit(0)

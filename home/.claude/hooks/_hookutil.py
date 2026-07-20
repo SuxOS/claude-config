@@ -24,9 +24,38 @@ any rail that reads a piece's command word MUST run it through `strip_prefixes()
 rail that compares `basename(argv[0])` directly re-acquires the exact wrapper-prefix bypass
 `strip_prefixes()` was built to close in block-egress.py (#119, #179).
 """
+import json
 import re
 import shlex
 import subprocess
+
+def load_hook_input(stream):
+    """Parse the hook JSON envelope from stream; return the parsed dict, or None on any parse
+    failure — including valid JSON whose top level isn't an object.
+
+    json.load() succeeds on any valid JSON, not just an object: a bare top-level array/string/
+    number parses fine, and a caller's immediate `data.get(...)` then raises AttributeError since
+    only a dict has `.get`. Every hook's own docstring promises to fail open on 'any parse error',
+    so a shape mismatch must be treated the same as a syntax error, not left to crash past the
+    try/except that was supposed to catch it (#318)."""
+    try:
+        data = json.load(stream)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def hook_tool_input(data):
+    """Return data['tool_input'] as a dict, or {} if absent or not itself an object.
+
+    Mirrors load_hook_input()'s guard one level down: `tool_input` can independently be
+    valid-but-non-object JSON (e.g. `{"tool_input": [1, 2, 3]}`) even when the envelope itself is
+    a dict, and the old `data.get("tool_input") or {}` idiom still crashes on that shape — a
+    non-empty list/string is truthy, so `or {}` never kicks in, and the caller's next `.get(...)`
+    raises AttributeError the same way a non-dict envelope did (#318)."""
+    ti = data.get("tool_input")
+    return ti if isinstance(ti, dict) else {}
+
 
 # Shell control operators that separate simple commands. Splitting is done on shlex tokens
 # (not the raw string) so a `;` inside a quoted payload (`-c "..."`) stays put. PUNCT drives

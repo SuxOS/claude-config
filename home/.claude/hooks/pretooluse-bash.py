@@ -26,9 +26,10 @@ whole dispatcher before `main()` is ever reached (#180) — a broken rail degrad
 enforced", never to "no Bash command runs".
 """
 import importlib.util
-import json
 import os
 import sys
+
+from _hookutil import hook_tool_input, load_hook_input
 
 _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -67,15 +68,14 @@ CHECKS = _load_checks()
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 

@@ -147,6 +147,26 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python3 .github/scripts/run-skill-evals.py
 
+  # fuzz-argv-exec (ADVISORY, #228): checks the wrapper/sudo prefix shapes tests/fuzz_argv_canon.py
+  # already covers against GROUND TRUTH — actually execs `<prefix> <argv-echoing helper>` via real
+  # env/timeout/nice/xargs/stdbuf/exec/sudo binaries and diffs their observed argv against what
+  # `_hookutil.strip_prefixes()` predicts — instead of only a second hand-authored reference table
+  # (which can be wrong in the same direction as the implementation; see tests/fuzz_argv_exec.py's
+  # module docstring for the `env -S`/#227 case that motivated this). Depends on real system
+  # binaries' exact installed behavior (available wrappers, sudo policy, coreutils version), a
+  # strictly riskier dependency for a hard merge gate than the pure-computation fuzzer already
+  # folded into the required `shellcheck` job — so, same reasoning as skill-evals above, this is a
+  # STANDALONE ADVISORY job, never folded in.
+  fuzz-argv-exec:
+    name: fuzz-argv-exec
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: fuzz argv canonicalization against real subprocess execution
+        run: python3 tests/fuzz_argv_exec.py
+
   # `bash -n install.sh` only catches parse errors, not logic bugs (wrong case glob, broken
   # idempotency check, etc). This actually runs the script end-to-end against a scratch HOME
   # and checks the result, then runs it a second time to assert idempotency (#42).
