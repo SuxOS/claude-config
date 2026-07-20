@@ -214,6 +214,19 @@
   pin for "a human or a future build with live CI feedback" to fix — that assumption was wrong,
   not a real sandbox constraint. Before deferring a lookup (a digest, a release version, an
   upstream API shape) as unverifiable, try the live request first.
+- **A "live-verified" mapping doesn't need a live MCP session** (#348): the Cloudflare tool-name
+  mapping in settings.README.md was already confirmed from the plugin's own `.mcp.json` and its
+  upstream server's source/README, not from a connected `/mcp` session — that's an accepted
+  verification tier here, not a stand-in for the real thing. `WebFetch`/`WebSearch` against a
+  plugin's `.mcp.json` (find its repo path via `enabledPlugins` + `extraKnownMarketplaces` in
+  settings.json) and the upstream MCP server's own docs can resolve a "needs live verification"
+  issue the same way, without waiting for a connected session.
+- **An investigation-only issue ("Issue #N looks already resolved") does not close itself once
+  its target is fixed** (#296/#350, the same gap hit twice): #296 recommended closing #289 and is
+  still open even though #289 was closed separately days ago — nothing re-checks or closes #296.
+  When an issue's whole scope is "verify X, close it if stale," close BOTH the stale target and
+  the investigation issue directly (`gh issue close`) once confirmed, rather than leaving either
+  as a recommendation for a human to act on later.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
