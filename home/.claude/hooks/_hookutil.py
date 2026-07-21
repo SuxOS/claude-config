@@ -478,6 +478,31 @@ GIT_GLOBAL_VALUE_OPTS = {
 GIT_GLOBAL_CWD_OPTS = {"-C", "--git-dir", "--work-tree"}
 
 
+def walk_past_flags(argv, start, value_opts):
+    """Walk `argv` from index `start`, skipping a `value_opts` flag plus its separate-token value,
+    or any other `-`-prefixed token as a self-contained boolean/glued flag, stopping at the first
+    non-flag token. Return that token's index, or None if the walk runs off the end without
+    finding one.
+
+    This exact "walk past a CLI's leading flags to find the first positional" shape used to be
+    hand-duplicated 4 times — here twice (`git_subcommand()`/`gh_subcommand()`), plus
+    block-destructive-git.py's `_npm_subcommand()` and block-egress.py's `_gh_api_endpoint()` (#300)
+    — each with its own value-opts set (the exact global-flag surface differs per CLI) but identical
+    walk logic. Callers keep only their per-CLI `value_opts` set local; the walk itself lives here
+    once."""
+    i, n = start, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in value_opts:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return i
+    return None
+
+
 def git_subcommand(argv):
     """Return (subcommand, rest_argv) for a `git ...` argv, walking past global options to find
     it — or None for a non-git command, a command with no subcommand at all, or one that
@@ -489,23 +514,16 @@ def git_subcommand(argv):
     """
     if not argv or basename(argv[0]) != "git":
         return None
-    i, n = 1, len(argv)
-    while i < n:
-        tok = argv[i]
-        if tok in GIT_GLOBAL_VALUE_OPTS:
-            if tok in GIT_GLOBAL_CWD_OPTS:
-                return None
-            i += 2
-            continue
-        if tok.startswith("-"):
-            if tok.startswith("--git-dir=") or tok.startswith("--work-tree="):
-                return None
-            i += 1
-            continue
-        break
-    if i >= n:
+    idx = walk_past_flags(argv, 1, GIT_GLOBAL_VALUE_OPTS)
+    if idx is None:
         return None
-    return argv[i], argv[i + 1:]
+    # a cwd-redirecting global (bare or `=`-glued) anywhere in the skipped prefix means this
+    # argv targets a different repo than cwd — `walk_past_flags()` already walked past it as an
+    # ordinary value/boolean flag, so check the skipped span for it after the fact (#300).
+    for tok in argv[1:idx]:
+        if tok in GIT_GLOBAL_CWD_OPTS or tok.startswith("--git-dir=") or tok.startswith("--work-tree="):
+            return None
+    return argv[idx], argv[idx + 1:]
 
 
 # gh's own global flag that redirects it at a different repo than cwd's. Unlike git's subcommands,
@@ -523,25 +541,16 @@ def gh_subcommand(argv):
     `argv` should already be run through `strip_prefixes()` by the caller, same convention as
     `git_subcommand()`. Mirrors that function's shape; gh has only the one global value-flag
     (plus boolean `--help`, which never reaches a subcommand and so needs no special handling).
+    The glued forms (`--repo=owner/repo`, `-Rowner/repo`) need no special-case branch: they're
+    self-contained `-`-prefixed tokens, so `walk_past_flags()`'s generic boolean/glued-flag skip
+    already lands past them the same as any other flag (#300).
     """
     if not argv or basename(argv[0]) != "gh":
         return None
-    i, n = 1, len(argv)
-    while i < n:
-        tok = argv[i]
-        if tok in GH_GLOBAL_VALUE_OPTS:
-            i += 2
-            continue
-        if tok.startswith("--repo=") or (tok.startswith("-R") and tok != "-R"):
-            i += 1  # glued: --repo=owner/repo / -Rowner/repo
-            continue
-        if tok.startswith("-"):
-            i += 1  # --help or any other boolean flag
-            continue
-        break
-    if i >= n:
+    idx = walk_past_flags(argv, 1, GH_GLOBAL_VALUE_OPTS)
+    if idx is None:
         return None
-    return argv[i], argv[i + 1:]
+    return argv[idx], argv[idx + 1:]
 
 
 def gh_skip_repo_flag(tokens):

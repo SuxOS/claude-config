@@ -82,6 +82,28 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash tests/test_hooks.sh
 
+      # ruff/pyflakes (#292): py_compile (above) only catches syntax errors, not runtime defects
+      # like #272 (a hook that can crash with an unhandled TypeError, breaking its documented
+      # fail-open contract) — undefined names, unused imports, and similar Pyflakes-class checks
+      # generalize that bug class across every tracked *.py instead of relying on a human to spot
+      # the next one. Scoped to `--select F` (ruff's Pyflakes-equivalent rule set) only, NOT ruff's
+      # broader default (which also includes pycodestyle style rules like E702 "multiple statements
+      # on one line") — this codebase's hooks deliberately chain compact `i += 1; continue`-style
+      # statements throughout _hookutil.py and friends, a real style choice, not a defect; a
+      # style-rule linter would flag dozens of intentional lines with nothing to fix. Folded into
+      # this required job for the same auto-merge-gating reason as the other integrity steps
+      # (CLAUDE.md).
+      - name: lint Python hooks/scripts with ruff (pyflakes rules)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet ruff
+          mapfile -t files < <(git ls-files '*.py')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no tracked Python files to lint"; exit 0
+          fi
+          python3 -m ruff check --select F "${files[@]}"
+
       # argv-canon fuzzer (#199): tests/test_hooks.sh only covers hand-picked bypass shapes;
       # this generates the combinatorial wrapper/flag/env/grouping space from an independent
       # reference grammar and asserts strip_prefixes()/block-egress's offending() recover the
