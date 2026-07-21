@@ -163,6 +163,7 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           { "type": "command", "command": "$HOME/.claude/hooks/check-settings-drift.py" }
         ]
