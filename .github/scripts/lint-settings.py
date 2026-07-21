@@ -47,13 +47,16 @@ def bash_constrains_args(pattern):
     if inner is None:
         return False
     inner = inner.strip()
-    if inner.startswith("*"):  # drop the leading wrapper wildcard (`*wrangler deploy` is fine)
-        inner = inner[1:]
-    for tok in inner.split():
-        if tok == "*":
-            continue
-        if FLAG_FENCED.search(tok) or STAR_EMBEDDED.search(tok):
-            return True
+    # Drop the leading wrapper wildcard (`*wrangler deploy *` is fine) — but also check the
+    # un-stripped form, so a fenced flag that's itself the pattern's only/first token (`*-f*`,
+    # `*x*`) isn't hidden by a strip meant for a different, multi-token shape (#379).
+    stripped = inner[1:] if inner.startswith("*") else inner
+    for candidate in (inner, stripped):
+        for tok in candidate.split():
+            if tok == "*":
+                continue
+            if FLAG_FENCED.search(tok) or STAR_EMBEDDED.search(tok):
+                return True
     return False
 
 
