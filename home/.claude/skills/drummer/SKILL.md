@@ -10,8 +10,9 @@ It reuses `~/.claude/scheduled-tasks` — no new engine, just one prompt templat
 `create_scheduled_task` call. Each run does the next unit of work and checks a
 stop-condition; it ends one of two verified ways: **GREEN** (the goal is certified met — it
 disables itself) or **AMBER** (blocked on a human decision — keeps running unless the block
-is fatal). `drummer-monitor` already watches `~/.claude/scheduled-tasks` for GREEN/AMBER and
-surfaces it; drummer itself only launches and confirms.
+is fatal). Each drummer **self-reports** — it pushes a notification on GREEN and on AMBER,
+so nothing is missed. (Optional: arm `drummer-monitor` for aggregated oversight across all
+running drummers — not required, since each drummer reports on its own.)
 
 ## Scope
 
@@ -36,13 +37,13 @@ Given a goal (plus optional constraints/cadence/deadline):
    ```
    You are the drummer "<goal>". MANDATE: <goal>. CONSTRAINTS: <constraints>.
    Each run: (1) do the next best unit of work toward the mandate (use /life, /sux, vault, mail, web, repos as needed); (2) record progress + current status to <status location: vault Matter/<slug>/STATUS.md for life-matters, or a vault note for others>; (3) evaluate STOP-CONDITION: <predicate>.
-   - If STOP-CONDITION is met → call update_scheduled_task(taskId:"drummer-<slug>", enabled:false) to disable yourself, then report GREEN with a summary.
-   - If blocked on a human decision → report AMBER / NEEDS-HUMAN with the specific ask; keep running unless the block is fatal.
+   - If STOP-CONDITION is met → call update_scheduled_task(taskId:"drummer-<slug>", enabled:false) to disable yourself, then push a notification to the user reporting GREEN with a summary.
+   - If blocked on a human decision → push a notification to the user reporting AMBER / NEEDS-HUMAN with the specific ask; keep running unless the block is fatal.
    - HARD-STOP: after <N runs / date>, disable yourself and report regardless.
    Stay strictly within the mandate — no scope creep.
    ```
 3. **Confirm back to the user**: the drummer created, its cadence, its stop-condition, and
-   that `drummer-monitor` will surface GREEN/AMBER — they can list/inspect any time via the
+   that it will notify them on GREEN/AMBER — they can list/inspect any time via the
    scheduled-tasks tools.
 
 ## Examples
