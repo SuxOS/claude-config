@@ -548,6 +548,13 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while sleep 5
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"until sleep 2; do check_status; done"}}'           "blocks sleep as the until loop condition itself (#229)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while command sleep 5; do check_status; done"}}'   "blocks sleep-as-condition behind a command builtin prefix (#229)"
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"! while sleep 5; do check_status; done"}}'         "blocks a negated sleep-as-condition loop (#229)"
+# #267: `for`'s grammar is `for VAR in LIST` — the token right after `for` is the loop VARIABLE
+# name, never a command condition the way while/until's is. The #229 condition check must not run
+# for `for`, or a loop variable that happens to be named `sleep` false-triggers it.
+# shellcheck disable=SC2016
+assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"for sleep in 1 2 3; do echo \"$sleep\"; done"}}'    "allows a for loop whose loop VARIABLE is named sleep — not a sleep condition (#267)"
+# shellcheck disable=SC2016
+assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"for sleep in 1 2 3; do sleep \"$sleep\"; done"}}'   "still blocks when the for loop's BODY actually calls sleep (#267)"
 # #200: a sleep hidden inside a $(...) command substitution nested in a loop piece must still be
 # seen — `_hookutil.pieces()` recurses into substitutions, so this piece surfaces as its own
 # `sleep 5` rather than staying buried inside `echo`'s argument.
@@ -830,8 +837,11 @@ assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --logleve
 assert_exit 2 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"npm --tag=beta publish"}}'                                       "blocks npm publish behind a leading glued --tag= (#289)"
 
 # git push straight to a GitHub-protected branch (#252) — gated on a real `gh api
-# repos/{owner}/{repo}/branches/<branch>/protection` check, not a branch-name guess. Stub `gh` on
-# PATH so the check is deterministic without a real GitHub remote/auth.
+# repos/<owner>/<repo>/branches/<branch>/protection` check, not a branch-name guess. Stub `gh` on
+# PATH so the check is deterministic without a real GitHub remote/auth. owner/repo are now resolved
+# from `origin`'s own configured URL (#264), so origin needs a real github.com remote URL — the
+# local bare-repo path used for the earlier force-push fast-forward tests won't parse as one.
+git -C "$dgrepo" remote set-url origin https://github.com/acme/widgets.git
 dgghstub="$(mktemp -d)"
 cat > "$dgghstub/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -861,8 +871,34 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --all origin\"}}"       "allows a multi-ref --all push — too ambiguous to resolve a single destination (#252)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"sudo git push origin main\"}}"   "blocks a direct push to a protected branch behind a sudo prefix (#252)"
 PATH="$dgoldpath"
-assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"        "allows a direct push to main when gh can't confirm protection (no gh/auth/remote) — fail open (#252)"
 rm -rf "$dgghstub"
+
+# #264: owner/repo must resolve from the SPECIFIC remote a push argv names (`git remote get-url
+# <remote>`), not gh's own ambient default-repo context — a fork workflow's `origin` (an
+# unprotected fork) must not be checked against a different remote's protection just because gh's
+# ambient resolution might pick that other remote by default. Both remotes push a branch named
+# "main" here specifically so a branch-name-only check (ignoring which remote/repo it belongs to)
+# couldn't tell them apart — only a real per-remote owner/repo resolution can.
+git -C "$dgrepo" remote add upstream https://github.com/acme/widgets-upstream.git
+dg264stub="$(mktemp -d)"
+cat > "$dg264stub/gh" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" = "api" ]; then
+  case "$2" in
+    repos/acme/widgets-upstream/branches/main/protection) exit 0 ;;
+    *) exit 1 ;;
+  esac
+fi
+exit 1
+EOF
+chmod +x "$dg264stub/gh"
+PATH="$dg264stub:$dgoldpath"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"     "does not false-block a push to origin just because a DIFFERENT remote's repo is protected — owner/repo resolves from the pushed-to remote, not gh's ambient default (#264)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push upstream main\"}}"   "still blocks a push to the remote whose repo IS actually protected (#264)"
+PATH="$dgoldpath"
+rm -rf "$dg264stub"
+
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"        "allows a direct push to main when gh can't confirm protection (no gh/auth/remote) — fail open (#252)"
 
 rm -rf "$dgrepo" "$dgremote"
 
