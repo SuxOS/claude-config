@@ -504,6 +504,7 @@ def _checkout_discard_target(rest, cwd):
     """"." (bare, or after a `--`) means discard-everything. A pre-`--` tree-ish (`HEAD`, a branch,
     a tag) is the checkout source, not a path — it must not disqualify the match, so it's tracked
     separately from the post-`--`/no-`--` positionals that name what gets discarded."""
+    rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#366)
     seen_dashdash, positionals, pre_dashdash = False, [], []
     i, n = 0, len(rest)
     while i < n:
@@ -548,6 +549,7 @@ def _restore_discard_target(rest, cwd):
     (takes a value picking the restore source) — real git distinguishes the two despite the
     near-identical spelling (#240). `-s`/`--source` consumes a following token as its value
     unless it's already glued via `=`."""
+    rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#366)
     staged, worktree, positionals = False, False, []
     i, n = 0, len(rest)
     while i < n:

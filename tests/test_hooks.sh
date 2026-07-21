@@ -479,7 +479,8 @@ tmprepo="$(mktemp -d)"
 heldwt="$(mktemp -d)"
 git -C "$tmprepo" init -q -b main
 git -C "$tmprepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-git -C "$tmprepo" branch held
+git -C "$tmprepo" checkout -q -b held
+git -C "$tmprepo" checkout -q main  # leaves @{-1}=held (needed for the #241 '-' shorthand cases below)
 git -C "$tmprepo" worktree add -q "$heldwt" held
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held\"}}"       "blocks checkout of a branch held by another worktree (#123)"
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch held\"}}"         "blocks switch to a branch held by another worktree (#123)"
@@ -492,6 +493,12 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 # raise the fatal error this hook front-runs — blocking here would be a false positive.
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --ignore-other-worktrees held\"}}" "allows a held switch with --ignore-other-worktrees — git itself skips the check (#259)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout --ignore-other-worktrees held\"}}" "allows a held checkout with --ignore-other-worktrees — git itself skips the check (#259)"
+# #241: bare `-` is the `cd -`-style previous-branch shorthand — it must resolve to the real
+# branch name (here @{-1}=held, set up above) rather than being absorbed by the generic
+# tok.startswith("-") flag branch and silently skipping the whole check.
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout -\"}}"  "blocks 'git checkout -' when it resolves to a branch held by another worktree (#241)"
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch -\"}}"    "blocks 'git switch -' when it resolves to a branch held by another worktree (#241)"
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout - -- file.txt\"}}" "allows a path restore from '-' (-- paths, not a switch) (#241)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout nonexistent\"}}" "allows checkout of a branch no worktree holds (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"echo git checkout held\"}}"   "allows a non-git command that merely mentions checkout (#123)"
 # #193: a wrapper/prefix word ahead of `git` must not shift the command word out of argv[0].
@@ -681,6 +688,16 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore . b.txt\"}}"           "blocks restore . <extra pathspec> — '.' still discards everything (#320)"
 git -C "$dgrepo" checkout -q -- f.txt
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "allows checkout -- . <extra pathspec> on a clean tree — nothing to discard (#320)"
+
+# #366: a trailing redirect operator+target must not ride into positionals and be misread as a
+# discard-everything "." pathspec — the opposite-direction false-BLOCK counterpart to #359 (which
+# fixed a false-negative from the same missing strip_redirects() in _push_force_hit).
+echo y >> "$dgrepo/f.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- f.txt > .\"}}"    "allows a single-file checkout whose trailing redirect target '.' isn't a discard-everything pathspec (#366)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore f.txt > out.log\"}}"  "allows a single-file restore with a trailing '> file' redirect (#366)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . > out.log\"}}"  "still blocks a real checkout -- . discard with a trailing redirect present (#366)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore . > out.log\"}}"      "still blocks a real restore . discard with a trailing redirect present (#366)"
+git -C "$dgrepo" checkout -q -- f.txt
 
 # #347: --pathspec-from-file supplies the discard pathspec via a file instead of argv — a bare
 # '.' inside the referenced file must be read the same conservative, fail-open way
@@ -934,6 +951,62 @@ assert_exit 2 "$BDM" '{"tool_name":"mcp__some_server__generic_write","tool_input
 assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":123}}'  "fails open on a non-string method field (#358)"
 assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":"not-an-object"}' "fails open on a non-dict tool_input (#358)"
 assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write"}'                              "fails open on a missing tool_input (#358)"
+
+echo "== block-web-egress.py (#360) =="
+BWE="$HOOKS/block-web-egress.py"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com/page"}}'          "allows an ordinary https fetch (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://example.com/page"}}'            "allows an ordinary http fetch (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://169.254.169.254/latest/meta-data/"}}' "blocks the cloud-metadata IP (link-local) (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://metadata.google.internal/computeMetadata/v1/"}}' "blocks the GCP metadata hostname (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://127.0.0.1:8080/admin"}}'        "blocks a loopback IPv4 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://[::1]/"}}'                      "blocks a loopback IPv6 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://10.1.2.3/"}}'                  "blocks a private 10/8 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://192.168.1.1/"}}'                "blocks a private 192.168/16 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://172.16.0.5/"}}'                 "blocks a private 172.16/12 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"file:///etc/passwd"}}'                  "blocks a non-http(s) file:// scheme (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"ftp://example.com/file"}}'              "blocks a non-http(s) ftp:// scheme (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"gopher://example.com/"}}'               "blocks a non-http(s) gopher:// scheme (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://8.8.8.8/"}}'                    "allows a public IP literal target (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebSearch","tool_input":{"query":"claude code hooks"}}'                "allows WebSearch — no url field to check (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{}}'                                            "allows a missing url field — nothing to check (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"Bash","tool_input":{"command":"curl http://169.254.169.254/"}}'        "ignores a non-matching tool_name (#360)"
+assert_exit 0 "$BWE" 'not-json'                                                                            "fails open on malformed JSON (#360)"
+assert_exit 0 "$BWE" '[1,2,3]'                                                                             "fails open on valid-but-non-object top-level JSON (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":[1,2,3]}'                                       "fails open on a non-object tool_input (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":123}}'                                   "fails open on a non-string url field (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"not a url at all"}}'                    "fails open on an unparseable/schemeless url (#360)"
+
+echo "== block-write-overwrite.py (#364) =="
+BWO="$HOOKS/block-write-overwrite.py"
+bworepo="$(mktemp -d)"
+git -C "$bworepo" init -q -b main
+git -C "$bworepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+echo hello > "$bworepo/clean.txt"
+git -C "$bworepo" add clean.txt
+git -C "$bworepo" -c user.email=t@t -c user.name=t commit -q -m "add clean.txt"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/clean.txt\",\"content\":\"new\"}}" "allows overwriting a clean tracked file — nothing to lose (#364)"
+echo modified >> "$bworepo/clean.txt"
+assert_exit 2 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/clean.txt\",\"content\":\"new\"}}" "blocks overwriting a tracked file with an uncommitted UNSTAGED change (#364)"
+git -C "$bworepo" checkout -q -- clean.txt
+echo staged >> "$bworepo/clean.txt"
+git -C "$bworepo" add clean.txt
+assert_exit 2 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/clean.txt\",\"content\":\"new\"}}" "blocks overwriting a tracked file with an uncommitted STAGED change (#364)"
+git -C "$bworepo" reset -q
+git -C "$bworepo" checkout -q -- clean.txt
+echo untracked > "$bworepo/untracked.txt"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/untracked.txt\",\"content\":\"new\"}}" "allows overwriting an untracked file — no git history to discard (#364)"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/brand-new.txt\",\"content\":\"new\"}}" "allows creating a brand-new file that doesn't exist yet (#364)"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$bworepo/clean.txt\",\"old_string\":\"a\",\"new_string\":\"b\"}}" "ignores Edit — out of scope, requires an exact old_string match (#364)"
+assert_exit 0 "$BWO" '{"tool_name":"Write","tool_input":{"file_path":"clean.txt","content":"x"}}'          "fails open on a relative file_path — nothing safe to resolve (#364)"
+nonrepo="$(mktemp -d)"
+echo x > "$nonrepo/f.txt"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$nonrepo/f.txt\",\"content\":\"new\"}}" "fails open on a target outside any git repo (#364)"
+rm -rf "$nonrepo"
+assert_exit 0 "$BWO" 'not-json'                                                                            "fails open on malformed JSON (#364)"
+assert_exit 0 "$BWO" '[1,2,3]'                                                                              "fails open on valid-but-non-object top-level JSON (#364)"
+assert_exit 0 "$BWO" '{"tool_name":"Write","tool_input":[1,2,3]}'                                          "fails open on a non-object tool_input (#364)"
+assert_exit 0 "$BWO" '{"tool_name":"Write","tool_input":{"content":"x"}}'                                  "fails open on a missing file_path (#364)"
+rm -rf "$bworepo"
 
 echo "== audit-git-consequences.py (#236 PostToolUse consequence audit) =="
 AGC="$HOOKS/audit-git-consequences.py"

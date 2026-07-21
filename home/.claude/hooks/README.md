@@ -96,6 +96,27 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   autonomous session, so a match blocks unconditionally (mirrors `block-destructive-git.py`'s
   merge/publish predicate). `create`/`update`/`list`/`get` tools are out of scope — not Tier-A on
   their own. Fails open on any error or unrecognized tool-name/tool-input shape.
+- **`block-web-egress.py`** — PreToolUse (matcher `WebFetch|WebSearch`). Extends the egress rail to
+  the native web tools (#360): neither had a hook nor a deny rule, even though block-egress.py's own
+  block message points bypassed Bash egress traffic AT them. Reads `tool_input.url` (WebFetch's
+  fetch target — WebSearch's `query` has no URL to check) and blocks on a non-http(s) scheme or a
+  LITERAL loopback/link-local/private/reserved IP target or known metadata hostname (covers the
+  169.254.169.254 cloud-metadata address, since it's link-local) — no DNS resolution performed, so a
+  hostname that merely resolves to one of these is invisible here, same "speed bump, not a seal"
+  honesty as block-egress.py. No repo state can prove a fetch target safe and there's no human to
+  confirm in an autonomous session, so a match blocks unconditionally. Fails open on any error or
+  unrecognized shape.
+- **`block-write-overwrite.py`** — PreToolUse (matcher `Write`). Blocks a blind full-file overwrite
+  of a git-tracked file that has uncommitted staged-or-unstaged changes (#364): every other
+  "discard uncommitted work" guard here is Bash-scoped (block-destructive-git.py's
+  `_reset_hard_hit`/`_discard_hit`), but Write fully replaces a file's content with no diff-aware
+  merge and had zero enforcement. Runs `git status --porcelain` scoped to `tool_input.file_path` in
+  the file's own directory; blocks when the file is tracked AND dirty (any porcelain line other than
+  the untracked `??` marker) — reusing block-destructive-git.py's `_working_tree_dirty()` signal,
+  scoped to one path. `Edit` is deliberately out of scope (it requires an exact `old_string` match,
+  so it can't blindly clobber an unseen change the way Write can). Unconditional on a hit, same
+  Tier-A shape as block-destructive-mcp.py. Fails open on any error, a relative `file_path`, or a
+  target outside a readable git repo.
 - **`audit-git-consequences.py`** — PostToolUse (matcher `Bash`). A complementary, last-resort net
   behind the PreToolUse argv rails above (#236): instead of recognizing a destructive git COMMAND
   before it runs, it snapshots the cwd's branch/remote-tracking ref tips (via `git_out()`/
