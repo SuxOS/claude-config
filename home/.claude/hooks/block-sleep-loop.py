@@ -72,10 +72,15 @@ def offending(command):
             has_loop = True
             # `while sleep 5; do ...; done` / `until sleep 5; do ...; done` puts `sleep` as the
             # loop's OWN condition, in the same piece as the loop keyword (no `;` between them) —
-            # check the remainder of this piece too, not just other pieces' command words.
-            rest = strip_prefixes(stripped[1:])
-            if rest and basename(rest[0]) == "sleep":
-                has_sleep = True
+            # check the remainder of this piece too, not just other pieces' command words. Only
+            # `while`/`until` have a command-word condition there; `for`'s grammar is `for VAR in
+            # LIST`, so the token right after `for` is the loop VARIABLE name, never a command
+            # (#267) — checking it the same way misreads `for sleep in 1 2 3; do ...; done` as a
+            # sleep condition just because the loop variable happens to be named `sleep`.
+            if stripped[0] in ("while", "until"):
+                rest = strip_prefixes(stripped[1:])
+                if rest and basename(rest[0]) == "sleep":
+                    has_sleep = True
         if _command_word(argv) == "sleep":
             has_sleep = True
     return has_loop and has_sleep

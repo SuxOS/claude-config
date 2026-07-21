@@ -72,12 +72,14 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   `git stash list` isn't already empty (#239). The seventh, `gh pr merge`/`gh release create`
   (unless `--draft`)/`npm publish` (unless `--dry-run`), has no repo state to consult and so fires
   unconditionally on a match instead (#242). The eighth, a bare `git push` straight to a branch
-  GitHub reports as protected, asks `gh api repos/{owner}/{repo}/branches/<branch>/protection`
-  rather than guessing from the branch name — this hook installs into every repo the user works in
-  and plenty push straight to `main` with no PR workflow at all, so a blanket name match would be
-  false-positive-prone (#242) — and fails open (not protected) on an unresolved destination, missing
-  `gh`/auth, or any API error (#252). Registered with `pretooluse-bash.py` via its
-  `check(command, cwd)`; fails open on any error.
+  GitHub reports as protected, asks `gh api repos/<owner>/<repo>/branches/<branch>/protection`
+  rather than guessing from the branch name — `<owner>`/`<repo>` are resolved from the SPECIFIC
+  remote the push argv targets (`git remote get-url <remote>`), not `gh`'s own ambient default-repo
+  context, which can diverge in a fork workflow (#264) — this hook installs into every repo the
+  user works in and plenty push straight to `main` with no PR workflow at all, so a blanket name
+  match would be false-positive-prone (#242) — and fails open (not protected) on an unresolved
+  destination, missing `gh`/auth, an unparsable/non-GitHub remote URL, or any API error (#252).
+  Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
 
 - **`block-destructive-fs.py`** — extends the Tier-A cardinal rail to plain, NON-GIT filesystem
   operations (#345): `block-destructive-git.py` only inspects `git ...` argv, so a bare

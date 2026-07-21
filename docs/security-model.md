@@ -6,7 +6,7 @@ Claude Code does **not** prompt before tool calls, so the `permissions.deny` lis
 
 ## What the deny list is — and isn't
 
-The deny list (`Bash(curl *)`, `Bash(wget *)`, `Bash(ssh *)`, `Bash(scp *)`,
+The deny list (`Bash(curl *)`, `Bash(wget *)`, `Bash(ssh *)`, `Bash(scp *)`, `Bash(tar *)`,
 `Bash(gh api -X *)`, `Bash(gh api --method *)`) is **defense-in-depth against casual or
 accidental misuse — a speed bump, not a boundary.** It is deliberately *not* a real
 network-egress or exfiltration boundary, and must not be mistaken for one. Two structural
@@ -17,8 +17,8 @@ reasons it cannot be, as long as the current allow-list stands:
    arbitrary sockets and extract archives directly, with no denied binary involved.
    `python3 -c 'import urllib.request; ...'` and `node -e 'fetch(...)'` reproduce exactly
    the HTTP fetch / data exfil that denying `curl`/`wget` is meant to stop; an
-   npx-installed tool reproduces anything else. Denying `tar` would be undone the same
-   way. So per-binary network/archive denies are porous by construction. (#63, #69)
+   npx-installed tool reproduces anything else. Denying `tar` (already done) is undone the
+   same way. So per-binary network/archive denies are porous by construction. (#63, #69)
 
 2. **`gh api` is a generic escape hatch, and pattern denies are order-sensitive.**
    `gh api -X DELETE /repos/O/R` ≈ `gh repo delete`; `gh api -X PUT

