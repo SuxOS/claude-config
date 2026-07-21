@@ -36,14 +36,22 @@ A piece's command word is read through `_hookutil.strip_prefixes()` (#193) — t
 prefix canonicalization every other rail here uses — so `command rm -rf x`, `sudo mv a b`, etc. all
 reach the real command word. `_hookutil.strip_redirects()` is applied before any positional is
 counted (#359) so a trailing `> log 2>&1` can't inflate `rm`'s target list or `mv`/`cp`'s positional
-count.
+count. Every target token is then run through ONE shell-style expansion pass (`_expand_target()`:
+tilde, `$env`/`${env}`, then globs) BEFORE it is classified — expand first, classify the result,
+never the literal token — so `rm -rf ~/dir`, `$HOME/dir`, or `*` can't be misread as a
+literally-nonexistent "nothing to lose" path and silently allowed while the shell expands and
+deletes the real data. A target the pass can't confidently expand (unknown `~user`, an env var
+this process lacks, a glob matching nothing) is treated AS unsafe — fail-SAFE toward blocking,
+never toward allow.
 
 Fail-open on any error, a `cwd` that can't be resolved, or a path this rail can't confidently
 classify (missing cwd means a relative target can't even be resolved to check) — a hook bug or an
 unresolved case must never wedge the session or false-block routine cleanup, same contract as
 block-destructive-git.py (#230).
 """
+import glob
 import os
+import re
 import sys
 import tempfile
 
@@ -79,6 +87,41 @@ def _resolve(path, cwd):
     if os.path.isabs(path):
         return os.path.normpath(path)
     return os.path.normpath(os.path.join(cwd, path))
+
+
+_GLOB_META_RE = re.compile(r"[*?\[]")
+
+
+def _expand_target(token, cwd):
+    """Expand ONE rm/mv/cp target token the way the shell will BEFORE the command runs — tilde
+    (`~`, `~user`), then env vars (`$HOME`, `${VAR}`), then globs (`*`/`?`/`[...]`) — into the
+    concrete filesystem path(s) to classify. Returns a LIST of resolved absolute paths, or None
+    when the token can't be confidently expanded: an unknown `~user`, an env var this process
+    doesn't have (a leftover `$` after expansion), or a glob that matches nothing here.
+
+    This is the SINGLE canonicalization pass (block-egress.py's strip_prefixes/inline_payloads
+    design, CLAUDE.md #129): expand once, up front, then classify the RESULT — never classify the
+    literal, unexpanded token. It closes the literal-target bypass a security review confirmed:
+    `_resolve()`/`_path_provably_safe_to_delete()` on a raw `~/dir`, `$HOME/dir`, or `*` sees a
+    path that doesn't literally exist and reads it as "nothing to lose" -> ALLOW, while the real
+    shell expands it and deletes the actual data (exactly the `rm -rf ~/some-important-dir` case
+    this rail's docstring cites as its motivating example). An unresolvable token is therefore
+    NEVER "nothing to lose": callers must treat None as "not provably safe" (block), the fail-SAFE
+    direction — the same posture `_path_provably_safe_to_delete` already takes on any target it
+    can't clear as junk."""
+    expanded = os.path.expanduser(token)
+    if expanded.startswith("~"):
+        return None  # unknown user / unresolved tilde — can't prove it's safe to lose
+    expanded = os.path.expandvars(expanded)
+    if "$" in expanded:
+        return None  # an env var absent from this process stayed literal — unresolved, block
+    if _GLOB_META_RE.search(expanded):
+        pattern = expanded if os.path.isabs(expanded) else os.path.join(cwd, expanded)
+        matches = glob.glob(pattern)
+        if not matches:
+            return None  # a glob resolving to nothing here — can't prove safe, block
+        return [os.path.normpath(m) for m in matches]
+    return [_resolve(expanded, cwd)]
 
 
 def _under_scratch_root(path):
@@ -131,7 +174,14 @@ def _rm_hit(rest, cwd):
     targets = _rm_targets(rest)
     if not targets or cwd is None:
         return None  # no -rf shape, or no cwd to resolve relative targets against (#123)
-    unsafe = [t for t in targets if not _path_provably_safe_to_delete(_resolve(t, cwd), cwd)]
+    unsafe = []
+    for t in targets:
+        resolved = _expand_target(t, cwd)  # tilde/$var/glob expansion BEFORE classification
+        if resolved is None or any(
+            not _path_provably_safe_to_delete(p, cwd) for p in resolved
+        ):
+            # unresolvable (fail-safe -> block), or an expanded path that isn't provably junk
+            unsafe.append(t)
     return unsafe or None
 
 
@@ -155,15 +205,19 @@ def _clobber_target(cmd, rest, cwd):
     if len(positionals) != 2:
         return None  # multi-source / directory-destination form — too ambiguous here
     _src, dst = positionals
-    dst_path = _resolve(dst, cwd)
-    if os.path.islink(dst_path) or not os.path.isfile(dst_path):
-        return None  # missing, a directory, or a symlink — not a plain-file clobber
-    try:
-        if os.path.getsize(dst_path) == 0:
-            return None  # empty file — nothing to lose
-    except OSError:
-        return None
-    return dst_path
+    resolved = _expand_target(dst, cwd)  # tilde/$var/glob expansion BEFORE the clobber check
+    if resolved is None:
+        return dst  # unresolvable destination — can't prove it isn't a clobber (fail-safe, block)
+    for dst_path in resolved:
+        if os.path.islink(dst_path) or not os.path.isfile(dst_path):
+            continue  # missing, a directory, or a symlink — not a plain-file clobber
+        try:
+            if os.path.getsize(dst_path) == 0:
+                continue  # empty file — nothing to lose
+        except OSError:
+            continue
+        return dst_path  # an existing, non-empty regular file would be overwritten
+    return None
 
 
 _MESSAGES = {

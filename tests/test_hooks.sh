@@ -947,6 +947,18 @@ assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf node_modules tracked\"}}"     "blocks when even one of several rm -rf targets isn't provably safe (#345)"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"sudo rm -rf tracked\"}}"             "blocks a destructive rm -rf behind a sudo prefix (#345)"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf tracked > log.txt 2>&1\"}}"   "blocks rm -rf with a trailing redirect that must not swallow the target (#345)"
+
+# literal-target bypass (security review HIGH, #365): the rail must EXPAND ~/$env/glob targets
+# BEFORE classifying them — a raw, unexpanded form must never be misread as a nonexistent
+# "nothing to lose" path and silently allowed while the shell expands it and deletes real data.
+export DFS_BYPASS_VAR="$dfsrepo/tracked"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf \$DFS_BYPASS_VAR\"}}"        "blocks rm -rf on a \$env-var target that expands to a tracked dir — no unexpanded-form bypass (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf track*\"}}"                  "blocks rm -rf on a glob that expands to a tracked dir (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf \$DFS_UNSET_XYZ/tracked\"}}" "blocks rm -rf on an unresolvable \$env-var target — fail safe toward block (#365)"
+unset DFS_BYPASS_VAR
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf ~\"}}"                       "blocks rm -rf ~ — tilde expands to the real, non-empty home dir (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \$HOME\"}}"                  "blocks rm -rf \$HOME — the exact motivating bypass, env var expands to real home (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf ~nonexistentuser4242/x\"}}"  "blocks rm -rf on an unresolvable ~user target — fail safe toward block (#365)"
 rm -rf "$dfsrepo"
 
 # mv/cp -f overwrite protection
@@ -954,6 +966,11 @@ echo old > "$dfsroot/dest.txt"
 echo new > "$dfsroot/src.txt"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt dest.txt\"}}"             "blocks mv clobbering an existing non-empty destination file (#345)"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f src.txt dest.txt\"}}"          "blocks cp -f clobbering an existing non-empty destination file (#345)"
+# literal-destination bypass (security review HIGH, #365): expand the mv/cp destination too
+export DFS_DST_VAR="$dfsroot/dest.txt"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt \$DFS_DST_VAR\"}}"        "blocks mv clobbering a \$env-var destination that expands to an existing non-empty file (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt \$DFS_UNSET_DST_XYZ\"}}"  "blocks mv onto an unresolvable \$env-var destination — fail safe toward block (#365)"
+unset DFS_DST_VAR
 assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp src.txt dest.txt\"}}"             "allows a bare cp with no -f — out of scope (#345)"
 assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv -n src.txt dest.txt\"}}"          "allows mv -n (--no-clobber) over an existing destination (#345)"
 assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f -b src.txt dest.txt\"}}"       "allows cp -f -b — a backup of the prior destination is made (#345)"
