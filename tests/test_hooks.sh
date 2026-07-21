@@ -670,6 +670,16 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 git -C "$dgrepo" checkout -q -- f.txt
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "allows checkout -- . <extra pathspec> on a clean tree — nothing to discard (#320)"
 
+# #366: a trailing redirect operator+target must not ride into positionals and be misread as a
+# discard-everything "." pathspec — the opposite-direction false-BLOCK counterpart to #359 (which
+# fixed a false-negative from the same missing strip_redirects() in _push_force_hit).
+echo y >> "$dgrepo/f.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- f.txt > .\"}}"    "allows a single-file checkout whose trailing redirect target '.' isn't a discard-everything pathspec (#366)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore f.txt > out.log\"}}"  "allows a single-file restore with a trailing '> file' redirect (#366)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . > out.log\"}}"  "still blocks a real checkout -- . discard with a trailing redirect present (#366)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore . > out.log\"}}"      "still blocks a real restore . discard with a trailing redirect present (#366)"
+git -C "$dgrepo" checkout -q -- f.txt
+
 # #347: --pathspec-from-file supplies the discard pathspec via a file instead of argv — a bare
 # '.' inside the referenced file must be read the same conservative, fail-open way
 # _working_tree_dirty() already shells out to git. Live-verified: git only honors this flag
