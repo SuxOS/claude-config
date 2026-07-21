@@ -51,6 +51,30 @@
   step you'll have to re-debug just moves the cost, it doesn't remove it.
 - Verify shell/OS assumptions before looping a command across N items (zsh glob rules ≠
   bash; macOS coreutils ≠ GNU) — one failed dry run beats N failed real ones.
+- **The Bash tool runs a zsh login shell (macOS); CI/workflows run bash — a standing drift
+  source.** NEVER name a variable with a zsh-reserved name in any script the Bash tool runs:
+  `status`, `path`, `cdpath`, `argv`, `pipestatus` are special/read-only in zsh (`status` is
+  read-only — assigning it silently fails and broke a `gh run` watcher loop TWICE in one
+  session). Keep scripts bash/POSIX-portable and pick non-reserved names (`state`, `p`, `args`,
+  `rc`) even when the interactive shell is zsh.
+- **A `SessionStart` hook (`check-settings-drift.py`) warns when live `~/.claude/settings.json`
+  has drifted from the claude-config repo source** on the safety-critical fields (`permissions.
+  deny`, `hooks`, `defaultMode`, `disableClaudeAiConnectors`) plus `enabledPlugins`. settings.json
+  is COPIED, not symlinked (Code rewrites it in place — install.sh:67), so it diverges silently: a
+  dual-account login once wiped the ENTIRE deny list + all hooks for a whole session before anyone
+  noticed. The hook fails OPEN, normalizes plugin `false`≡absent (Code drops disabled keys on
+  rewrite), and points at `install.sh --apply` to reconcile. This drift is live and ongoing — Code
+  re-enabled `chrome-devtools-mcp` mid-session in the very session the hook shipped.
+- **Reach for the specialized skill/MCP/tool by default, every session** — `/brainstorming` and
+  `/deep-research` for open-ended design/research, connected MCPs (sux, cloudflare, grafana,
+  obsidian, semgrep, typescript-lsp) for their exact job — instead of hand-rolling with grep/prose.
+  Deferred tools load on demand via ToolSearch (no pre-load), so an unused connected capability is a
+  standing miss, not a neutral default (Cardinal rule #2b).
+- **Prefer deferring heavy/async work to the cloud pipeline or the `claude@` bot to keep the
+  interactive (m@) quota free** — file issues for the build loop (`dispatch`) or hand sustained
+  drudge to bot-owned cloud routines, rather than burning the foreground session on long autonomous
+  work. The interactive session is the setpoint/orchestrator; the cloud plane does the sustained
+  drain (Cardinal rule #5 + the two-account human/bot split).
 - Prompt-cache long-lived context (this file, project CLAUDE.md) at the front of a
   session; don't re-paste large docs when a file reference will do.
 - **Never put comments in a code snippet meant to be copy-pasted.** Strip all explanatory

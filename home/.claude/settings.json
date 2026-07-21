@@ -101,29 +101,22 @@
     "mcp-server-dev@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
     "hookify@claude-plugins-official": true,
-    "mcp-tunnels@claude-plugins-official": false,
     "plugin-dev@claude-plugins-official": true,
-    "playground@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true,
-    "project-artifact@claude-plugins-official": true,
     "skill-creator@claude-plugins-official": true,
-    "ralph-loop@claude-plugins-official": false,
-    "learning-output-style@claude-plugins-official": false,
+    "learning-output-style@claude-plugins-official": true,
     "superpowers@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
-    "playwright@claude-plugins-official": false,
     "security-guidance@claude-plugins-official": true,
-    "chrome-devtools-mcp@claude-plugins-official": true,
-    "sux@sux": true,
+    "chrome-devtools-mcp@claude-plugins-official": false,
     "explanatory-output-style@claude-plugins-official": true,
     "code-review@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
-    "agent-sdk-dev@claude-plugins-official": false,
-    "claude-code-setup@claude-plugins-official": false,
-    "github@claude-plugins-official": true,
+    "github@claude-plugins-official": false,
     "semgrep@claude-plugins-official": true,
-    "session-report@claude-plugins-official": true
+    "session-report@claude-plugins-official": false,
+    "sux@sux": true
   },
   "extraKnownMarketplaces": {
     "cloudflare": {
@@ -131,29 +124,29 @@
         "source": "github",
         "repo": "cloudflare/skills"
       },
-      "autoUpdate": false
-    },
-    "sux": {
-      "source": {
-        "source": "github",
-        "repo": "SuxOS/sux"
-      },
-      "autoUpdate": false
+      "autoUpdate": true
     },
     "grafana-ai-marketplace": {
       "source": {
         "source": "github",
         "repo": "grafana/ai-marketplace"
       },
-      "autoUpdate": false
+      "autoUpdate": true
     },
     "claude-plugins-official": {
       "source": {
         "source": "github",
         "repo": "anthropics/claude-plugins-official"
       }
+    },
+    "sux": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/SuxOS/sux.git"
+      }
     }
   },
+  "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "theme": "dark-daltonized",
   "inputNeededNotifEnabled": true,
@@ -166,7 +159,15 @@
       "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and inspecting Cloudflare Worker state via read-only wrangler subcommands (tail, deployments list, kv key get) — deploy, secret, and delete subcommands are Tier A, denied, and require human hands"
     ]
   },
+  "disableClaudeAiConnectors": true,
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/check-settings-drift.py" }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Agent|Task",
@@ -207,5 +208,7 @@
         ]
       }
     ]
-  }
+  },
+  "autoMemoryEnabled": true,
+  "autoDreamEnabled": true
 }
