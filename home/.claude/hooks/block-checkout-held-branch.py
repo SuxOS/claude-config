@@ -27,22 +27,27 @@ run into git's own fatal error.
 Deliberately narrow to keep false positives near zero — it fires ONLY when all of these hold:
   - the command word (per shell piece) is `git` with subcommand `checkout` or `switch`;
   - exactly one positional target and no `-b`/`-B`/`-c`/`-C`/`--orphan` (creation), no `--detach`
-    /`-d`, and no `--`/multi-positional (path restore) — those aren't the held-branch-switch case;
+    /`-d`, no `--ignore-other-worktrees` (git itself skips the collision check, #259), and no
+    `--`/multi-positional (path restore) — those aren't the held-branch-switch case;
   - that target names a branch some OTHER worktree already holds.
 Anything it can't parse cleanly is allowed. Fail-open on any error — a hook bug must never wedge
 the session (repo convention). Exit 2 = block; exit 0 = allow.
 """
-import json
 import os
 import sys
 
-from _hookutil import git_out, git_subcommand, pieces, strip_prefixes
+from _hookutil import git_out, git_subcommand, hook_tool_input, load_hook_input, pieces, strip_prefixes
 
 # checkout/switch flags that create a branch (take the new name as their value) — NOT a switch into
 # an existing, possibly-held branch, so never the held-branch-switch case.
 CREATE_OPTS = {"-b", "-B", "-c", "-C", "--orphan"}
 # flags that mean "don't land on a branch ref at all" (detached HEAD) — also not the held-branch case.
 DETACH_OPTS = {"-d", "--detach"}
+# tells git itself to skip the exact worktree-collision check this hook front-runs
+# (git-switch(1)/git-checkout(1) --ignore-other-worktrees, audited #259) — git will NOT raise the
+# fatal error in this case, so treating the target as held-and-blocked would be a false positive,
+# not a conservative miss.
+IGNORE_WORKTREE_OPTS = {"--ignore-other-worktrees"}
 
 
 def checkout_target(argv):
@@ -72,6 +77,8 @@ def checkout_target(argv):
             return None              # creating a branch, not switching into an existing one
         if tok in DETACH_OPTS:
             return None              # detached HEAD, holds no branch ref
+        if tok in IGNORE_WORKTREE_OPTS:
+            return None              # git itself skips the collision check — not our case to block
         if tok.startswith("-"):
             j += 1                   # some other flag (-f/-q/--track/…); value-taking forms are rare
             continue                 # and only cause a harmless miss, never a false block
@@ -145,15 +152,14 @@ def check(command, cwd):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 

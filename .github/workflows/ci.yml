@@ -64,7 +64,7 @@ jobs:
       # for the same reason as the other integrity steps above (see CLAUDE.md).
       - name: lint GitHub Actions workflow files
         if: ${{ !cancelled() }}
-        uses: docker://rhysd/actionlint:latest
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
         with:
           args: -color
 
@@ -147,6 +147,26 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python3 .github/scripts/run-skill-evals.py
 
+  # fuzz-argv-exec (ADVISORY, #228): checks the wrapper/sudo prefix shapes tests/fuzz_argv_canon.py
+  # already covers against GROUND TRUTH — actually execs `<prefix> <argv-echoing helper>` via real
+  # env/timeout/nice/xargs/stdbuf/exec/sudo binaries and diffs their observed argv against what
+  # `_hookutil.strip_prefixes()` predicts — instead of only a second hand-authored reference table
+  # (which can be wrong in the same direction as the implementation; see tests/fuzz_argv_exec.py's
+  # module docstring for the `env -S`/#227 case that motivated this). Depends on real system
+  # binaries' exact installed behavior (available wrappers, sudo policy, coreutils version), a
+  # strictly riskier dependency for a hard merge gate than the pure-computation fuzzer already
+  # folded into the required `shellcheck` job — so, same reasoning as skill-evals above, this is a
+  # STANDALONE ADVISORY job, never folded in.
+  fuzz-argv-exec:
+    name: fuzz-argv-exec
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: fuzz argv canonicalization against real subprocess execution
+        run: python3 tests/fuzz_argv_exec.py
+
   # `bash -n install.sh` only catches parse errors, not logic bugs (wrong case glob, broken
   # idempotency check, etc). This actually runs the script end-to-end against a scratch HOME
   # and checks the result, then runs it a second time to assert idempotency (#42).
@@ -163,6 +183,7 @@ jobs:
           scratch_home="$(mktemp -d)"
           HOME="$scratch_home" bash install.sh
 
+          shopt -s dotglob
           for entry in home/.claude/*; do
             name="$(basename "$entry")"
             case "$name" in
@@ -172,6 +193,7 @@ jobs:
             link="$scratch_home/.claude/$name"
             [ -L "$link" ] || { echo "expected symlink missing: $link" >&2; exit 1; }
           done
+          shopt -u dotglob
           [ -L "$scratch_home/.claude/CLAUDE.md" ] || { echo "expected symlink missing: $scratch_home/.claude/CLAUDE.md" >&2; exit 1; }
           [ -e "$scratch_home/.claude/settings.json" ] || { echo "settings.json not copied" >&2; exit 1; }
 
@@ -185,3 +207,24 @@ jobs:
             exit 1
           fi
           echo "install.sh smoke test passed"
+
+      # #334: a missing settings.json source must hard-fail (exit 1) the same way every other
+      # tracked item does via missing=() — never a silent exit-0 no-op. Runs against a scratch
+      # copy of the repo so this doesn't disturb the checkout the step above already verified.
+      - name: install.sh hard-fails when settings.json's source is missing
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          scratch_repo="$(mktemp -d)"
+          cp -r . "$scratch_repo"
+          rm -f "$scratch_repo/home/.claude/settings.json"
+          scratch_home="$(mktemp -d)"
+          if out=$(HOME="$scratch_home" bash "$scratch_repo/install.sh" 2>&1); then
+            echo "install.sh exited 0 with a missing settings.json source — should hard-fail (#334)" >&2
+            echo "$out" >&2
+            exit 1
+          else
+            echo "$out" | grep -q "settings.json" || { echo "expected the error to mention settings.json" >&2; echo "$out" >&2; exit 1; }
+          fi
+          [ -e "$scratch_home/.claude/settings.json" ] && { echo "settings.json should not have been created" >&2; exit 1; }
+          echo "install.sh missing-settings.json hard-fail test passed (#334)"

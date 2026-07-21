@@ -61,6 +61,14 @@
   constrain Bash arguments, and a plugin MCP deny must be `mcp__plugin_<plugin>_<server>__<tool>`
   or it silently fails open with no warning. Verify the matcher against the live tool surface
   before scoping any rule in `settings.json` (see `home/.claude/settings.README.md`).
+- **A `hooks.PreToolUse` `matcher` string is a THIRD, separate gotcha from the two above** (#260,
+  verified live against the Claude Code hooks docs): it's an unanchored regex whenever it contains
+  any character outside `[A-Za-z0-9_\- ,|]`, but plain `mcp__<server>` (no regex metacharacter)
+  contains ONLY those characters and so is evaluated as an exact string — it matches nothing, not
+  "every tool from that server." To match a whole server (or every MCP tool) the pattern needs an
+  explicit trailing `.*` after each `__` (`mcp__memory__.*`, or `mcp__.*__.*` for all servers/tools)
+  — this is a different mechanism from `permissions.deny`'s glob syntax, so don't assume the two
+  share a wildcard convention.
 - **An issue-build branch can itself lag `origin/main`**, not just an issue's cited line
   numbers — when a sibling build merges first, the branch this build was cut from predates
   that merge. Before editing a shared file (e.g. `block-egress.py`, `tests/test_hooks.sh`),
@@ -126,6 +134,16 @@
   reusing for any new git-consulting rail: resolve every ref/state check through one of these, and
   treat any `None`/unresolved result as "allow" — never "block" — so an unreadable repo or a git
   subprocess quirk degrades to a missed detection, never a false block.
+- **A `git_returncode()` result with exactly two meaningful codes (e.g. `merge-base
+  --is-ancestor`'s 0/1) must be tested for BOTH explicitly, not just `== 0`** (#339/#343): treating
+  "not 0" as "definitely the other value" silently folds `None` and any other exit code (128 on a
+  pruned/invalid object, a timeout, ...) into whatever branch handles the non-zero case instead of
+  "unknown, skip" — same trap applies to a `git_out()`-backed helper, which collapses any failure
+  to `None`, so a caller doing `bool(result)` instead of comparing against the specific expected
+  value conflates "ran fine, found nothing" with "couldn't run." To build a real (not mocked)
+  fixture for this class of test, `git reflog expire --expire=now --all && git gc -q --prune=now`
+  on an already-unreachable commit turns its sha into a genuinely invalid git object —
+  `merge-base`/`branch --contains` then fail with real nonzero exits instead of a synthetic error.
 - **Extending `WRAPPERS` in `strip_prefixes()` can silently create a new false positive** (#179):
   a wrapper-shaped word may have an inspection-only flag that reports on the next word instead of
   executing it (`command -v curl` / `-V` prints curl's path, it never runs it). Blindly stripping
@@ -181,6 +199,34 @@
   full value-taking surface AND the two genuinely ambiguous boolean-or-value flags (`--browser`/
   `--color`) that a docs skim could easily mis-classify either way. Prefer this over a doc-only
   audit whenever the tool has one; it's exhaustive and exact where docs are prose.
+- **A predicate that recognizes an argv shape via exact list/token equality should first ask
+  whether git's real grammar is a union/superset relation, not an intersection** (#319, #320, the
+  same root mistake filed as two separate issues): `_push_dest_branch`/`_push_force_hit` read a
+  bare `HEAD` refspec (no colon) as a literal branch named "HEAD" instead of resolving it, and
+  `_checkout_discard_target`/`_restore_discard_target` required the pathspec list to equal exactly
+  `["."]`, missing that `.` unions in ANY other pathspec (`git checkout -- . extra.txt` still
+  discards everything). When auditing an exact-equality check (`x == [...]`, a literal ref/token
+  compare) against a git argv shape, check whether "exactly this list" should really be "this
+  token is present" or "this value resolves to X" before trusting the existing check.
+- **This builder sandbox has outbound network access to public registries** (#322/#303): a `curl`
+  to Docker Hub's or the npm registry's public API succeeds. Issue #303's own text assumed
+  otherwise ("no network access to confirm a specific version tag exists") and left a `:latest`
+  pin for "a human or a future build with live CI feedback" to fix — that assumption was wrong,
+  not a real sandbox constraint. Before deferring a lookup (a digest, a release version, an
+  upstream API shape) as unverifiable, try the live request first.
+- **A "live-verified" mapping doesn't need a live MCP session** (#348): the Cloudflare tool-name
+  mapping in settings.README.md was already confirmed from the plugin's own `.mcp.json` and its
+  upstream server's source/README, not from a connected `/mcp` session — that's an accepted
+  verification tier here, not a stand-in for the real thing. `WebFetch`/`WebSearch` against a
+  plugin's `.mcp.json` (find its repo path via `enabledPlugins` + `extraKnownMarketplaces` in
+  settings.json) and the upstream MCP server's own docs can resolve a "needs live verification"
+  issue the same way, without waiting for a connected session.
+- **An investigation-only issue ("Issue #N looks already resolved") does not close itself once
+  its target is fixed** (#296/#350, the same gap hit twice): #296 recommended closing #289 and is
+  still open even though #289 was closed separately days ago — nothing re-checks or closes #296.
+  When an issue's whole scope is "verify X, close it if stale," close BOTH the stale target and
+  the investigation issue directly (`gh issue close`) once confirmed, rather than leaving either
+  as a recommendation for a human to act on later.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.

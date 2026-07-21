@@ -58,9 +58,9 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
 - **`block-destructive-git.py`** — enforces the work skill's Tier-A rail in prose (home/.claude/
   skills/work/SKILL.md: "never force-push, merge/publish without confirmation, hard-delete, or do
   anything irreversible/destructive without an explicit yes", #230, #242). Eight narrowly-scoped
-  predicates, six of them checked against every `git` piece of the command and conservative the
-  same way block-checkout-held-branch.py is (a missed detection is a harmless allow; nothing they
-  can't confidently resolve is ever blocked): `git push -f`/`--force` that is provably NOT a
+  predicates, each checked against every relevant `git` piece of the command, seven of them
+  conservative the same way block-checkout-held-branch.py is (a missed detection is a harmless
+  allow; nothing they can't confidently resolve is ever blocked): `git push -f`/`--force` that is provably NOT a
   fast-forward of the remote-tracking ref known locally (a force-push to a brand-new branch, or
   one that's still an ancestor relationship, is left alone — `--force-with-lease` is also always
   allowed, it's git's own safe form); `git reset --hard` over a working tree with uncommitted
@@ -78,6 +78,34 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   false-positive-prone (#242) — and fails open (not protected) on an unresolved destination, missing
   `gh`/auth, or any API error (#252). Registered with `pretooluse-bash.py` via its
   `check(command, cwd)`; fails open on any error.
+
+- **`block-destructive-mcp.py`** — PreToolUse (matcher `mcp__.*__.*`). Extends the Tier-A cardinal
+  rail to MCP tool calls (#260): every other destructive-action guard here only inspects Bash argv
+  text, so an MCP tool call (e.g. the GitHub plugin's `merge_pull_request`/`push_files`/
+  `delete_file`) had zero enforcement under `bypassPermissions`. Splits `tool_name` on the last `__`
+  to isolate the real tool name from its server/plugin namespace, then blocks if any `_`/`-`
+  separated token in it exactly matches a Tier-A verb (`merge`, `delete`, `push`, `force`,
+  `publish`, `deploy`) — the same pattern-match-the-name approach as the Bash rails, generalized so
+  it covers every current and future MCP plugin instead of a hand-maintained per-plugin
+  enumeration. Also scans `tool_input["method"]`/`["action"]` for the same verb set (#358), so a
+  consolidated tool that bundles several actions behind one generic name (e.g. GitHub's
+  `label_write`, `method: "delete"`) is still caught even when `tool_name` itself carries no
+  destructive token. No repo state can prove such a call safe and there's no human to confirm in an
+  autonomous session, so a match blocks unconditionally (mirrors `block-destructive-git.py`'s
+  merge/publish predicate). `create`/`update`/`list`/`get` tools are out of scope — not Tier-A on
+  their own. Fails open on any error or unrecognized tool-name/tool-input shape.
+- **`audit-git-consequences.py`** — PostToolUse (matcher `Bash`). A complementary, last-resort net
+  behind the PreToolUse argv rails above (#236): instead of recognizing a destructive git COMMAND
+  before it runs, it snapshots the cwd's branch/remote-tracking ref tips (via `git_out()`/
+  `git_returncode()`) after every Bash call and diffs that against the snapshot recorded after the
+  PREVIOUS Bash call in the same repo. A ref that disappeared, or moved to somewhere its old tip
+  isn't reachable from any current ref, means those commits were just discarded — regardless of how
+  the command that did it was spelled, immune by construction to the bundling/wrapper/substitution
+  bypass classes the argv rails keep individually patching. PostToolUse can't undo a completed tool
+  call, so a hit here only prints a loud stderr warning (exit 2) for the model/user to react to, not
+  a block. State is a small per-repo JSON snapshot under `tempfile.gettempdir()`, keyed by a hash of
+  the repo's real toplevel path (so parallel worktrees never share a baseline); fails open on
+  anything unreadable/unwritable/non-repo. Wired in settings.json under `hooks.PostToolUse`.
 
 ## Available but DISABLED by default
 

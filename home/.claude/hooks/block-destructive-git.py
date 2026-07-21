@@ -35,10 +35,11 @@ recognize) is allowed, never blocked.
     into HEAD — i.e. `-d` (which refuses on unmerged branches) would have succeeded too, so `-D`
     isn't discarding anything `-d` wouldn't have let through. `--remotes`/`-r` (deleting a local
     remote-tracking ref, trivially recoverable via a re-fetch) is out of scope.
-  - `git checkout -- .` / `git checkout .` / `git restore .` (default or `--worktree` mode — a
-    working-tree-only `--staged` restore doesn't touch files, so it's out of scope), UNLESS the
-    working tree has no uncommitted tracked changes. Deliberately narrow to exactly "discard
-    EVERYTHING" (`.`, the whole tree) — `git checkout -- some/file.txt` is an ordinary, common,
+  - `git checkout -- .` / `git checkout .` / `git restore .` / `git switch --discard-changes`
+    (default or `--worktree` mode — a working-tree-only `--staged` restore doesn't touch files, so
+    it's out of scope), UNLESS the working tree has no uncommitted tracked changes. Deliberately
+    narrow to exactly "discard EVERYTHING" (`.`, the whole tree, or switch's equivalent
+    `--discard-changes` flag, audited #259) — `git checkout -- some/file.txt` is an ordinary, common,
     deliberate discard of one file and is left alone.
   - `git stash drop [<stash>]` / `git stash clear`, UNLESS `git stash list` is already empty
     (nothing to lose). Stashed work has no `-d`-vs-`-D` safe alternative and no dry-run preview,
@@ -70,7 +71,7 @@ would consult the wrong repo, #154), same as the checkout rail.
 Fail-open on any error — a hook bug must never wedge the session (repo convention). Exit 2 =
 block; exit 0 = allow.
 """
-import json
+import os
 import subprocess
 import sys
 from urllib.parse import quote
@@ -82,6 +83,8 @@ from _hookutil import (
     git_out,
     git_returncode,
     git_subcommand,
+    hook_tool_input,
+    load_hook_input,
     pieces,
     strip_prefixes,
 )
@@ -124,6 +127,14 @@ def _working_tree_dirty(cwd):
         if not line.startswith("??"):
             return True
     return False
+
+
+def _current_branch(cwd):
+    """Return the current branch name, or None for a detached HEAD or an unresolvable repo state."""
+    branch = git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+    if not branch or branch.strip() == "HEAD":
+        return None
+    return branch.strip()
 
 
 def _push_force_hit(rest, cwd):
@@ -173,6 +184,15 @@ def _push_force_hit(rest, cwd):
         dst = dst if ":" in refspec else src
         if not src or not dst:
             return False  # a delete-refspec (":branch" / "branch:") — out of scope
+        if ":" not in refspec and dst in ("HEAD", "@"):
+            # bare `HEAD` (no colon) resolves to the current branch's actual name, not a literal
+            # branch called "HEAD" — same resolution the 1-positional implicit-push case uses
+            # (#319); `@` is git's documented synonym for `HEAD` in revision/refspec contexts
+            # (git-rev-parse(1)) and hits the exact same literal-branch-name bug (#326)
+            branch = _current_branch(cwd)
+            if branch is None:
+                return False  # detached HEAD, or can't tell — conservative allow
+            dst = branch
         # a refspec destination may be fully-qualified (`git push origin +feature:refs/heads/main`),
         # not just a short branch name — normalize the same way `_push_dest_branch` does, and fail
         # open on any other `refs/...` namespace (tags, notes, ...) rather than build a bogus
@@ -185,10 +205,10 @@ def _push_force_hit(rest, cwd):
             return False  # non-branch fully-qualified ref — out of scope, conservative allow
         push_ref, src_ref = f"refs/remotes/{remote}/{dst}", src
     elif len(positionals) == 1:
-        branch = git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
-        if not branch or branch.strip() == "HEAD":
+        branch = _current_branch(cwd)
+        if branch is None:
             return False  # no branch (detached) or can't tell — conservative allow
-        push_ref, src_ref = f"refs/remotes/{positionals[0]}/{branch.strip()}", "HEAD"
+        push_ref, src_ref = f"refs/remotes/{positionals[0]}/{branch}", "HEAD"
     else:
         push_ref, src_ref = "@{push}", "HEAD"
 
@@ -240,13 +260,14 @@ def _push_dest_branch(rest, cwd):
         dst = dst if ":" in refspec else src
         if not src or not dst:
             return None  # a delete-refspec (":branch" / "branch:") — no content pushed, out of scope
+        if ":" not in refspec and dst in ("HEAD", "@"):
+            # bare `HEAD` (no colon) resolves to the current branch's actual name (#319); `@` is
+            # git's documented `HEAD` synonym and hits the same bug (#326)
+            return _current_branch(cwd)
         prefix = "refs/heads/"
         return dst[len(prefix):] if dst.startswith(prefix) else dst
 
-    branch = git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
-    if not branch or branch.strip() == "HEAD":
-        return None  # detached HEAD, or can't tell — conservative allow
-    return branch.strip()
+    return _current_branch(cwd)
 
 
 def _branch_protected(branch, cwd):
@@ -333,30 +354,84 @@ def _branch_delete_hit(rest, cwd):
     return False
 
 
-def _checkout_discard_target(rest):
+def _pathspec_from_file_hit(rest, cwd):
+    """`--pathspec-from-file=<file>`/`--pathspec-from-file <file>` (real flags on both
+    git-checkout(1) and git-restore(1)) supply the discard pathspec via a file instead of argv —
+    `git checkout --pathspec-from-file=discard.txt` with a bare '.' inside the file discards the
+    whole tree with zero pathspec tokens for the argv scan to see (#347). Only recognized before a
+    `--`: real git stops option parsing there (live-verified — after `--` the same token is read
+    as a literal, unmatched pathspec and git errors out with nothing discarded), so scanning past
+    it would false-block a command git itself rejects. `<file>` is `-` for stdin — not read here
+    (no stdin content available to the hook, and nothing safe to read it from) — same conservative
+    fail-open as any repo state this hook can't resolve: unreadable or stdin reads as "no match",
+    never a block. `--pathspec-file-nul` switches the element separator from LF to NUL, same as
+    real git."""
+    file_arg, nul_separated = None, False
+    for i, tok in enumerate(rest):
+        if tok == "--":
+            break
+        if tok == "--pathspec-file-nul":
+            nul_separated = True
+        elif tok.startswith("--pathspec-from-file="):
+            file_arg = tok.split("=", 1)[1]
+        elif tok == "--pathspec-from-file" and i + 1 < len(rest):
+            file_arg = rest[i + 1]
+    if not file_arg or file_arg == "-":
+        return None
+    path = file_arg if os.path.isabs(file_arg) else os.path.join(cwd, file_arg)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+    except OSError:
+        return None
+    entries = content.split("\0") if nul_separated else content.splitlines()
+    return "." if any(entry.strip() == "." for entry in entries) else None
+
+
+def _checkout_discard_target(rest, cwd):
     """"." (bare, or after a `--`) means discard-everything. A pre-`--` tree-ish (`HEAD`, a branch,
     a tag) is the checkout source, not a path — it must not disqualify the match, so it's tracked
     separately from the post-`--`/no-`--` positionals that name what gets discarded."""
     seen_dashdash, positionals, pre_dashdash = False, [], []
-    for tok in rest:
+    i, n = 0, len(rest)
+    while i < n:
+        tok = rest[i]
         if tok == "--":
             seen_dashdash = True
+            i += 1
             continue
         if not seen_dashdash and tok in CHECKOUT_SKIP_OPTS:
             return None  # branch creation / detach / interactive — not a path-restore at all
+        if not seen_dashdash and tok == "--pathspec-from-file" and i + 1 < n:
+            i += 2  # skip the flag and its separate-token file argument (#347)
+            continue
         if not seen_dashdash and tok.startswith("-"):
+            i += 1
             continue
         (positionals if seen_dashdash else pre_dashdash).append(tok)
-    if seen_dashdash:
-        return "." if positionals == ["."] else None
-    if pre_dashdash == ["."]:
+        i += 1
+    if _pathspec_from_file_hit(rest, cwd) == ".":
         return "."
-    if len(pre_dashdash) == 2 and pre_dashdash[1] == ".":
-        return "."  # single leading tree-ish (e.g. `HEAD`) followed by the discard-everything "."
+    if seen_dashdash:
+        # "." is unioned with any other pathspec, not intersected — `. README.md` still discards
+        # everything `.` alone would, so "." anywhere in the list is sufficient (#320)
+        return "." if "." in positionals else None
+    if pre_dashdash[:1] == ["."]:
+        return "."  # bare "." (optionally followed by more pathspecs) — already discards everything
+    if len(pre_dashdash) >= 2 and "." in pre_dashdash[1:]:
+        return "."  # single leading tree-ish (e.g. `HEAD`) followed by "." among the pathspecs
     return None
 
 
-def _restore_discard_target(rest):
+def _switch_discard_target(rest):
+    """`git switch --discard-changes` throws away ALL local modifications when switching branches —
+    the same destructive semantics as `checkout .`/`restore .`, but expressed as a boolean flag
+    instead of a `.` pathspec (switch takes a branch, not paths), so it needs its own recognizer
+    rather than reusing `_checkout_discard_target`'s pathspec scan (audited #259)."""
+    return "." if "--discard-changes" in rest else None
+
+
+def _restore_discard_target(rest, cwd):
     """`-S`/`--staged` (boolean, index-only) is NOT the same flag as `-s`/`--source=<tree>`
     (takes a value picking the restore source) — real git distinguishes the two despite the
     near-identical spelling (#240). `-s`/`--source` consumes a following token as its value
@@ -374,6 +449,8 @@ def _restore_discard_target(rest):
         elif tok in ("-s", "--source"):
             if i + 1 < n:
                 i += 1  # skip the separate-token source tree-ish value
+        elif tok == "--pathspec-from-file" and i + 1 < n:
+            i += 1  # skip the separate-token file argument (#347)
         elif tok.startswith("--source=") or tok == "--" or tok.startswith("-"):
             pass
         else:
@@ -381,11 +458,20 @@ def _restore_discard_target(rest):
         i += 1
     if staged and not worktree:
         return None  # index-only — working tree files are untouched, much less destructive
-    return "." if positionals == ["."] else None
+    if _pathspec_from_file_hit(rest, cwd) == ".":
+        return "."
+    # "." is unioned with any other pathspec, not intersected — "." anywhere in the list already
+    # discards everything, same as `_checkout_discard_target`'s post-`--` case (#320)
+    return "." if "." in positionals else None
 
 
 def _discard_hit(subcommand, rest, cwd):
-    target = _checkout_discard_target(rest) if subcommand == "checkout" else _restore_discard_target(rest)
+    if subcommand == "checkout":
+        target = _checkout_discard_target(rest, cwd)
+    elif subcommand == "switch":
+        target = _switch_discard_target(rest)
+    else:
+        target = _restore_discard_target(rest, cwd)
     if target is None:
         return False
     return bool(_working_tree_dirty(cwd))
@@ -562,7 +648,7 @@ def offending(command, cwd):
             return "clean", argv
         if subcommand == "branch" and _branch_delete_hit(rest, cwd):
             return "branch", argv
-        if subcommand in ("checkout", "restore") and _discard_hit(subcommand, rest, cwd):
+        if subcommand in ("checkout", "restore", "switch") and _discard_hit(subcommand, rest, cwd):
             return "discard", argv
         if subcommand == "stash" and _stash_drop_hit(rest, cwd):
             return "stash", argv
@@ -593,15 +679,14 @@ def check(command, cwd):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 

@@ -67,3 +67,26 @@ use, while the hook still catches writes that slip past the URL-then-flag orderi
 
 Tracked in the security-hardening issue stream
 (#33 / #36 / #37 / #43 / #44 / #45 / #46 / #53 / #58 / #63 / #68 / #69 / #71 / #77).
+
+## MCP tool calls are a separate surface — and were entirely unguarded until #260
+
+Everything above is about Bash argv. `home/.claude/settings.json` also enables a dozen+ MCP-bundling
+plugins (`enabledPlugins`) — the GitHub plugin's server alone exposes tools like
+`merge_pull_request`, `push_files`, `delete_file`, none of which appeared anywhere in
+`permissions.deny`, and no `PreToolUse` hook looked at an MCP `tool_use` call at all. An MCP call is
+a structurally different action from a Bash command with the same intent (there's no argv to parse,
+no wrapper/quoting bypass space — just a `tool_name` and a JSON `tool_input`), so it needed its own
+rail rather than reuse of the Bash-argv one.
+
+`block-destructive-mcp.py` (#260) closes the general-purpose slice of this: a `PreToolUse` hook
+matched on `mcp__.*__.*` that pattern-matches Tier-A verbs (`merge`, `delete`, `push`, `force`,
+`publish`, `deploy`) in the tool name's final segment — including at camelCase boundaries
+(`mergePullRequest`, #355), not just `_`/`-` ones — and blocks unconditionally on a hit — same
+"cardinal rails as code" approach (#163) as the Bash rails, generalized so it needs no
+hand-maintained per-plugin enumeration. This is deliberately narrower than the Cloudflare plugin's
+explicit per-tool denies (settings.json:81-89, `create`/`update`/`edit` included): those remain the
+belt for non-Tier-A mutations on the one plugin someone audited live. The GitHub plugin now has the
+same tactical, exact-name belt too (#348, settings.json, settings.README.md's "Verified GitHub
+mapping") — tool/server names confirmed from the plugin's own `.mcp.json` and the upstream
+`github/github-mcp-server` README rather than a live `/mcp` session, the same primary-source tier
+the Cloudflare mapping was already confirmed at.

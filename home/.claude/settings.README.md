@@ -22,8 +22,18 @@ Consequences for editing this file:
   **documentation of intent, not a control.** Changing them changes nothing a default session
   does. To make an intended restriction real, it must land in `permissions.deny`, a `PreToolUse`
   hook (see `hooks/`), or by dropping `bypassPermissions`.
-- Circuit breakers still fire in bypass mode: `rm -rf /`, `rm -rf ~`, and writes to protected
-  paths (`.git`, `.claude`, …) still prompt regardless.
+- Circuit breakers still fire in bypass mode: Claude Code's built-in protection is documented to
+  prompt for `rm -rf /`, `rm -rf ~`, and writes to protected paths (`.git`, `.claude`, …) regardless
+  of `bypassPermissions`. **That has only actually been confirmed for an interactive session with a
+  human present to answer the prompt (#342) — it is UNVERIFIED for a headless/autonomous session**
+  like this repo's own builder pipeline (`defaultMode: bypassPermissions`, nobody attached to
+  answer). "Prompt" is meaningless with no human there; whether it silently no-ops, auto-approves,
+  or genuinely blocks in that mode has not been tested live. Treat this bullet as an unverified
+  assumption for autonomous sessions specifically, not a settled fact — the same class of trap as
+  this file's own Cloudflare MCP mapping below (confirmed from primary source, not eyeballed live)
+  — the mechanical `PreToolUse`
+  rails under `hooks/` (see hooks/README.md) are this repo's actually-verified belt for anything
+  that matters in that mode, independent of whether this built-in prompt also fires.
 
 ## Bash deny rules are anchored globs, not prefixes — and can't constrain arguments
 
@@ -74,6 +84,47 @@ The bare `mcp__cloudflare__r2_bucket_delete` form is **wrong** and would fail op
 build environment cannot connect the MCP to run `/mcp`, the tool names and the namespacing rule are
 confirmed from primary source but the exact runtime string has not been eyeballed live — confirm in
 a session with the plugin connected before relying on these as the actual gate.
+
+### Verified GitHub mapping (#348)
+
+The `github@claude-plugins-official` plugin's `.mcp.json` (`external_plugins/github/.mcp.json` in
+`anthropics/claude-plugins-official`) registers a single remote HTTP server under the key
+**`github`** (`https://api.githubcopilot.com/mcp/`, GitHub's own hosted MCP server,
+`github/github-mcp-server`), so the correct namespaced prefix is `mcp__plugin_github_github__`, not
+the bare `mcp__github__*` form WORKFLOW.md and orient's github.md used before #349. Tool names
+confirmed from the `github/github-mcp-server` README's tool list; the clearly Tier-A ones (matching
+`block-destructive-mcp.py`'s verb set, excluding the many `create`/`update`-only tools which are
+normal, frequent GitHub-workflow actions and not denied here) get exact-name denies too:
+
+    mcp__plugin_github_github__merge_pull_request
+    mcp__plugin_github_github__delete_file
+    mcp__plugin_github_github__delete_project_item
+    mcp__plugin_github_github__push_files
+
+As with the Cloudflare mapping, this build environment cannot connect the MCP to run `/mcp` — the
+tool names and namespacing are confirmed from primary source (the plugin's `.mcp.json` and the
+upstream server's own README) but not eyeballed live against a running `tools/list`; confirm in a
+connected session before treating this as exhaustive. Some newer GitHub MCP tools consolidate
+several actions behind one generic name (e.g. `pull_request_review_write`, `label_write` bundle
+create/update/delete behind a `method` parameter in `tool_input`, not the tool name) — those aren't
+caught by the exact-name list above (nor by scanning `tool_name` alone), since the destructive branch
+only shows up in the call's arguments. `block-destructive-mcp.py`'s verb-pattern rail now also scans
+`tool_input["method"]`/`["action"]` for a Tier-A verb (#358), so a bundled `"method": "delete"` call
+is still caught even though its `tool_name` never mentions delete.
+
+### A `PreToolUse` rail now covers Tier-A MCP calls generally, not just Cloudflare/GitHub (#260)
+
+The two exact-name denies above only exist for the plugins someone hand-audited; every OTHER enabled
+plugin had zero coverage. `home/.claude/hooks/block-destructive-mcp.py`, wired
+under `hooks.PreToolUse` with matcher `mcp__.*__.*` (verified against the docs' matcher-syntax table
+— `mcp__.*` alone is a no-op: without a second `.*` after the trailing `__` it still contains only
+exact-match characters and matches nothing), pattern-matches Tier-A verbs (`merge`/`delete`/`push`/
+`force`/`publish`/`deploy`) in a tool name's final segment and blocks unconditionally on a hit. This
+needs no live-verified tool/server names — it works from the tool name's shape alone — so it covers
+every plugin's destructive surface today, not just the ones someone has audited. It also now reads a
+consolidated tool's bundled `method`/`action` field in `tool_input` (#358), not just `tool_name`. It
+is still narrower than an exact-name deny in one direction (doesn't catch `create`/`update`/`edit`),
+so the Cloudflare and GitHub mappings above stay in place rather than being replaced by it.
 
 [permissions]: https://code.claude.com/docs/en/permissions
 [permission-modes]: https://code.claude.com/docs/en/permission-modes

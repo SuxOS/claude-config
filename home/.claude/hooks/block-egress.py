@@ -39,11 +39,10 @@ position that the prefix deny misses.
 Fail-open on any error — a hook bug must never wedge the session (repo convention; the deny list
 remains as the belt to this hook's suspenders). Exit 2 = block; exit 0 = allow.
 """
-import json
 import re
 import sys
 
-from _hookutil import basename, gh_subcommand, pieces, strip_prefixes
+from _hookutil import basename, gh_subcommand, hook_tool_input, load_hook_input, pieces, strip_prefixes
 
 # Per-interpreter inline-code flags. Only the flags that actually take *code* — `-c` is code for
 # python/shell but a syntax check for node/ruby/perl, so it is NOT listed for those; `-p` prints
@@ -374,15 +373,14 @@ def check(command, cwd):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 

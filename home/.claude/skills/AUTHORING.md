@@ -26,8 +26,9 @@ fail without it, you may not need it.
 
 ## Eval fixture schema
 
-Every `evals/evals.json` is enforced by CI (`.github/scripts/lint-evals.py`, job
-`evals-lint`) — not just linted for valid JSON. Top level is an object:
+Every `evals/evals.json` is enforced by CI (`.github/scripts/lint-evals.py`, run as the "lint
+skill eval fixtures" step inside the required `shellcheck` job, not a standalone job) — not
+just linted for valid JSON. Top level is an object:
 
 ```json
 {

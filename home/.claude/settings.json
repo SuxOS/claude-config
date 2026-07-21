@@ -86,7 +86,11 @@
       "mcp__plugin_cloudflare_cloudflare-bindings__kv_namespace_create",
       "mcp__plugin_cloudflare_cloudflare-bindings__kv_namespace_update",
       "mcp__plugin_cloudflare_cloudflare-bindings__r2_bucket_create",
-      "mcp__plugin_cloudflare_cloudflare-bindings__hyperdrive_config_edit"
+      "mcp__plugin_cloudflare_cloudflare-bindings__hyperdrive_config_edit",
+      "mcp__plugin_github_github__merge_pull_request",
+      "mcp__plugin_github_github__delete_file",
+      "mcp__plugin_github_github__delete_project_item",
+      "mcp__plugin_github_github__push_files"
     ],
     "defaultMode": "bypassPermissions"
   },
@@ -158,7 +162,7 @@
     "allow": [
       "$defaults",
       "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, python3, node, grep/find/sed/awk/cat/ls), including setting non-secret configuration — except the network-egress and destructive/write subcommands (curl/wget/ssh/scp/tar, gh api writes / gh secret / gh auth / gh repo delete·edit·transfer, wrangler deploy/secret/delete) that are denied by name in permissions.deny; this line re-grants nothing that deny list restricts, and gh api writes it misses (implicit-POST field flags, glued --method forms) are still caught by the block-egress.py PreToolUse hook",
-      "Read- and list-shaped MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian); destructive Cloudflare MCP tools (create/update/edit/delete for d1, kv, r2, hyperdrive) are Tier A and denied by exact tool name in permissions.deny — Claude Code's deny matches exact names, not patterns, so each destructive tool must be listed explicitly there",
+      "Read- and list-shaped MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian); destructive Cloudflare MCP tools (create/update/edit/delete for d1, kv, r2, hyperdrive) and destructive GitHub MCP tools (merge_pull_request, delete_file, delete_project_item, push_files) are Tier A and denied by exact tool name in permissions.deny — Claude Code's deny matches exact names, not patterns, so each destructive tool must be listed explicitly there; block-destructive-mcp.py's verb-pattern rail (#260) also covers these unconditionally, so the exact-name list is belt-and-suspenders, not the only gate",
       "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and inspecting Cloudflare Worker state via read-only wrangler subcommands (tail, deployments list, kv key get) — deploy, secret, and delete subcommands are Tier A, denied, and require human hands"
     ]
   },
@@ -174,6 +178,20 @@
         "matcher": "Bash",
         "hooks": [
           { "type": "command", "command": "$HOME/.claude/hooks/pretooluse-bash.py" }
+        ]
+      },
+      {
+        "matcher": "mcp__.*__.*",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/block-destructive-mcp.py" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/audit-git-consequences.py" }
         ]
       }
     ]

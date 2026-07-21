@@ -20,24 +20,30 @@ recommends omitting it in that case. So named types are exempt, same as subagent
 
 Fail-open on any parse error — a hook bug must never wedge the session.
 """
-import json
 import sys
+
+from _hookutil import load_hook_input
 
 GENERIC_SUBAGENT_TYPES = {"", "general-purpose", "claude"}
 # The subagent launcher has shipped under both names across Claude Code versions; gate on either.
 SUBAGENT_TOOL_NAMES = {"Agent", "Task"}
 
-try:
-    data = json.load(sys.stdin)
-except Exception:
+data = load_hook_input(sys.stdin)
+if data is None:
     sys.exit(0)
 
 if data.get("tool_name") not in SUBAGENT_TOOL_NAMES:
     sys.exit(0)
 
-ti = data.get("tool_input") or {}
+ti = data.get("tool_input")
+if not isinstance(ti, dict):
+    # Unlike an absent subagent_type/model (a real "no model set" signal that must block), a
+    # non-object tool_input can't be interpreted at all — fail open rather than fall through to
+    # the block-by-default path below on data we can't actually read (#318).
+    sys.exit(0)
 
-subagent_type = ti.get("subagent_type") or ""
+subagent_type = ti.get("subagent_type")
+subagent_type = subagent_type if isinstance(subagent_type, str) else ""
 if subagent_type == "fork":
     sys.exit(0)
 

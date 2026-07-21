@@ -285,11 +285,14 @@ def sleep_loop_violation(prefix_tokens):
     return not BLOCK_SLEEP_LOOP.offending(sleep_loop_command(prefix_tokens))
 
 
-# Two real shapes CLAUDE.md's stderr-suppression rule covers (see block-suppressed-stderr.py's
-# module docstring): the plain `2>/dev/null` redirect, and the `>/dev/null 2>&1` idiom.
+# Three real shapes CLAUDE.md's stderr-suppression rule covers (see block-suppressed-stderr.py's
+# module docstring): the plain `2>/dev/null` redirect, the `>/dev/null 2>&1` idiom, and the
+# `2>&-` fd-close idiom (#205's FD_CLOSE_RE) — without a `fd_close` entry here, the combinatorial
+# prefix fuzzer never exercises FD_CLOSE_RE across any wrapper/sudo-prefix shape (#313).
 STDERR_SUFFIXES = {
     "redirect": lambda joined: f"{joined} curl http://example.invalid/health 2>/dev/null",
     "dup_idiom": lambda joined: f"{joined} curl http://example.invalid/health >/dev/null 2>&1",
+    "fd_close": lambda joined: f"{joined} curl http://example.invalid/health 2>&-",
 }
 
 

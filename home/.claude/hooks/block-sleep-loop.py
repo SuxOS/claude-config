@@ -37,10 +37,9 @@ common and legitimate; it's the poll-in-a-loop shape specifically that CLAUDE.md
 Fail-open on any error — a hook bug must never wedge the session (repo convention). Exit 2 =
 block; exit 0 = allow.
 """
-import json
 import sys
 
-from _hookutil import basename, pieces, strip_prefixes
+from _hookutil import basename, hook_tool_input, load_hook_input, pieces, strip_prefixes
 
 LOOP_KEYWORDS = {"while", "until", "for"}
 # Compound-statement keywords that can glue onto the same piece as the command they introduce
@@ -104,15 +103,14 @@ def check(command, cwd):
 
 
 def main():
-    try:
-        data = json.load(sys.stdin)
-    except Exception:
+    data = load_hook_input(sys.stdin)
+    if data is None:
         sys.exit(0)
 
     if data.get("tool_name") != "Bash":
         sys.exit(0)
 
-    command = (data.get("tool_input") or {}).get("command")
+    command = hook_tool_input(data).get("command")
     if not isinstance(command, str):
         sys.exit(0)
 
