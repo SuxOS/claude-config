@@ -126,6 +126,18 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/lint-evals.py
 
+      # hooks-doc-lint (#269): hooks/README.md has needed a standalone "fix the stale doc" issue
+      # at least six separate times (#103, #124, #169, #216, #223, #249) — every time a hook gains
+      # a predicate or changes its matcher, the prose silently falls behind. Mirrors lint-settings.py
+      # (#82): turns the two mechanically-extractable drift shapes (a hook's settings.json matcher
+      # vs its README bullet; block-destructive-git.py's dispatched-predicate count vs the count
+      # named in prose) into an enforced check instead of a recurring hand-fix. Deterministic, no
+      # secrets/model call, so folded into this required job like the other integrity linters
+      # rather than a standalone advisory job (see CLAUDE.md).
+      - name: lint hooks/README.md for drift from settings.json / hook source
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/lint-hooks-doc.py
+
   # skill-evals (ADVISORY, #140): runs each skill's evals.json against a model and grades the
   # resulting response with an LLM judge — the runner layer #95 envisioned above the deterministic
   # evals-lint rail (which only checks eval SHAPE). A model call means cost + secrets + non-determinism,
