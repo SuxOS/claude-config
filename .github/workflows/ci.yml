@@ -201,6 +201,25 @@ jobs:
       - name: fuzz argv canonicalization against real subprocess execution
         run: python3 tests/fuzz_argv_exec.py
 
+  # fuzz-git-state (ADVISORY, #310): tests/fuzz_argv_canon.py/fuzz_argv_exec.py cover the
+  # argv-CANONICALIZATION half of block-destructive-git.py's rails; this covers the other half —
+  # the predicates that consult LIVE git repo state (force-push fast-forward, clean -n preview,
+  # branch merged-into-HEAD, working-tree dirtiness) — against ground truth obtained by actually
+  # performing the real git action in a disposable repo copy, not a second guess through the same
+  # git plumbing the predicate itself already trusts. Standalone ADVISORY job, never folded into
+  # the required `shellcheck` job — same reasoning as fuzz-argv-exec/skill-evals (CLAUDE.md): this
+  # depends on real git subprocess behavior across many generated repo states, a heavier and
+  # slower dependency than the pure-computation fuzzer already folded into the required job.
+  fuzz-git-state:
+    name: fuzz-git-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: fuzz block-destructive-git.py's git-state predicates against real git ground truth
+        run: python3 tests/fuzz_git_state.py
+
   # `bash -n install.sh` only catches parse errors, not logic bugs (wrong case glob, broken
   # idempotency check, etc). This actually runs the script end-to-end against a scratch HOME
   # and checks the result, then runs it a second time to assert idempotency (#42).
