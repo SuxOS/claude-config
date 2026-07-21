@@ -55,6 +55,7 @@ INLINE_FLAGS = {
     "bun": {"-e", "--eval", "-p", "--print"}, "deno": {"-e", "--eval"},
     "ruby": {"-e"}, "perl": {"-e", "-E"}, "php": {"-r"},
     "bash": {"-c"}, "sh": {"-c"}, "zsh": {"-c"}, "dash": {"-c"},
+    "lua": {"-e"}, "Rscript": {"-e"}, "julia": {"-e"},
 }
 INTERPRETERS = set(INLINE_FLAGS)
 # Versioned interpreter basenames (`python3.11`, `python2.7`, `perl5.36`, `ruby3.0`) are a normal,
