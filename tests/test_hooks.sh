@@ -1123,6 +1123,16 @@ assert_exit 2 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 
+echo "== check-settings-drift.py =="
+CSD="$HOOKS/check-settings-drift.py"
+# Advisory SessionStart hook: it NEVER blocks (always exit 0) — it only emits an
+# additionalContext banner when live ~/.claude/settings.json drifts from the repo source on the
+# safety-critical fields. Assert it never exits 2 and fails open on bad input (a config-drift
+# detector must never wedge session start).
+assert_exit 0 "$CSD" '{"hook_event_name":"SessionStart","source":"startup"}' "advisory SessionStart hook never blocks"
+assert_exit 0 "$CSD" 'not-json'                                              "fails open on malformed stdin"
+assert_exit 0 "$CSD" '[1,2,3]'                                               "fails open on non-object top-level JSON"
+
 # --- layer 3: real-shape fixture corpus (#117) --------------------------------------------
 # Layer 2's JSON is hand-authored, so a hook that mis-models the REAL Claude Code tool-input /
 # transcript shape passes there against a matching wrong guess — the exact failure the whole

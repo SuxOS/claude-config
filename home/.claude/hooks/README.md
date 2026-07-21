@@ -130,6 +130,18 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   the repo's real toplevel path (so parallel worktrees never share a baseline); fails open on
   anything unreadable/unwritable/non-repo. Wired in settings.json under `hooks.PostToolUse`.
 
+- **`check-settings-drift.py`** — SessionStart (matcher `startup|resume|clear|compact`). Advisory
+  only — never blocks, always fails open. Warns when the live `~/.claude/settings.json` has drifted
+  from the claude-config repo source on the safety-critical fields (`permissions.deny`, `hooks`,
+  `permissions.defaultMode`, `disableClaudeAiConnectors`) plus a softer `enabledPlugins` note.
+  settings.json is COPIED, not symlinked (Claude Code rewrites it in place — install.sh), so it
+  diverges silently: a dual-account login once wiped the entire deny list + all hooks for a whole
+  session before anyone noticed. Locates the repo source via THIS file's own symlink
+  (`realpath(__file__)/../settings.json`) — no hard-coded clone path; normalizes plugin
+  `false` ≡ absent (Code drops disabled plugins on rewrite) so only genuine on↔off flips are drift.
+  Emits the SessionStart `additionalContext` banner pointing at `install.sh --apply` to reconcile.
+  Wired in settings.json under `hooks.SessionStart`.
+
 ## Available but DISABLED by default
 
 - **`verify-completion-claim.py`** — Stop hook. The "no completion claim without fresh evidence"
