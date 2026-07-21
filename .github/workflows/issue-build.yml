@@ -28,5 +28,5 @@ jobs:
     uses: SuxOS/.github/.github/workflows/issue-build.yml@main
     with:
       gates-summary: |
-        shellcheck $(git ls-files '*.sh') (the required check on this repo — see .github/workflows/ci.yml)
+        shellcheck (over every tracked *.sh file — the required check on this repo, see .github/workflows/ci.yml)
     secrets: inherit

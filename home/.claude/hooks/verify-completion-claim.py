@@ -30,9 +30,12 @@ CLAIM = re.compile(
 # verification_ran() below), never against the serialized transcript text — a text/substring
 # match also fires on a mere MENTION of the command name in assistant prose ("I'll run npm test
 # next") or inside an edited file's own content (e.g. a Python file whose new text contains the
-# word "pytest"), neither of which is evidence the command actually ran (#83).
+# word "pytest"), neither of which is evidence the command actually ran (#83). `bash -n` is
+# deliberately NOT in this set — it only parses a script for syntax errors, never executes it
+# (see ci.yml's install-smoke job for the same distinction), so it is not real behavioral
+# verification evidence (#329).
 VERIFY_CMD = re.compile(
-    r"\b(?:pytest|npm (?:run )?test|jest|vitest|go test|cargo test|bash -n|"
+    r"\b(?:pytest|npm (?:run )?test|jest|vitest|go test|cargo test|"
     r"make test|tox|ruff|mypy|tsc|playwright|node .*test)\b",
     re.I,
 )

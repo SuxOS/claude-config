@@ -36,9 +36,21 @@ human to answer an `ask` prompt in an autonomous/`bypassPermissions` session —
 unconditionally. A human running this interactively hits the same block and can approve manually
 outside the agent loop; that's the intended outcome for a Tier-A action, not a bug.
 
-Fail-open on any error, and on anything this can't confidently parse — a hook bug, or a tool-name
-shape this doesn't recognize, must never wedge the session (repo convention). Exit 2 = block; exit
-0 = allow.
+Some newer MCP tools consolidate several actions behind one generic tool name, with the actual verb
+living in `tool_input` instead of `tool_name` — e.g. GitHub's `pull_request_review_write` bundles
+create/submit/delete(/resolve_thread/unresolve_thread), `label_write` bundles create/update/delete,
+and `discussion_comment_write` bundles add/reply/update/delete(/mark_answer/unmark_answer), all
+behind a `method` parameter (#358; confirmed against github/github-mcp-server's own README). A call
+like `{"tool_name": "...__label_write", "tool_input": {"method": "delete", ...}}` has no destructive
+token anywhere in `tool_name`, so the name-only scan above sails right past it. `offending_verb()`
+covers the name; `offending_verb_from_input()` mirrors it against `tool_input["method"]`/
+`["action"]` (both seen used for this purpose across MCP servers) — same tokenizing (camelCase +
+`_`/`-` splitting) and the same Tier-A verb set, so a bundled `"method": "forceDelete"` is caught the
+same way a name-shaped `force_delete` tool would be.
+
+Fail-open on any error, and on anything this can't confidently parse — a hook bug, or a tool-name/
+tool-input shape this doesn't recognize, must never wedge the session (repo convention). Exit 2 =
+block; exit 0 = allow.
 """
 import re
 import sys
@@ -46,9 +58,19 @@ import sys
 from _hookutil import load_hook_input
 
 TIER_A_VERBS = {"merge", "delete", "push", "force", "publish", "deploy"}
+ACTION_FIELDS = ("method", "action")
 
 _TOKEN_SPLIT_RE = re.compile(r"[_\-]+")
 _CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _tier_a_token(text):
+    """Return the first Tier-A verb token in `text` after camelCase/`_`/`-` splitting, else None."""
+    text = _CAMEL_BOUNDARY_RE.sub("_", text)
+    for token in _TOKEN_SPLIT_RE.split(text.lower()):
+        if token in TIER_A_VERBS:
+            return token
+    return None
 
 
 def offending_verb(tool_name):
@@ -59,25 +81,40 @@ def offending_verb(tool_name):
     name (no `__` at all) returns None rather than guessing."""
     if not isinstance(tool_name, str) or "__" not in tool_name:
         return None
-    tool = tool_name.rsplit("__", 1)[-1]
-    tool = _CAMEL_BOUNDARY_RE.sub("_", tool)
-    tokens = _TOKEN_SPLIT_RE.split(tool.lower())
-    for token in tokens:
-        if token in TIER_A_VERBS:
-            return token
+    return _tier_a_token(tool_name.rsplit("__", 1)[-1])
+
+
+def offending_verb_from_input(tool_input):
+    """Return the Tier-A verb token found in a consolidated tool's `method`/`action` field, else None.
+
+    Covers tools like `label_write`/`pull_request_review_write` that bundle several actions behind
+    one generic tool name — see module docstring for why `tool_name` alone can't catch these."""
+    if not isinstance(tool_input, dict):
+        return None
+    for field in ACTION_FIELDS:
+        value = tool_input.get(field)
+        if not isinstance(value, str):
+            continue
+        verb = _tier_a_token(value)
+        if verb:
+            return verb
     return None
 
 
-def check(tool_name):
-    """Dispatcher-facing predicate: tool_name -> full block message, or None."""
+def check(tool_name, tool_input=None):
+    """Dispatcher-facing predicate: tool_name (+ tool_input) -> full block message, or None."""
     try:
         verb = offending_verb(tool_name)
+        hit_in_name = verb is not None
+        if not verb:
+            verb = offending_verb_from_input(tool_input)
     except Exception:
         return None
     if not verb:
         return None
+    where = f"`{tool_name}`" if hit_in_name else f"`{tool_name}`'s bundled action arguments"
     return (
-        f"MCP Tier-A guard (PreToolUse): `{tool_name}` looks like a '{verb}' action over MCP — no "
+        f"MCP Tier-A guard (PreToolUse): {where} looks like a '{verb}' action over MCP — no "
         "repo state can prove an MCP merge/delete/push/force/publish/deploy call safe, and there is "
         "no human to confirm in an autonomous session (work skill's Tier-A rail: 'never force-push, "
         "merge/publish without confirmation, hard-delete, or do anything irreversible/destructive "
@@ -94,8 +131,10 @@ def main():
     if not isinstance(tool_name, str) or not tool_name.startswith("mcp__"):
         sys.exit(0)
 
+    tool_input = data.get("tool_input")
+
     try:
-        message = check(tool_name)
+        message = check(tool_name, tool_input)
     except Exception:
         sys.exit(0)  # never wedge the session on a hook bug
 
