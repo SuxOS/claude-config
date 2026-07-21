@@ -959,6 +959,11 @@ unset DFS_BYPASS_VAR
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf ~\"}}"                       "blocks rm -rf ~ — tilde expands to the real, non-empty home dir (#365)"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \$HOME\"}}"                  "blocks rm -rf \$HOME — the exact motivating bypass, env var expands to real home (#365)"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf ~nonexistentuser4242/x\"}}"  "blocks rm -rf on an unresolvable ~user target — fail safe toward block (#365)"
+# command-substitution targets (security review HIGH, #365): a `...`/$(...) target is resolved only
+# at shell-run time, so it's never a literal "nothing to lose" path — same unresolvable class as an
+# unset env var, fail-SAFE toward block.
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \\\"\$(cat somefile)\\\"\"}}" "blocks rm -rf on a \$(...) command-substitution target — unresolvable, fail safe (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \`whoami\`\"}}"               "blocks rm -rf on a backtick command-substitution target — unresolvable, fail safe (#365)"
 rm -rf "$dfsrepo"
 
 # mv/cp -f overwrite protection
@@ -971,6 +976,12 @@ export DFS_DST_VAR="$dfsroot/dest.txt"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt \$DFS_DST_VAR\"}}"        "blocks mv clobbering a \$env-var destination that expands to an existing non-empty file (#365)"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt \$DFS_UNSET_DST_XYZ\"}}"  "blocks mv onto an unresolvable \$env-var destination — fail safe toward block (#365)"
 unset DFS_DST_VAR
+# command-substitution operands (security review HIGH, #365): mv/cp expand EVERY operand (source as
+# well as destination) through the same pass, so a substituted source the shell runs is as
+# unresolvable as a substituted destination — fail-SAFE toward block (a substituted source can even
+# fragment the positional count, e.g. `mv $(echo x) dst`).
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv \$(echo x) /dest\"}}"             "blocks mv whose source is a \$(...) command substitution — unresolvable operand, fail safe (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f \`id\` /dest\"}}"              "blocks cp -f whose source is a backtick command substitution — unresolvable operand, fail safe (#365)"
 assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp src.txt dest.txt\"}}"             "allows a bare cp with no -f — out of scope (#345)"
 assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv -n src.txt dest.txt\"}}"          "allows mv -n (--no-clobber) over an existing destination (#345)"
 assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f -b src.txt dest.txt\"}}"       "allows cp -f -b — a backup of the prior destination is made (#345)"
