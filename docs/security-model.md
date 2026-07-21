@@ -90,3 +90,42 @@ same tactical, exact-name belt too (#348, settings.json, settings.README.md's "V
 mapping") — tool/server names confirmed from the plugin's own `.mcp.json` and the upstream
 `github/github-mcp-server` README rather than a live `/mcp` session, the same primary-source tier
 the Cloudflare mapping was already confirmed at.
+
+## The native web tools are a third surface — and were entirely unguarded until #360
+
+`WebFetch`/`WebSearch` are allow-listed in `permissions.allow` and, until #360, matched no
+`PreToolUse` hook and no `permissions.deny` rule at all — the one gap that mattered most, since
+`block-egress.py`'s own block message actively steers a blocked Bash egress attempt AT these two
+tools ("If you need to fetch a URL use WebFetch/WebSearch") while nothing watched the door it was
+pointing at. An agent-controlled `WebFetch` URL can already target cloud-metadata endpoints
+(`169.254.169.254`) or loopback/private infrastructure with zero enforcement.
+
+`block-web-egress.py` (#360) closes this: a `PreToolUse` hook matched on `WebFetch|WebSearch` that
+reads `tool_input.url` (WebFetch's fetch target — `WebSearch`'s `query` is free text sent to a
+search provider, not a fetch target, so there's nothing URL-shaped to check there today) and blocks
+on exactly two literal-target shapes: a non-http(s) scheme (`file://`, `ftp://`, `data:`, ...), or a
+LITERAL loopback/link-local/private/reserved IP target (covers the metadata IP, since it's
+link-local) or known metadata hostname. No DNS resolution is performed — a hostname that merely
+*resolves* to a private/metadata address is invisible to this check, the same "speed bump, not a
+seal" honesty as `block-egress.py`. No repo state can prove a fetch target safe and there's no human
+to confirm in an autonomous session, so a match blocks unconditionally, mirroring
+`block-destructive-mcp.py`'s Tier-A shape.
+
+## `Write` is a fourth surface — a blind full-file overwrite with no diff-aware guard until #364
+
+Every "discard uncommitted work" guard above (`block-destructive-git.py`'s `_reset_hard_hit`/
+`_discard_hit`, `audit-git-consequences.py`'s ref-diffing) is Bash-scoped. `permissions.allow`
+grants `"Write"` unconditionally, and Write fully REPLACES a file's content with no diff-aware
+merge — a Write call to a git-tracked file that has uncommitted staged-or-unstaged changes silently
+discards them, the same Tier-A "discard without an explicit yes" case the git rails exist to catch,
+reached through a tool surface those rails don't watch.
+
+`block-write-overwrite.py` (#364) closes this: a `PreToolUse` hook matched on `Write` that runs
+`git status --porcelain` scoped to `tool_input.file_path` in the file's own directory and blocks
+when that file is git-tracked AND has uncommitted changes (any porcelain line other than the
+untracked `??` marker) — the same "tracked change at risk" signal `block-destructive-git.py`'s
+`_working_tree_dirty()` already uses, scoped to one path instead of the whole tree. `Edit` is
+deliberately out of scope: it requires an exact `old_string` match against the file's current
+content, so it can't blindly clobber a change it never saw the way Write can. Unconditional on a
+hit, same Tier-A shape as `block-destructive-mcp.py`; fails open on any error, a relative
+`file_path`, or a target outside a readable git repo.

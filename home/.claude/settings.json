@@ -185,6 +185,18 @@
         "hooks": [
           { "type": "command", "command": "$HOME/.claude/hooks/block-destructive-mcp.py" }
         ]
+      },
+      {
+        "matcher": "WebFetch|WebSearch",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/block-web-egress.py" }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.claude/hooks/block-write-overwrite.py" }
+        ]
       }
     ],
     "PostToolUse": [
