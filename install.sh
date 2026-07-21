@@ -7,14 +7,33 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$REPO_DIR/home/.claude"
-DEST="$HOME/.claude"
+# Two-account model: the human identity (m@) installs into ~/.claude; the bot identity (claude@)
+# installs into ~/.claude-bot, selected either with --bot or by pointing CLAUDE_CONFIG_DIR at a
+# *-bot directory. CLAUDE_CONFIG_DIR relocates the whole ~/.claude tree for a Claude Code CLI run
+# (the desktop app does NOT honor it — the bot is CLI-only). See home/.claude/BOT-ACCOUNT.md.
+DEST="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 apply_merge=false
+bot=false
 for arg in "$@"; do
   case "$arg" in
     --apply|--merge) apply_merge=true ;;
+    --bot) bot=true ;;
   esac
 done
+# Auto-detect the bot identity from the destination dir name, so
+# `CLAUDE_CONFIG_DIR=~/.claude-bot ./install.sh` needs no extra flag.
+case "$(basename "$DEST")" in
+  *-bot) bot=true ;;
+esac
+# Same locked-down guards (deny + hooks) either way — the bot just uses a leaner, headless
+# plugin/notification set (settings.bot.json). See home/.claude/BOT-ACCOUNT.md.
+if [ "$bot" = true ]; then
+  settings_name="settings.bot.json"
+  echo "installing BOT identity config into $DEST (settings variant: $settings_name)" >&2
+else
+  settings_name="settings.json"
+fi
 
 mkdir -p "$DEST"
 
@@ -23,7 +42,7 @@ shopt -s dotglob
 for entry in "$SRC"/*; do
   name="$(basename "$entry")"
   case "$name" in
-    settings.json) continue ;;
+    settings.json|settings.bot.json) continue ;;
     CLAUDE.md) continue ;;
   esac
   items+=("$name")
@@ -64,8 +83,10 @@ if [ "${#missing[@]}" -gt 0 ]; then
   exit 1
 fi
 
-# settings.json is copied, not symlinked (Claude Code rewrites it in place).
-settings_src="$SRC/settings.json"
+# settings.json is copied, not symlinked (Claude Code rewrites it in place). The source is the
+# identity's variant (settings.json for human, settings.bot.json for the bot); the destination is
+# always named settings.json because that's the only filename Claude Code reads.
+settings_src="$SRC/$settings_name"
 settings_dest="$DEST/settings.json"
 if [ -e "$settings_dest" ]; then
   echo
