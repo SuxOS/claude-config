@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 # Symlinks this repo's tracked config into ~/.claude. Idempotent.
 # On conflict with a pre-existing non-symlink, backs it up (*.bak-<epoch>) then links.
+# --apply/--merge: when an existing settings.json is missing deny rules or hook commands
+# present in the repo reference, patch them in (backing up first) instead of only printing.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$REPO_DIR/home/.claude"
 DEST="$HOME/.claude"
+
+apply_merge=false
+for arg in "$@"; do
+  case "$arg" in
+    --apply|--merge) apply_merge=true ;;
+  esac
+done
 
 mkdir -p "$DEST"
 
@@ -82,7 +91,45 @@ if [ -e "$settings_dest" ]; then
           echo "  missing hook command: $cmd"
         done <<< "$missing_hooks"
       fi
-      echo "Merge these by hand from $settings_src."
+      if [ "$apply_merge" = true ]; then
+        backup="$settings_dest.bak-$(date +%s)"
+        cp "$settings_dest" "$backup"
+        # Union permissions.deny (append what's missing, keep everything already there —
+        # including rules the user added that aren't in the repo reference) and, for hooks,
+        # match on the (event, matcher) pair: append a missing hook command into an existing
+        # matcher's hooks array, or append the whole matcher group when the event has no
+        # matching matcher yet. Never drops a dest-only entry, so re-running is a no-op.
+        jq -n --slurpfile src "$settings_src" --slurpfile dest "$settings_dest" '
+          def merge_group($destEvent; $group):
+            ($destEvent | map(.matcher)) as $matchers
+            | ($matchers | index($group.matcher)) as $idx
+            | if $idx == null then
+                $destEvent + [$group]
+              else
+                $destEvent | .[$idx].hooks = (
+                  (.[$idx].hooks // []) as $dh
+                  | reduce ($group.hooks[]) as $h ($dh;
+                      if any(.[]; .type == $h.type and .command == $h.command) then .
+                      else . + [$h] end)
+                )
+              end;
+          def merge_event($src; $dest; $event):
+            ($dest[$event] // []) as $destEvent
+            | reduce ($src[$event][]) as $group ($destEvent; merge_group(.; $group));
+          def merge_hooks($src; $dest):
+            reduce ($src | keys_unsorted[]) as $event ($dest;
+              .[$event] = merge_event($src; $dest; $event)
+            );
+          ($dest[0].permissions.deny // []) as $existingDeny
+          | $dest[0]
+          | .permissions.deny = ($existingDeny + (($src[0].permissions.deny // []) - $existingDeny))
+          | .hooks = merge_hooks($src[0].hooks // {}; $dest[0].hooks // {})
+        ' > "$settings_dest.tmp"
+        mv "$settings_dest.tmp" "$settings_dest"
+        echo "Applied missing security updates to $settings_dest (backup: $backup)."
+      else
+        echo "Merge these by hand from $settings_src, or re-run with --apply to merge them in automatically."
+      fi
     fi
   fi
 elif [ -e "$settings_src" ]; then

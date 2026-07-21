@@ -6,6 +6,13 @@ Claude Code does **not** prompt before tool calls, so the `permissions.deny` lis
 
 ## What the deny list is — and isn't
 
+<!-- doc-fact: settings-deny "Bash(curl *)" -->
+<!-- doc-fact: settings-deny "Bash(wget *)" -->
+<!-- doc-fact: settings-deny "Bash(ssh *)" -->
+<!-- doc-fact: settings-deny "Bash(scp *)" -->
+<!-- doc-fact: settings-deny "Bash(tar *)" -->
+<!-- doc-fact: settings-deny "Bash(gh api -X *)" -->
+<!-- doc-fact: settings-deny "Bash(gh api --method *)" -->
 The deny list (`Bash(curl *)`, `Bash(wget *)`, `Bash(ssh *)`, `Bash(scp *)`, `Bash(tar *)`,
 `Bash(gh api -X *)`, `Bash(gh api --method *)`) is **defense-in-depth against casual or
 accidental misuse — a speed bump, not a boundary.** It is deliberately *not* a real
