@@ -236,6 +236,15 @@
   When an issue's whole scope is "verify X, close it if stale," close BOTH the stale target and
   the investigation issue directly (`gh issue close`) once confirmed, rather than leaving either
   as a recommendation for a human to act on later.
+- **This builder sandbox has the real `claude` CLI on PATH but none of `ANTHROPIC_API_KEY`/
+  `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_AUTH_TOKEN` set** (#353) — this session authenticates some
+  other way. A model-access-gated script that skip-checks those three vars (`run-skill-evals.py`'s
+  `model_access_reason()` and anything modeled on it) will report "no auth token" and skip cleanly
+  even when run live during a builder session, despite that session obviously having real model
+  access. Don't read that skip as "no `claude` CLI available here" — `shutil.which("claude")`
+  alone will say otherwise — and don't try to force such a script to actually call the model from
+  inside a builder session by hunting for a different credential; the skip is the correct,
+  intended behavior for an unconfigured secret, same as it is in CI.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
