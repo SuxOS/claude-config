@@ -251,7 +251,10 @@ jobs:
           for entry in home/.claude/*; do
             name="$(basename "$entry")"
             case "$name" in
-              settings.json) continue ;;
+              # settings.json + the settings.bot.json variant are COPIED per identity (install.sh),
+              # not symlinked — mirror install.sh's own skip list. CLAUDE.md is symlinked but checked
+              # separately below.
+              settings.json|settings.bot.json) continue ;;
               CLAUDE.md) continue ;;
             esac
             link="$scratch_home/.claude/$name"

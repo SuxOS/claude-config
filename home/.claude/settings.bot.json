@@ -113,14 +113,14 @@
         "source": "github",
         "repo": "cloudflare/skills"
       },
-      "autoUpdate": true
+      "autoUpdate": false
     },
     "grafana-ai-marketplace": {
       "source": {
         "source": "github",
         "repo": "grafana/ai-marketplace"
       },
-      "autoUpdate": true
+      "autoUpdate": false
     },
     "claude-plugins-official": {
       "source": {
@@ -135,7 +135,6 @@
       }
     }
   },
-  "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "autoMode": {
     "allow": [
