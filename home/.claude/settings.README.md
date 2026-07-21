@@ -106,10 +106,11 @@ tool names and namespacing are confirmed from primary source (the plugin's `.mcp
 upstream server's own README) but not eyeballed live against a running `tools/list`; confirm in a
 connected session before treating this as exhaustive. Some newer GitHub MCP tools consolidate
 several actions behind one generic name (e.g. `pull_request_review_write`, `label_write` bundle
-create/update/delete behind an action parameter in `tool_input`, not the tool name) — those aren't
-caught by name-based matching at all (neither this list nor the verb-pattern rail below) since the
-destructive branch only shows up in the call's arguments, a gap worth a dedicated follow-up rather
-than papering over here with an overly broad deny that would also block their harmless actions.
+create/update/delete behind a `method` parameter in `tool_input`, not the tool name) — those aren't
+caught by the exact-name list above (nor by scanning `tool_name` alone), since the destructive branch
+only shows up in the call's arguments. `block-destructive-mcp.py`'s verb-pattern rail now also scans
+`tool_input["method"]`/`["action"]` for a Tier-A verb (#358), so a bundled `"method": "delete"` call
+is still caught even though its `tool_name` never mentions delete.
 
 ### A `PreToolUse` rail now covers Tier-A MCP calls generally, not just Cloudflare/GitHub (#260)
 
@@ -120,10 +121,10 @@ under `hooks.PreToolUse` with matcher `mcp__.*__.*` (verified against the docs' 
 exact-match characters and matches nothing), pattern-matches Tier-A verbs (`merge`/`delete`/`push`/
 `force`/`publish`/`deploy`) in a tool name's final segment and blocks unconditionally on a hit. This
 needs no live-verified tool/server names — it works from the tool name's shape alone — so it covers
-every plugin's destructive surface today, not just the ones someone has audited. It is narrower than
-an exact-name deny in one direction (doesn't catch `create`/`update`/`edit`, nor an action bundled
-into a generic tool's arguments rather than its name), so the Cloudflare and GitHub mappings above
-stay in place rather than being replaced by it.
+every plugin's destructive surface today, not just the ones someone has audited. It also now reads a
+consolidated tool's bundled `method`/`action` field in `tool_input` (#358), not just `tool_name`. It
+is still narrower than an exact-name deny in one direction (doesn't catch `create`/`update`/`edit`),
+so the Cloudflare and GitHub mappings above stay in place rather than being replaced by it.
 
 [permissions]: https://code.claude.com/docs/en/permissions
 [permission-modes]: https://code.claude.com/docs/en/permission-modes

@@ -183,6 +183,27 @@ bash_verify_transcript="$(build_transcript_records '[
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$bash_verify_transcript\"}" "does not block a completion claim after an actual Bash tool_use ran npm test (#83)"
 rm -f "$bash_verify_transcript"
 
+# #329: `bash -n` only parses a script for syntax errors, it never executes any logic — it must
+# not count as verification evidence for a completion claim.
+bash_n_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "install.sh"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "bash -n install.sh"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "(no output)"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Fixed the bug, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$bash_n_transcript\"}" "blocks a completion claim backed only by a syntax-only 'bash -n' check, not real execution (#329)"
+rm -f "$bash_n_transcript"
+
 # #108: a completion word sitting inside a tool_use's own INPUT (a Bash command, a file edit's
 # new text) must not trip CLAIM — only the assistant's own prose (type=='text' blocks) counts.
 tool_input_claim_transcript="$(build_transcript_records '[
@@ -759,6 +780,20 @@ assert_exit 0 "$BDM" '{"tool_name":"Bash","tool_input":{"command":"git push -f"}
 assert_exit 0 "$BDM" 'not-json'                                                                          "fails open on malformed JSON (#260)"
 assert_exit 0 "$BDM" '[1,2,3]'                                                                           "fails open on valid-but-non-object top-level JSON (#260)"
 assert_exit 0 "$BDM" '{"tool_name":123,"tool_input":{}}'                                                 "fails open on a non-string tool_name (#260)"
+
+# #358: consolidated MCP tools bundle a destructive action behind a method/action parameter in
+# tool_input instead of the tool name itself — offending_verb() alone can't see it.
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":"delete","label":"bug"}}' "blocks a consolidated tool's destructive method in tool_input (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":"create","label":"bug"}}' "allows a consolidated tool's non-Tier-A method in tool_input (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":"update","label":"bug"}}' "allows a consolidated tool's update method in tool_input (#358)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__pull_request_review_write","tool_input":{"method":"delete"}}' "blocks pull_request_review_write's bundled delete method (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__pull_request_review_write","tool_input":{"method":"submit"}}' "allows pull_request_review_write's bundled submit method — not Tier-A (#358)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__discussion_comment_write","tool_input":{"method":"delete"}}' "blocks discussion_comment_write's bundled delete method (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__discussion_comment_write","tool_input":{"method":"add"}}' "allows discussion_comment_write's bundled add method (#358)"
+assert_exit 2 "$BDM" '{"tool_name":"mcp__some_server__generic_write","tool_input":{"action":"forceDelete"}}' "blocks a camelCase Tier-A verb bundled in an 'action' field, not just 'method' (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":{"method":123}}'  "fails open on a non-string method field (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":"not-an-object"}' "fails open on a non-dict tool_input (#358)"
+assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write"}'                              "fails open on a missing tool_input (#358)"
 
 echo "== audit-git-consequences.py (#236 PostToolUse consequence audit) =="
 AGC="$HOOKS/audit-git-consequences.py"
