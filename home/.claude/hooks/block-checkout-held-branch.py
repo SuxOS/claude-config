@@ -36,7 +36,15 @@ the session (repo convention). Exit 2 = block; exit 0 = allow.
 import os
 import sys
 
-from _hookutil import git_out, git_subcommand, hook_tool_input, load_hook_input, pieces, strip_prefixes
+from _hookutil import (
+    git_out,
+    git_subcommand,
+    hook_tool_input,
+    load_hook_input,
+    pieces,
+    strip_prefixes,
+    strip_redirects,
+)
 
 # checkout/switch flags that create a branch (take the new name as their value) — NOT a switch into
 # an existing, possibly-held branch, so never the held-branch-switch case.
@@ -61,11 +69,14 @@ def checkout_target(argv):
     `argv` is run through `strip_prefixes()` first (#193) so a wrapper/prefix word ahead of `git`
     (`command git checkout held`, `env git checkout held`, `sudo git checkout held`) still reaches
     the real `git` command word instead of silently bypassing this guard the way a bare
-    `basename(argv[0]) != "git"` check would."""
+    `basename(argv[0]) != "git"` check would. Also `strip_redirects()` (#359), so a trailing
+    `> file`/`2>&1` on the command doesn't inflate the positional count past the exact-one-target
+    gate below and hide a real switch into a held branch."""
     sub = git_subcommand(strip_prefixes(argv))
     if sub is None or sub[0] not in ("checkout", "switch"):
         return None
     _, rest = sub
+    rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#359)
 
     positionals = []
     j, n = 0, len(rest)
