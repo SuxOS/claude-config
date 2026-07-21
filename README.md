@@ -59,4 +59,7 @@ git clone git@github.com:SuxOS/claude-config.git ~/Code/SuxOS/claude-config
 ~/Code/SuxOS/claude-config/install.sh
 ```
 
-`install.sh` is idempotent — safe to re-run after pulling changes.
+`install.sh` is idempotent — safe to re-run after pulling changes. If you already have a
+`settings.json`, a re-run only prints any deny rules / hook commands it's missing relative
+to the repo reference — pass `--apply` (or `--merge`) to patch them in directly, preserving
+anything you've added yourself.

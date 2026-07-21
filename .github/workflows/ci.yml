@@ -160,6 +160,17 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/lint-hooks-doc.py
 
+      # doc-facts (#278): generalizes hooks-doc-lint's one-file-pair drift check into a mechanism
+      # any tracked doc can use — a `<!-- doc-fact: ... -->` annotation asserts a concrete,
+      # checkable claim (a file exists/doesn't, a settings.json deny rule is present, a regex
+      # matches N times) next to the prose making that claim, verified here against live repo
+      # state instead of trusting the prose to stay in sync by hand. Complements, doesn't replace,
+      # hooks-doc-lint's two hand-built checks above. Deterministic, no secrets/model call, so
+      # folded into this required job like the other integrity linters (see CLAUDE.md).
+      - name: lint doc-fact annotations against live repo state
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/lint-doc-facts.py
+
   # skill-evals (ADVISORY, #140): runs each skill's evals.json against a model and grades the
   # resulting response with an LLM judge — the runner layer #95 envisioned above the deterministic
   # evals-lint rail (which only checks eval SHAPE). A model call means cost + secrets + non-determinism,
@@ -281,3 +292,55 @@ jobs:
           fi
           [ -e "$scratch_home/.claude/settings.json" ] && { echo "settings.json should not have been created" >&2; exit 1; }
           echo "install.sh missing-settings.json hard-fail test passed (#334)"
+
+      # #293: install.sh detected settings.json drift (missing_deny/missing_hooks) but only ever
+      # printed it. Proves --apply actually patches the live settings.json: restores a rule/hook
+      # removed from a scratch copy, keeps a rule the "user" added that isn't in the repo
+      # reference, and a second --apply is a no-op (no second backup, no further changes).
+      - name: install.sh --apply merges missing settings.json drift, preserving user rules
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          scratch_home="$(mktemp -d)"
+          HOME="$scratch_home" bash install.sh >/dev/null
+
+          settings="$scratch_home/.claude/settings.json"
+          python3 - "$settings" <<'PYEOF'
+          import json, sys
+          path = sys.argv[1]
+          data = json.load(open(path))
+          assert "Bash(tar *)" in data["permissions"]["deny"]
+          data["permissions"]["deny"] = [r for r in data["permissions"]["deny"] if r != "Bash(tar *)"]
+          data["permissions"]["deny"].append("Bash(my-custom-user-rule *)")
+          data["hooks"]["PreToolUse"] = [g for g in data["hooks"]["PreToolUse"] if g["matcher"] != "Write"]
+          json.dump(data, open(path, "w"), indent=2)
+          PYEOF
+
+          HOME="$scratch_home" bash install.sh --apply
+
+          python3 - "$settings" <<'PYEOF'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          deny = data["permissions"]["deny"]
+          assert "Bash(tar *)" in deny, "missing deny rule was not restored"
+          assert "Bash(my-custom-user-rule *)" in deny, "user-added deny rule was dropped"
+          matchers = [g["matcher"] for g in data["hooks"]["PreToolUse"]]
+          assert "Write" in matchers, "missing hook matcher group was not restored"
+          PYEOF
+
+          shopt -s nullglob
+          backups=("$scratch_home"/.claude/settings.json.bak-*)
+          shopt -u nullglob
+          [ "${#backups[@]}" -eq 1 ] || { echo "expected exactly one settings.json backup, got: ${backups[*]}" >&2; exit 1; }
+
+          # second --apply must be a no-op: no second backup, file unchanged
+          before_hash="$(sha256sum "$settings")"
+          HOME="$scratch_home" bash install.sh --apply
+          after_hash="$(sha256sum "$settings")"
+          [ "$before_hash" = "$after_hash" ] || { echo "settings.json changed on a second --apply run" >&2; exit 1; }
+          shopt -s nullglob
+          backups=("$scratch_home"/.claude/settings.json.bak-*)
+          shopt -u nullglob
+          [ "${#backups[@]}" -eq 1 ] || { echo "second --apply run created another backup: ${backups[*]}" >&2; exit 1; }
+
+          echo "install.sh --apply merge test passed (#293)"
