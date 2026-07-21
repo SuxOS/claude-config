@@ -155,7 +155,10 @@ def call_claude(user_prompt, system_prompt, model, allowed_tools=ALLOWED_RUN_TOO
         "--model", model,
         "--output-format", "json",
         "--append-system-prompt", system_prompt,
-        "--allowedTools", *allowed_tools,
+        # `--allowedTools=` (glued, even when empty) — a bare trailing `--allowedTools` with
+        # nothing after it is a CLI argument-parsing error ("argument missing"), since the flag
+        # is variadic and expects its value(s) glued or as following tokens, not omitted (#306).
+        "--allowedTools=" + ",".join(allowed_tools),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
