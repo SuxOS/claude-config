@@ -18,7 +18,7 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   non-string `tool_input.command` ONCE, then runs a registered list of pure `check(command, cwd) ->
   message | None` predicates — one per rail, defined in and testable from the rail's own module —
   and prints+exits 2 on the first hit. This is the only entry wired in settings.json under
-  `hooks.PreToolUse` for the `Bash` matcher; the five rails below are loaded by it (via
+  `hooks.PreToolUse` for the `Bash` matcher; the six rails below are loaded by it (via
   `importlib`, since their filenames are hyphenated) rather than run as separate hook processes.
   Each stays directly runnable via stdin for the manual-test recipe below and its own entry in
   `tests/test_hooks.sh`. Add a new rail by giving its module a `check(command, cwd)` function and
@@ -79,6 +79,19 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   `gh`/auth, or any API error (#252). Registered with `pretooluse-bash.py` via its
   `check(command, cwd)`; fails open on any error.
 
+- **`block-destructive-fs.py`** — extends the Tier-A cardinal rail to plain, NON-GIT filesystem
+  operations (#345): `block-destructive-git.py` only inspects `git ...` argv, so a bare
+  `rm -rf ~/some-important-dir`, or an `mv`/`cp -f` silently clobbering a file, had zero
+  enforcement. Two narrowly-scoped predicates: `rm` with both a recursive AND a force flag
+  (bundled or separate) is blocked unless EVERY named target is already provably safe to lose — it
+  doesn't exist, it's empty, it's under a scratch root (`tempfile.gettempdir()`, `/tmp`, `/var/tmp`,
+  a `.claude/worktrees/` scratch segment), or cwd's repo confirms it's gitignored (so routine
+  `node_modules`/`dist`/`.venv` cleanup is left alone); `mv <src> <dst>` / `cp -f <src> <dst>`
+  clobbering an existing non-empty regular file is blocked unless `-n`/`--no-clobber` or
+  `-b`/`--backup` is present. Both are deliberately narrow — a directory destination, multiple
+  sources, or `-t`/`--target-directory` on `mv`/`cp` is too ambiguous to reason about here and is
+  left alone (conservative allow), same posture as every predicate in block-destructive-git.py.
+  Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
 - **`block-destructive-mcp.py`** — PreToolUse (matcher `mcp__.*__.*`). Extends the Tier-A cardinal
   rail to MCP tool calls (#260): every other destructive-action guard here only inspects Bash argv
   text, so an MCP tool call (e.g. the GitHub plugin's `merge_pull_request`/`push_files`/

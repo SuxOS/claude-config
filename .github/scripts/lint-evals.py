@@ -19,7 +19,10 @@ The enforced contract per file:
        - `id`            : an integer, unique within the file.
        - `prompt`        : a non-empty string (the pressure scenario given to a fresh model).
        - `expected_output`: a non-empty string (what a pass looks like — the grader's rubric).
-       - `files`         : a list (fixture files the scenario needs; [] when none).
+       - `files`         : a list (fixture files the scenario needs; [] when none), each entry
+                           resolving to a real file relative to the fixture's own evals/ directory
+                           (mirroring the existence check `run-skill-evals.py`'s
+                           `load_files_context()` performs at run time).
 
 Exit 0 = every fixture is well-formed; exit 1 = one or more violations (each printed with file +
 what + why + fix). Invalid JSON is itself a failure. Paths: argv[1..], else every tracked fixture
@@ -133,11 +136,28 @@ def lint(fixture_path):
                 f"eval with no graded target can never fail, so it enforces nothing. Fix: describe what a "
                 f"pass looks like in 'expected_output'."
             )
-        if not isinstance(item.get("files"), list):
+        files = item.get("files")
+        if not isinstance(files, list):
             problems.append(
-                f"{where}: EVAL-BAD-FILES  {tag} 'files' is {type(item.get('files')).__name__}, expected a "
+                f"{where}: EVAL-BAD-FILES  {tag} 'files' is {type(files).__name__}, expected a "
                 f"list (use [] when the scenario needs no fixture files)."
             )
+        else:
+            fixture_dir = path.parent.resolve()
+            for name in files:
+                if not isinstance(name, str):
+                    continue
+                fpath = (fixture_dir / name).resolve()
+                if fixture_dir != fpath and fixture_dir not in fpath.parents:
+                    problems.append(
+                        f"{where}: EVAL-MISSING-FILE  {tag} 'files' entry {name!r} escapes the fixture's "
+                        f"own directory ({fixture_dir}). Fix: point 'files' at a path inside that directory."
+                    )
+                elif not fpath.exists():
+                    problems.append(
+                        f"{where}: EVAL-MISSING-FILE  {tag} 'files' entry {name!r} does not exist at "
+                        f"{fpath}. Fix: add the fixture file or correct the filename."
+                    )
 
     return problems
 

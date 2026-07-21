@@ -41,6 +41,7 @@ _RAIL_MODULES = (
     "block-sleep-loop",
     "block-suppressed-stderr",
     "block-destructive-git",
+    "block-destructive-fs",
 )
 
 

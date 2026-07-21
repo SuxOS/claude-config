@@ -83,6 +83,7 @@ from _hookutil import (
     git_out,
     git_returncode,
     git_subcommand,
+    has_flag_char,
     hook_tool_input,
     load_hook_input,
     pieces,
@@ -101,19 +102,6 @@ CHECKOUT_SKIP_OPTS = {"-b", "-B", "-c", "-C", "--orphan", "-d", "--detach", "-p"
 # 2` conservative-allow branch below on an otherwise ordinary `git push --exec <path> -f origin
 # main` (#288).
 PUSH_VALUE_OPTS = {"-o", "--push-option", "--receive-pack", "--repo", "--exec"}
-
-
-def _has_flag_char(rest, chars, long_names=()):
-    """True if any token in `rest` sets one of `chars` (single-letter short flags, matched even
-    inside a combined cluster like `-fd`) or exactly matches a name in `long_names`."""
-    for tok in rest:
-        if tok in long_names:
-            return True
-        if tok.startswith("--"):
-            continue
-        if tok.startswith("-") and any(c in chars for c in tok[1:]):
-            return True
-    return False
 
 
 def _working_tree_dirty(cwd):
@@ -138,12 +126,16 @@ def _current_branch(cwd):
     return branch.strip()
 
 
-def _push_force_hit(rest, cwd):
-    """True if this `git push` argv force-pushes and, from locally known remote state, is
-    provably NOT a fast-forward (would discard commits on the remote we haven't merged in)."""
-    if any(tok == "--force-with-lease" or tok.startswith("--force-with-lease=") for tok in rest):
-        return False  # git's own safe form — it refuses server-side if the remote moved
-
+def _push_positionals(rest):
+    """Shared by `_push_force_hit`/`_push_dest_branch` (#263): strip a trailing redirect, drop
+    glued `-o` push-option values (`-ofield=1`, #246) and PUSH_VALUE_OPTS' separate-token values
+    (#288), then split what's left into (filtered_rest, positionals, out_of_scope).
+    `out_of_scope` is True for a delete-push (`-d`/`--delete`, checked via `has_flag_char` so a
+    bundled `-fd` counts too, #245) or a multi-ref `--all`/`--mirror`/`--tags` form — both callers
+    treat either as too broad/ambiguous to reason about safely and conservatively allow. Extracted
+    so a future argv-parsing fix to this walk (#253's bundled `-f`+separate-value-flag leak, #261's
+    fully-qualified `refs/heads/<branch>` destination) lands once instead of needing to be
+    re-applied to two near-identical copies."""
     rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#359)
     filtered, i, n = [], 0, len(rest)
     while i < n:
@@ -152,7 +144,7 @@ def _push_force_hit(rest, cwd):
             # glued push-option value (`-ofield=1`, git's own short-option grammar) (#246) — unlike
             # the separate-token `-o value` form below, the value here is fused into this one token,
             # so a byte in it that happens to be "f" (a very real shape: `-ofield=1`) must not reach
-            # `_has_flag_char`'s per-character force-flag scan and false-trigger `forced`. Drop the
+            # `has_flag_char`'s per-character force-flag scan and false-trigger `forced`. Drop the
             # whole token rather than just excluding it from PUSH_VALUE_OPTS's separate-value skip.
             i += 1
             continue
@@ -162,18 +154,24 @@ def _push_force_hit(rest, cwd):
         i += 1
     rest = filtered
 
-    forced = _has_flag_char(rest, "f", ("--force",))
-    # `-d`/`--delete` is checked via `_has_flag_char` (not exact-token, like `--all`/`--mirror`/
-    # `--tags`) so a bundled `-fd` is recognized as a delete-push too, not just a standalone `-d`
-    # (#245) — the same bundling `_has_flag_char` already gives `forced` above, mirroring the
-    # `-r`/`--remotes` pattern in `_branch_delete_hit`.
-    out_of_scope = _has_flag_char(rest, "d", ("--delete",))
+    out_of_scope = has_flag_char(rest, "d", ("--delete",))
     positionals = []
     for tok in rest:
         if tok in ("--all", "--mirror", "--tags"):
             out_of_scope = True  # multi-ref push — a different risk, not scoped here
         elif not tok.startswith("-"):
             positionals.append(tok)
+    return rest, positionals, out_of_scope
+
+
+def _push_force_hit(rest, cwd):
+    """True if this `git push` argv force-pushes and, from locally known remote state, is
+    provably NOT a fast-forward (would discard commits on the remote we haven't merged in)."""
+    if any(tok == "--force-with-lease" or tok.startswith("--force-with-lease=") for tok in rest):
+        return False  # git's own safe form — it refuses server-side if the remote moved
+
+    rest, positionals, out_of_scope = _push_positionals(rest)
+    forced = has_flag_char(rest, "f", ("--force",))
     if out_of_scope or len(positionals) > 2:
         return False  # too broad/ambiguous to reason about safely — conservative allow
 
@@ -228,33 +226,14 @@ def _push_dest_branch(rest, cwd):
     """Return the destination branch name this `git push` argv would push to, or None if it
     can't be confidently resolved (a delete-push, a multi-ref `--all`/`--mirror`/`--tags` form, or
     a detached/unresolvable HEAD on an implicit push). Same glued-`-o`/PUSH_VALUE_OPTS filtering
-    `_push_force_hit` applies before reading positionals (#246); a bare `git push` or `git push
-    <remote>` (no refspec) is resolved as pushing the current branch under its own name — git's
-    push.default=simple/current behavior (the default since git 2.0) — mirroring the implicit-push
-    branch resolution `_push_force_hit` already does for its own fast-forward check (#252)."""
-    rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#359)
-    filtered, i, n = [], 0, len(rest)
-    while i < n:
-        tok = rest[i]
-        if tok.startswith("-o") and tok != "-o" and not tok.startswith("--"):
-            i += 1  # glued push-option value (#246) — see _push_force_hit's identical guard
-            continue
-        filtered.append(tok)
-        if tok in PUSH_VALUE_OPTS and i + 1 < n:
-            i += 1
-        i += 1
-    rest = filtered
-
-    if _has_flag_char(rest, "d", ("--delete",)):
-        return None  # a branch delete-push — no content pushed, out of scope
-    positionals = []
-    for tok in rest:
-        if tok in ("--all", "--mirror", "--tags"):
-            return None  # multi-ref push — not a single destination
-        elif not tok.startswith("-"):
-            positionals.append(tok)
-    if len(positionals) > 2:
-        return None  # too ambiguous to reason about safely — conservative allow
+    `_push_force_hit` applies before reading positionals (#246, shared via `_push_positionals()`,
+    #263); a bare `git push` or `git push <remote>` (no refspec) is resolved as pushing the current
+    branch under its own name — git's push.default=simple/current behavior (the default since git
+    2.0) — mirroring the implicit-push branch resolution `_push_force_hit` already does for its own
+    fast-forward check (#252)."""
+    rest, positionals, out_of_scope = _push_positionals(rest)
+    if out_of_scope or len(positionals) > 2:
+        return None  # delete-push, multi-ref push, or too ambiguous — conservative allow
 
     if len(positionals) == 2:
         _remote, refspec = positionals
@@ -306,9 +285,9 @@ def _reset_hard_hit(rest, cwd):
 
 
 def _clean_force_hit(rest, cwd):
-    if _has_flag_char(rest, "n", ("--dry-run",)):
+    if has_flag_char(rest, "n", ("--dry-run",)):
         return False  # already a preview — nothing is actually deleted regardless of -f
-    if not _has_flag_char(rest, "f", ("--force",)):
+    if not has_flag_char(rest, "f", ("--force",)):
         return False
     dry_argv = []
     for tok in rest:
@@ -341,12 +320,12 @@ def _clean_force_hit(rest, cwd):
 
 
 def _branch_delete_hit(rest, cwd):
-    if _has_flag_char(rest, "r", ("--remotes",)):
+    if has_flag_char(rest, "r", ("--remotes",)):
         return False  # a local remote-tracking ref — trivially recoverable via re-fetch
-    forced = _has_flag_char(rest, "D")
+    forced = has_flag_char(rest, "D")
     if not forced:
-        has_delete = "--delete" in rest or _has_flag_char(rest, "d")
-        has_force = "--force" in rest or _has_flag_char(rest, "f")
+        has_delete = "--delete" in rest or has_flag_char(rest, "d")
+        has_force = "--force" in rest or has_flag_char(rest, "f")
         forced = has_delete and has_force
     if not forced:
         return False
@@ -563,7 +542,7 @@ def _merge_publish_hit(argv):
         if subcommand == "pr" and len(rest) >= 1 and rest[0] == "merge":
             return "merge"
         if subcommand == "release" and len(rest) >= 1 and rest[0] == "create":
-            if _has_flag_char(rest[1:], "d", ("--draft", "--draft=true")):
+            if has_flag_char(rest[1:], "d", ("--draft", "--draft=true")):
                 return None  # a draft stays invisible until a later, separate publish step
             return "publish"
         return None

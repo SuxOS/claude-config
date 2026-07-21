@@ -793,6 +793,74 @@ rm -rf "$dgghstub"
 
 rm -rf "$dgrepo" "$dgremote"
 
+echo "== block-destructive-fs.py (#345) =="
+BDF="$HOOKS/block-destructive-fs.py"
+# NOTE: fixtures live under $REPO_DIR, not `mktemp -d` — the rail itself treats anything under a
+# scratch root (tempfile.gettempdir(), /tmp, ...) as always-safe-to-delete, so a "should block"
+# fixture placed under /tmp (as most of this file's git fixtures are) would false-negative here.
+dfsroot="$REPO_DIR/.dfs-test-scratch-$$"
+mkdir -p "$dfsroot"
+
+# rm -rf: existence / emptiness / scope gating
+mkdir -p "$dfsroot/nonempty"
+echo x > "$dfsroot/nonempty/f.txt"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf nonempty\"}}"                 "blocks rm -rf on a non-empty directory with no safety signal (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -fr nonempty\"}}"                 "recognizes the reordered -fr bundled form (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm --recursive --force nonempty\"}}" "recognizes the long-flag form (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf does-not-exist\"}}"           "allows rm -rf on a target that doesn't exist — nothing to lose (#345)"
+mkdir -p "$dfsroot/empty"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf empty\"}}"                    "allows rm -rf on an already-empty directory (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -r nonempty\"}}"                  "allows rm -r with no force flag — out of scope (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -f nonempty/f.txt\"}}"            "allows rm -f with no recursive flag — out of scope (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf nonempty\"}}"                                      "allows rm -rf with no cwd to resolve the relative target against — fail open (#345)"
+
+# scratch roots (/tmp) — routine cleanup, never blocked regardless of contents
+tmptarget="$(mktemp -d)"
+echo x > "$tmptarget/f.txt"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf $tmptarget\"}}"               "allows rm -rf on a non-empty path under a scratch root (#345)"
+rm -rf "$tmptarget"
+
+# gitignored build-artifact cleanup (node_modules/dist/.venv) must not be blocked
+dfsrepo="$REPO_DIR/.dfs-test-scratch-repo-$$"
+mkdir -p "$dfsrepo"
+git -C "$dfsrepo" init -q -b main
+echo "node_modules/" > "$dfsrepo/.gitignore"
+git -C "$dfsrepo" add .gitignore
+git -C "$dfsrepo" -c user.email=t@t -c user.name=t commit -q -m init
+mkdir -p "$dfsrepo/node_modules/pkg"
+echo x > "$dfsrepo/node_modules/pkg/index.js"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf node_modules\"}}"             "allows rm -rf on a gitignored build directory — routine cleanup (#345)"
+mkdir -p "$dfsrepo/tracked"
+echo x > "$dfsrepo/tracked/keep.txt"
+git -C "$dfsrepo" add tracked/keep.txt
+git -C "$dfsrepo" -c user.email=t@t -c user.name=t commit -q -m "add tracked"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf tracked\"}}"                  "blocks rm -rf on a tracked (not gitignored) directory (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf node_modules tracked\"}}"     "blocks when even one of several rm -rf targets isn't provably safe (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"sudo rm -rf tracked\"}}"             "blocks a destructive rm -rf behind a sudo prefix (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf tracked > log.txt 2>&1\"}}"   "blocks rm -rf with a trailing redirect that must not swallow the target (#345)"
+rm -rf "$dfsrepo"
+
+# mv/cp -f overwrite protection
+echo old > "$dfsroot/dest.txt"
+echo new > "$dfsroot/src.txt"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt dest.txt\"}}"             "blocks mv clobbering an existing non-empty destination file (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f src.txt dest.txt\"}}"          "blocks cp -f clobbering an existing non-empty destination file (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp src.txt dest.txt\"}}"             "allows a bare cp with no -f — out of scope (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv -n src.txt dest.txt\"}}"          "allows mv -n (--no-clobber) over an existing destination (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f -b src.txt dest.txt\"}}"       "allows cp -f -b — a backup of the prior destination is made (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt does-not-exist.txt\"}}"   "allows mv onto a destination that doesn't exist — nothing to lose (#345)"
+rm -f "$dfsroot/dest.txt"
+touch "$dfsroot/dest.txt"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt dest.txt\"}}"             "allows mv onto an existing but EMPTY destination file (#345)"
+mkdir -p "$dfsroot/destdir"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt destdir\"}}"              "allows mv into an existing directory destination — out of scope (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv -t destdir src.txt\"}}"           "allows mv -t (--target-directory) form — out of scope (#345)"
+
+assert_exit 0 "$BDF" 'not-json'                                                                                                       "fails open on malformed JSON (#345)"
+assert_exit 0 "$BDF" '{"tool_name":"Agent","tool_input":{"command":"rm -rf /"}}'                                                      "ignores a non-Bash tool_name (#345)"
+
+rm -rf "$dfsroot"
+
 echo "== block-destructive-mcp.py (#260) =="
 BDM="$HOOKS/block-destructive-mcp.py"
 assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__merge_pull_request","tool_input":{}}'    "blocks a namespaced GitHub-plugin merge tool (#260)"
