@@ -305,10 +305,31 @@ def _reset_hard_hit(rest, cwd):
     return bool(_working_tree_dirty(cwd))
 
 
+def _clean_boolean_view(rest):
+    """Return `rest` with each short-cluster token's glued `-e<pattern>` value (git-clean(1)'s
+    only short glued-value flag, alone or bundled behind other boolean chars like `-fe<pattern>`)
+    truncated to just the flag letters up to and including 'e' — so a scan for a BOOLEAN flag
+    character can't be spoofed by an arbitrary byte sitting inside the exclude pattern's own text
+    (#248: `-en*.log` contains the byte 'n', which must not be misread as `-n`/--dry-run). Mirrors
+    the identical truncation `_clean_force_hit()` already applies when building the `-n` preview's
+    own argv (#258/#299), but as a read-only view used purely for `_has_flag_char()` scans — the
+    real pattern text passed to git itself must stay verbatim, so this is never used for that."""
+    out = []
+    for tok in rest:
+        if tok.startswith("-") and not tok.startswith("--"):
+            e_idx = tok.find("e", 1)
+            if e_idx != -1:
+                out.append(tok[:e_idx + 1])
+                continue
+        out.append(tok)
+    return out
+
+
 def _clean_force_hit(rest, cwd):
-    if _has_flag_char(rest, "n", ("--dry-run",)):
+    flags = _clean_boolean_view(rest)
+    if _has_flag_char(flags, "n", ("--dry-run",)):
         return False  # already a preview — nothing is actually deleted regardless of -f
-    if not _has_flag_char(rest, "f", ("--force",)):
+    if not _has_flag_char(flags, "f", ("--force",)):
         return False
     dry_argv = []
     for tok in rest:

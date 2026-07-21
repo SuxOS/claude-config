@@ -236,6 +236,15 @@
   When an issue's whole scope is "verify X, close it if stale," close BOTH the stale target and
   the investigation issue directly (`gh issue close`) once confirmed, rather than leaving either
   as a recommendation for a human to act on later.
+- **A `WRAPPER_VALUE_OPTS`/`SUDO_VALUE_OPTS` entry assumes the flag's value is an OPAQUE token to
+  skip past — verify that against the real tool's docs before adding one** (#227): `env`'s
+  `-S`/`--split-string` broke that assumption silently for years of this table's history — its
+  value isn't opaque at all, it IS (the start of) the real command, word-split by `env` itself and
+  exec'd. Treating it like `-u`/`-C`'s skip-one-token model dropped the real command from every
+  rail's view entirely. Before adding a new value-consuming flag to either table, check whether the
+  tool's docs describe the value as a plain argument or as something that gets re-interpreted
+  (split, expanded, re-exec'd) — the latter needs a splice-and-reprocess handler like
+  `_hookutil._env_split_string()`, not a skip.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.

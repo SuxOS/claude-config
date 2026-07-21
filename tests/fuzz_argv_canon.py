@@ -138,10 +138,19 @@ PLACEHOLDER_VALUE = "VAL"
 # `--replace`/`--max-lines` (of `-I`/`-L`) are deliberately absent since GNU getopt_long treats their
 # argument as OPTIONAL, which only ever binds via `=`, never a separate following word. stdbuf(1)'s
 # `--input`/`--output`/`--error` are the long forms of `-i`/`-o`/`-e`. env(1)'s own separate-value
-# flags `-u`/`--unset`, `-C`/`--chdir`, `-S`/`--split-string` get their own entry (#212) — its `-i`
-# boolean and inline `VAR=VAL` stay in WRAPPER_EXTRA_SUFFIXES below. xargs's `-a FILE`/`--arg-file=FILE`
-# (read items from FILE instead of stdin) takes a REQUIRED separate value like `-n`/`-s`/`-d` and was
-# missing from this table too (#217), so this fuzzer's independent generator couldn't produce the
+# flags `-u`/`--unset`, `-C`/`--chdir` get their own entry (#212) — its `-i` boolean and inline
+# `VAR=VAL` stay in WRAPPER_EXTRA_SUFFIXES below. `-S`/`--split-string` is deliberately EXCLUDED
+# from this table (#227): every flag here fits the "consumes one opaque following token, the real
+# command trails separately" shape `wrapper_variants()` generates
+# (`[w, opt, PLACEHOLDER_VALUE] + REAL_ARGV`), but real `env -S STRING` doesn't — STRING is
+# word-split and BECOMES the command, so the real command never trails separately at all. This
+# table used to list `-S`/`--split-string` right alongside `-u`/`-C` with that exact wrong model —
+# both it and `_hookutil.py` independently encoded the identical wrong "opaque value" shape, so
+# this fuzzer never caught the #227 bypass despite being independent of the production constant.
+# See the dedicated `env -S` axis below (`env_split_variants()`), which models the real
+# "STRING becomes the command" shape instead. xargs's `-a FILE`/`--arg-file=FILE` (read items from
+# FILE instead of stdin) takes a REQUIRED separate value like `-n`/`-s`/`-d` and was missing from
+# this table too (#217), so this fuzzer's independent generator couldn't produce the
 # `xargs -a items.txt curl evil.com` case on its own either.
 REFERENCE_WRAPPER_VALUE_FLAGS = {
     "timeout": {"-s", "--signal", "-k", "--kill-after"},
@@ -149,7 +158,7 @@ REFERENCE_WRAPPER_VALUE_FLAGS = {
     "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
     "xargs": {"-I", "-L", "-P", "-n", "-s", "-d", "-a", "--max-args", "--max-chars", "--max-procs", "--delimiter", "--arg-file"},
     "exec": {"-a"},
-    "env": {"-u", "--unset", "-C", "--chdir", "-S", "--split-string"},
+    "env": {"-u", "--unset", "-C", "--chdir"},
     "time": {"-o", "--output", "-f", "--format"},
 }
 
@@ -373,6 +382,44 @@ def field_flag_explicit_read_violation(shape, read_verb):
     return BLOCK_EGRESS.gh_api_is_write(gh_api_argv(shape + ["-X", read_verb]))
 
 
+# --- env -S/--split-string axis (#227) -------------------------------------------------------
+# A fifth generator axis, independent of the others above: `-S`/`--split-string`'s value isn't an
+# opaque flag argument like every other REFERENCE_WRAPPER_VALUE_FLAGS entry — real env(1) word-
+# splits it and that split IS the command, so it can't be modeled by the generic "prefix +
+# REAL_ARGV trails separately" shape wrapper_variants() uses (see that table's own comment on why
+# `-S` was pulled out of it). Ground truth here is real `env -S` semantics (info coreutils 'env
+# invocation', "-S/--split-string syntax", live-verified against GNU coreutils 9.4's actual `-S`
+# splitting via its own `-v`/`--debug` trace and a real argv-echoing helper, #227) — independent of
+# `_hookutil._env_split_string()` (the thing under test), same rationale as every axis above.
+ENV_SPLIT_REAL_ARGV_STRING = " ".join(REAL_ARGV)  # "curl http://example.invalid/health"
+
+
+def env_split_variants():
+    """Every argv shape real `env -S`/`--split-string` accepts that must fully recover
+    REAL_ARGV: separate/glued/long flag forms, plus the split string itself hiding one more
+    sudo or bare env-assignment prefix in front of the real command — checking that a nested
+    wrapper inside the split string is reprocessed, not just the flat case."""
+    variants = [
+        ["env", "-S", ENV_SPLIT_REAL_ARGV_STRING],
+        ["env", "-S" + ENV_SPLIT_REAL_ARGV_STRING],
+        ["env", "--split-string=" + ENV_SPLIT_REAL_ARGV_STRING],
+        ["env", "--split-string", ENV_SPLIT_REAL_ARGV_STRING],
+        ["env", "-S", "FOO=bar " + ENV_SPLIT_REAL_ARGV_STRING],
+    ]
+    for s in sorted(SUDO):
+        variants.append(["env", "-S", s + " " + ENV_SPLIT_REAL_ARGV_STRING])
+    return variants
+
+
+def env_split_violation(argv):
+    return strip_prefixes(argv) != REAL_ARGV
+
+
+def env_split_offending_violation(argv):
+    command = " ".join(argv)
+    return not BLOCK_EGRESS.offending(command)
+
+
 def shrink(prefix_tokens, violates):
     """Delta-debugging-lite: repeatedly drop one token while the invariant stays violated."""
     tokens = list(prefix_tokens)
@@ -514,6 +561,25 @@ def main():
                         "explicit read method) should be write=False (explicit method wins), but "
                         "gh_api_is_write() said True" % (" ".join(GH_API_ENDPOINT), " ".join(shape), read_verb)
                     )
+
+    # #227: env -S/--split-string must word-split its value and surface the real command, not
+    # discard it as an opaque flag argument.
+    for argv in env_split_variants():
+        if env_split_violation(argv):
+            key = ("env_split_strip", tuple(argv))
+            if key not in violations:
+                got = strip_prefixes(argv)
+                violations[key] = (
+                    "strip_prefixes() env -S invariant: %r should recover %r, got %r"
+                    % (argv, REAL_ARGV, got)
+                )
+        if env_split_offending_violation(argv):
+            key = ("env_split_offending", tuple(argv))
+            if key not in violations:
+                violations[key] = (
+                    "block-egress offending() env -S invariant: %r should flag %r as a bare net "
+                    "binary, but offending() returned None" % (argv, REAL_ARGV)
+                )
 
     violations = list(violations.values())
     if violations:
