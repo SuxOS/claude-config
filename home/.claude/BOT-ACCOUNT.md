@@ -48,20 +48,17 @@ CLAUDE_CONFIG_DIR="$HOME/.claude-bot" ./install.sh --bot   # bot → ~/.claude-b
 `--bot` (or any `CLAUDE_CONFIG_DIR` whose dir name ends in `-bot`) copies `settings.bot.json` to
 `$DEST/settings.json` and symlinks the shared hooks/skills/CLAUDE.md/fabric into the bot dir.
 
-## ⚠️ Security gates before running the bot UNATTENDED (from #406 review)
+## Trust posture (owner directive 2026-07-21)
 
-The bot is a `bypassPermissions` identity that runs with no human watching, reading
-attacker-controllable text (issue/PR bodies via `gh`/`WebFetch`). Two findings gate going live:
-
-- **Pinned plugins (resolved here).** `settings.bot.json` pins ALL marketplaces `autoUpdate:false`
-  — an unattended bot must NOT auto-pull+execute third-party plugin updates (supply-chain path). To
-  refresh the bot's plugins, do it deliberately (human-run `/plugin` update), then re-review.
-- **Config-tamper guard (BLOCKER — build before go-live).** The bot has unconditional `Write`/`Edit`
-  and the hook rails live in `$HOME/.claude/hooks` (symlink-shared with the human). A prompt-injected
-  bot could `Edit` a rail (e.g. `block-destructive-git.py`) to no-op it and disarm BOTH identities.
-  There is no tamper-guard yet. **Do NOT run the bot unattended until the config-tamper rail lands**
-  (tracked follow-up: a PreToolUse `Write|Edit` hook that blocks writes to `~/.claude*/hooks/**` and
-  `settings*.json`, wired into the bot identity). Until then, only run the bot attended.
+The bot is trusted like the interactive session — *"I trust the bot as much as I trust you in this
+session where you're running largely unsupervised."* So it keeps the SAME **painless** guards as
+the human (identical `permissions.deny` + the hook rails — these protect the agent regardless of
+identity) but is deliberately NOT extra-locked-down: marketplaces `autoUpdate:true` (trusted
+vendors), allow-dangerous (`skipDangerousModePermissionPrompt`), and **no config-tamper guard**.
+Friction hardening that would make the owner babysit the bot was explicitly declined — see
+`suxos-security-friction-principle`. (Residual risk accepted knowingly: an unattended bot with
+`Write`/`Edit` over symlink-shared hooks *could* be induced to edit a rail; the owner trusts it not
+to, the same way this interactive session is trusted.)
 
 ## Bootstrap (one-time, human step)
 
