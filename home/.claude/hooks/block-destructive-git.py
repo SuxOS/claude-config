@@ -86,6 +86,7 @@ from _hookutil import (
     load_hook_input,
     pieces,
     strip_prefixes,
+    strip_redirects,
 )
 
 # checkout flags that mean this isn't a blind path-restore at all (branch creation, detach,
@@ -142,6 +143,7 @@ def _push_force_hit(rest, cwd):
     if any(tok == "--force-with-lease" or tok.startswith("--force-with-lease=") for tok in rest):
         return False  # git's own safe form — it refuses server-side if the remote moved
 
+    rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#359)
     filtered, i, n = [], 0, len(rest)
     while i < n:
         tok = rest[i]
@@ -229,6 +231,7 @@ def _push_dest_branch(rest, cwd):
     <remote>` (no refspec) is resolved as pushing the current branch under its own name — git's
     push.default=simple/current behavior (the default since git 2.0) — mirroring the implicit-push
     branch resolution `_push_force_hit` already does for its own fast-forward check (#252)."""
+    rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#359)
     filtered, i, n = [], 0, len(rest)
     while i < n:
         tok = rest[i]

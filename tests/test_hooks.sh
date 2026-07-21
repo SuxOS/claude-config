@@ -449,6 +449,10 @@ assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 # #290: a bare subshell's trailing ')' (glued to the last word, e.g. `held)`) must not ride along
 # into the checked-out branch name and break the exact-name match.
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"(git checkout held)\"}}" "blocks a held checkout wrapped in a bare subshell — trailing ')' must not corrupt the target name (#290)"
+# #359: a trailing redirect must not inflate the positional count past checkout_target()'s
+# exact-one-target gate and hide a real switch into a held branch.
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held > /tmp/out\"}}" "blocks a held checkout with a trailing '> file' redirect — must not corrupt the positional count (#359)"
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held 2>&1\"}}" "blocks a held checkout with a trailing '2>&1' redirect (#359)"
 assert_exit 0 "$BCHB" 'not-json'                                                                                              "fails open on malformed JSON"
 assert_exit 0 "$BCHB" '[1,2,3]'                                                                                               "fails open on valid-but-non-object top-level JSON (#318)"
 assert_exit 0 "$BCHB" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                             "fails open on non-object tool_input (#318, #323)"
@@ -668,6 +672,10 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 # #290: a bare subshell's trailing ')' must not ride along into the positional argv and corrupt
 # the positional count `_push_force_hit` gates on.
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"(cd $dgrepo && git push -f origin scratch)\"}}" "blocks a force-push that would discard commits, wrapped in a bare subshell (#290)"
+# #359: a trailing redirect must not inflate the positional count past the `len(positionals) > 2`
+# conservative-allow gate and hide a real force-push that would discard remote commits.
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push -f origin scratch > push.log 2>&1\"}}" "blocks a force-push with a trailing '> file 2>&1' redirect — must not corrupt the positional count (#359)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git push --force origin scratch 2>&1\"}}" "blocks a force-push with a trailing '2>&1' redirect and no other noise (#359)"
 
 # #245: a bundled -fd (force+delete) must be recognized as an out-of-scope delete-push (a
 # different risk not handled by this fast-forward/ancestor check), not evaluated as an ordinary
