@@ -11,13 +11,22 @@ Fires ONLY when all three hold, to keep false positives near zero:
   3. no verification command (test/build/verify/run) ran this turn.
 Then it blocks the stop and reminds the model to produce fresh evidence. Fail-open on any
 parse error — a hook bug must never wedge the session.
+
+SHADOW MODE (#324): set VERIFY_COMPLETION_CLAIM_SHADOW=1 (e.g. in the settings.json `command`
+string) to wire this as a live Stop hook that never blocks — every evaluated turn appends a
+JSON line (transcript_path, would_fire, reason) to VERIFY_COMPLETION_CLAIM_LOG (default
+~/.claude/verify-completion-claim.log) instead of exiting 2. Watch that log across real
+sessions to tune the predicates before ever arming the hook for real.
 """
 import json
 import os
 import re
 import sys
+import time
 
 from _hookutil import load_hook_input
+
+SHADOW_LOG_DEFAULT = os.path.expanduser("~/.claude/verify-completion-claim.log")
 
 CLAIM = re.compile(
     r"\b(all set|done|fixed|resolved|passing|tests? pass|all green|shipped|merged|complete[d]?|"
@@ -123,14 +132,47 @@ def edited_file_paths(records):
                 yield path
 
 
+def evaluate(records, edited_code, final_text):
+    """Return (would_fire, reason) for the completion-claim predicate over this turn."""
+    if not edited_code:
+        return False, "no product-code edit this turn"
+    if not CLAIM.search(final_text):
+        return False, "no completion claim in the final assistant message"
+    if verification_ran(records):
+        return False, "a verification command ran this turn"
+    return True, "completion claim over edited product code with no verification command"
+
+
+def log_shadow(log_path, transcript_path, would_fire, reason):
+    """Append a structured shadow-mode decision line. Never raises — a logging failure must not
+    turn a shadow (non-blocking) run into a wedged session."""
+    entry = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "transcript_path": transcript_path,
+        "would_fire": would_fire,
+        "reason": reason,
+    }
+    try:
+        with open(log_path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 def main():
+    shadow = os.environ.get("VERIFY_COMPLETION_CLAIM_SHADOW", "").strip().lower() in (
+        "1", "true", "yes",
+    )
+    log_path = os.environ.get("VERIFY_COMPLETION_CLAIM_LOG") or SHADOW_LOG_DEFAULT
+
     data = load_hook_input(sys.stdin)
     if data is None:
         sys.exit(0)
     if data.get("stop_hook_active"):  # already forced a continuation once; don't loop
         sys.exit(0)
 
-    records = turn_lines(data.get("transcript_path", ""))
+    transcript_path = data.get("transcript_path", "")
+    records = turn_lines(transcript_path)
     if not records:
         sys.exit(0)
 
@@ -158,11 +200,13 @@ def main():
             )
         break
 
-    if not edited_code:
+    would_fire, reason = evaluate(records, edited_code, final_text)
+
+    if shadow:
+        log_shadow(log_path, transcript_path, would_fire, reason)
         sys.exit(0)
-    if not CLAIM.search(final_text):
-        sys.exit(0)
-    if verification_ran(records):
+
+    if not would_fire:
         sys.exit(0)
 
     print(

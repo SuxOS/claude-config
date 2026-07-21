@@ -1,0 +1,45 @@
+name: Regression watch
+
+# Closes the "watch" half of claude-config's Tier-B ship-and-roll-back policy (#316):
+# docs/superpowers/specs/2026-07-15-loci-redesign-design.md:117-120 names "ship, watch, revert
+# if wrong" as the live safety model, but nothing here ever closed the loop — a bug filed
+# against a rail file (home/.claude/hooks/*.py) had zero automated attribution back to
+# whichever recent merge likely introduced it. This is the minimal version the issue itself
+# names: when a new bug issue mentions a rail file, cross-reference recent git history for that
+# file and annotate the issue with `possible-regression-of: #<PR>` candidates. It only flags a
+# lead for a human/fixer to check next — it never reverts anything or auto-attributes blame.
+#
+# Self-contained (not a SuxOS/.github reusable call — this bot's token can't reach that repo,
+# see CLAUDE.md).
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: regression-watch-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  regression-watch:
+    if: >
+      contains(github.event.issue.labels.*.name, 'bug') &&
+      (github.event.action == 'opened' || github.event.label.name == 'bug')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: cross-reference recent merges touching a rail file this issue names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: python3 .github/scripts/regression-watch.py
