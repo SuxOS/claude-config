@@ -143,6 +143,28 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
 
   Then restart Claude Code. It fails open on any parse error and self-limits via `stop_hook_active`.
 
+  **Shadow mode (#324)** — graduate it from "read the source" to "watch it run" without risking a
+  disruptive false positive: wire it as a live Stop hook that only logs, never blocks, by setting
+  `VERIFY_COMPLETION_CLAIM_SHADOW=1` in the `command` string itself:
+
+      "Stop": [
+        { "hooks": [ { "type": "command", "command": "VERIFY_COMPLETION_CLAIM_SHADOW=1 $HOME/.claude/hooks/verify-completion-claim.py" } ] }
+      ]
+
+  Every turn it evaluates appends one JSON line — `{"ts", "transcript_path", "would_fire",
+  "reason"}` — to `~/.claude/verify-completion-claim.log` (override the path with
+  `VERIFY_COMPLETION_CLAIM_LOG`) instead of exiting 2. Run it passively across real sessions, then
+  review the log for false positives (`would_fire: true` on a turn that was actually fine) and
+  false negatives (a turn you know should have fired but didn't) before ever dropping the
+  `VERIFY_COMPLETION_CLAIM_SHADOW=1` prefix to arm it live. Summarize a log at a glance with:
+
+      python3 -c "
+      import collections, json
+      c = collections.Counter()
+      for line in open('$HOME/.claude/verify-completion-claim.log'):
+          c[json.loads(line)['would_fire']] += 1
+      print(c)"
+
 ## Testing a hook before you trust it
 
 Pipe synthetic hook-input JSON to the script and check the exit code (2 = block, 0 = allow):

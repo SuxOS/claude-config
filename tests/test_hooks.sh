@@ -235,6 +235,28 @@ notebook_transcript="$(build_transcript_records '[
 assert_exit 2 "$VCC" "{\"transcript_path\":\"$notebook_transcript\"}" "blocks a completion claim over a notebook edited only via NotebookEdit, with no verification (#250)"
 rm -f "$notebook_transcript"
 
+# #324: shadow mode must never block, even on a turn the enforcing predicate would fire on, and
+# must log a structured would_fire decision instead — the whole point is to observe without risk.
+echo "== verify-completion-claim.py shadow mode (#324) =="
+shadow_log="$(mktemp -u)"
+shadow_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "assistant", "content": "All tests pass now."}}
+]')"
+VERIFY_COMPLETION_CLAIM_SHADOW=1 VERIFY_COMPLETION_CLAIM_LOG="$shadow_log" \
+  assert_exit 0 "$VCC" "{\"transcript_path\":\"$shadow_transcript\"}" \
+  "shadow mode never blocks even when the predicate would fire"
+if [ -f "$shadow_log" ] && grep -q '"would_fire": true' "$shadow_log"; then
+  echo "  ok: shadow log recorded would_fire=true for a claim that would have blocked"
+else
+  echo "  FAIL: shadow log missing/incorrect would_fire entry" >&2
+  fail=1
+fi
+rm -f "$shadow_log" "$shadow_transcript"
+
 echo "== block-egress.py =="
 BE="$HOOKS/block-egress.py"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import urllib.request; urllib.request.urlopen(1)\""}}' "blocks an interpreter inline-code egress one-liner"
