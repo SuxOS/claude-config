@@ -245,6 +245,13 @@
   tool's docs describe the value as a plain argument or as something that gets re-interpreted
   (split, expanded, re-exec'd) — the latter needs a splice-and-reprocess handler like
   `_hookutil._env_split_string()`, not a skip.
+- **Changing a rail's internal helper SIGNATURE (not just its `check()` contract) can silently
+  break `tests/fuzz_argv_canon.py`** (#241): that fuzzer calls some rail internals directly
+  (`BLOCK_CHECKOUT.checkout_target(...)`) rather than only through the hook's stdin JSON contract
+  `tests/test_hooks.sh` drives, so `test_hooks.sh` passing green does not prove the fuzzer still
+  runs — it can fail with a plain `TypeError` instead. Before changing an internal function's
+  signature (adding a required param like a `cwd` a new code path needs), `grep` the function name
+  across `tests/fuzz_argv_canon.py` and update every direct call site too.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.
