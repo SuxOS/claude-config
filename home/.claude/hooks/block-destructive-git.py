@@ -138,6 +138,71 @@ def _current_branch(cwd):
     return branch.strip()
 
 
+def _strip_push_value_opts(rest):
+    """Filter `PUSH_VALUE_OPTS` (and bundled short `-o`) out of a `git push` argv, leaving only
+    tokens relevant to the force-flag/positional scan. Handles three shapes of `-o`/
+    `--push-option` (and friends): the fully-glued `-ofield=1`, the bare separate-token `-o
+    field=1`, and `-o` BUNDLED with boolean short flags in one token (`-fo field=1`, `-fofield=1`,
+    #253) — git's own short-option-cluster grammar, where a value-taking short flag consumes
+    everything after it in the same token as a glued value, or the next token if nothing follows
+    in that token. Boolean flags preceding `o` in a bundled cluster are preserved as their own
+    `-`-prefixed token so `_has_flag_char()` still sees them; anything at or after `o` is dropped
+    as `-o`'s value, never exposed to the force-flag/positional scan (mirrors the #246 rationale
+    for why a glued value's stray "f" byte must not false-trigger `forced`)."""
+    filtered, i, n = [], 0, len(rest)
+    while i < n:
+        tok = rest[i]
+        if tok.startswith("-") and not tok.startswith("--") and "o" in tok[1:]:
+            o_idx = tok.index("o", 1)
+            booleans = tok[1:o_idx]
+            if booleans:
+                filtered.append("-" + booleans)
+            if o_idx + 1 >= len(tok) and i + 1 < n:
+                i += 1  # nothing follows 'o' in this token — its value is the next token
+            i += 1
+            continue
+        filtered.append(tok)
+        if tok in PUSH_VALUE_OPTS and i + 1 < n:
+            i += 1  # drop the value token entirely — it can't be a flag or a real positional
+        i += 1
+    return filtered
+
+
+def _resolve_refspec(remote, refspec, cwd):
+    """Resolve one `git push` refspec token to `(dst_branch, src_ref, push_ref, leading_plus)`,
+    or None if it can't be confidently read as a content-pushing ref (a delete-refspec, or a
+    non-branch fully-qualified ref). Shared by `_push_force_hit`/`_push_dest_branches` so a
+    multi-refspec push (`git push <remote> <refspec1> <refspec2> ...`, real git grammar, #327)
+    can check every refspec the same way the single-refspec case already did."""
+    leading_plus = refspec.startswith("+")
+    if leading_plus:
+        refspec = refspec[1:]
+    src, _, dst = refspec.partition(":")
+    dst = dst if ":" in refspec else src
+    if not src or not dst:
+        return None  # a delete-refspec (":branch" / "branch:") — out of scope
+    if ":" not in refspec and dst in ("HEAD", "@"):
+        # bare `HEAD` (no colon) resolves to the current branch's actual name, not a literal
+        # branch called "HEAD" — same resolution the 1-positional implicit-push case uses (#319);
+        # `@` is git's documented synonym for `HEAD` in revision/refspec contexts
+        # (git-rev-parse(1)) and hits the exact same literal-branch-name bug (#326)
+        branch = _current_branch(cwd)
+        if branch is None:
+            return None  # detached HEAD, or can't tell — conservative allow
+        dst = branch
+    # a refspec destination may be fully-qualified (`git push origin +feature:refs/heads/main`),
+    # not just a short branch name — fail open on any other `refs/...` namespace (tags, notes, ...)
+    # rather than build a bogus `refs/remotes/{remote}/refs/heads/...` ref that `rev-parse
+    # --verify` can never resolve, which would otherwise misread as "brand-new branch, nothing to
+    # lose" (#261)
+    heads_prefix = "refs/heads/"
+    if dst.startswith(heads_prefix):
+        dst = dst[len(heads_prefix):]
+    elif dst.startswith("refs/"):
+        return None  # non-branch fully-qualified ref — out of scope, conservative allow
+    return dst, src, f"refs/remotes/{remote}/{dst}", leading_plus
+
+
 def _push_force_hit(rest, cwd):
     """True if this `git push` argv force-pushes and, from locally known remote state, is
     provably NOT a fast-forward (would discard commits on the remote we haven't merged in)."""
@@ -145,22 +210,7 @@ def _push_force_hit(rest, cwd):
         return False  # git's own safe form — it refuses server-side if the remote moved
 
     rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#359)
-    filtered, i, n = [], 0, len(rest)
-    while i < n:
-        tok = rest[i]
-        if tok.startswith("-o") and tok != "-o" and not tok.startswith("--"):
-            # glued push-option value (`-ofield=1`, git's own short-option grammar) (#246) — unlike
-            # the separate-token `-o value` form below, the value here is fused into this one token,
-            # so a byte in it that happens to be "f" (a very real shape: `-ofield=1`) must not reach
-            # `_has_flag_char`'s per-character force-flag scan and false-trigger `forced`. Drop the
-            # whole token rather than just excluding it from PUSH_VALUE_OPTS's separate-value skip.
-            i += 1
-            continue
-        filtered.append(tok)
-        if tok in PUSH_VALUE_OPTS and i + 1 < n:
-            i += 1  # drop the value token entirely — it can't be a flag or a real positional
-        i += 1
-    rest = filtered
+    rest = _strip_push_value_opts(rest)
 
     forced = _has_flag_char(rest, "f", ("--force",))
     # `-d`/`--delete` is checked via `_has_flag_char` (not exact-token, like `--all`/`--mirror`/
@@ -174,39 +224,33 @@ def _push_force_hit(rest, cwd):
             out_of_scope = True  # multi-ref push — a different risk, not scoped here
         elif not tok.startswith("-"):
             positionals.append(tok)
-    if out_of_scope or len(positionals) > 2:
-        return False  # too broad/ambiguous to reason about safely — conservative allow
+    if out_of_scope:
+        return False  # too broad to reason about safely — conservative allow
 
-    if len(positionals) == 2:
-        remote, refspec = positionals
-        if refspec.startswith("+"):
-            forced = True
-            refspec = refspec[1:]
-        src, _, dst = refspec.partition(":")
-        dst = dst if ":" in refspec else src
-        if not src or not dst:
-            return False  # a delete-refspec (":branch" / "branch:") — out of scope
-        if ":" not in refspec and dst in ("HEAD", "@"):
-            # bare `HEAD` (no colon) resolves to the current branch's actual name, not a literal
-            # branch called "HEAD" — same resolution the 1-positional implicit-push case uses
-            # (#319); `@` is git's documented synonym for `HEAD` in revision/refspec contexts
-            # (git-rev-parse(1)) and hits the exact same literal-branch-name bug (#326)
-            branch = _current_branch(cwd)
-            if branch is None:
-                return False  # detached HEAD, or can't tell — conservative allow
-            dst = branch
-        # a refspec destination may be fully-qualified (`git push origin +feature:refs/heads/main`),
-        # not just a short branch name — normalize the same way `_push_dest_branch` does, and fail
-        # open on any other `refs/...` namespace (tags, notes, ...) rather than build a bogus
-        # `refs/remotes/{remote}/refs/heads/...` ref that `rev-parse --verify` can never resolve,
-        # which line 174 would otherwise misread as "brand-new branch, nothing to lose" (#261)
-        heads_prefix = "refs/heads/"
-        if dst.startswith(heads_prefix):
-            dst = dst[len(heads_prefix):]
-        elif dst.startswith("refs/"):
-            return False  # non-branch fully-qualified ref — out of scope, conservative allow
-        push_ref, src_ref = f"refs/remotes/{remote}/{dst}", src
-    elif len(positionals) == 1:
+    if len(positionals) >= 2:
+        # real `git push` accepts multiple ordinary refspecs after the remote (`git push <remote>
+        # <refspec1> <refspec2> ...`, git-push(1)) — a common, unremarkable form, not just the
+        # --all/--mirror/--tags case handled above. Check every refspec, not just a pair, so a
+        # throwaway extra refspec can't hide a force-push on another one (#327).
+        remote = positionals[0]
+        for refspec in positionals[1:]:
+            resolved = _resolve_refspec(remote, refspec, cwd)
+            if resolved is None:
+                continue
+            _dst, src_ref, push_ref, leading_plus = resolved
+            if not (forced or leading_plus):
+                continue
+            if not git_out(["rev-parse", "--verify", "--quiet", push_ref], cwd):
+                continue  # remote-tracking ref unknown locally — likely brand-new, nothing to lose
+            if not git_out(["rev-parse", "--verify", "--quiet", src_ref], cwd):
+                continue  # can't resolve the local side — don't risk a false block
+            if git_returncode(["merge-base", "--is-ancestor", push_ref, src_ref], cwd) == 1:
+                return True
+        return False
+
+    if not forced:
+        return False
+    if len(positionals) == 1:
         branch = _current_branch(cwd)
         if branch is None:
             return False  # no branch (detached) or can't tell — conservative allow
@@ -214,8 +258,6 @@ def _push_force_hit(rest, cwd):
     else:
         push_ref, src_ref = "@{push}", "HEAD"
 
-    if not forced:
-        return False
     if not git_out(["rev-parse", "--verify", "--quiet", push_ref], cwd):
         return False  # remote-tracking ref unknown locally — likely a brand-new branch, nothing to lose
     if not git_out(["rev-parse", "--verify", "--quiet", src_ref], cwd):
@@ -224,53 +266,37 @@ def _push_force_hit(rest, cwd):
     return git_returncode(["merge-base", "--is-ancestor", push_ref, src_ref], cwd) == 1
 
 
-def _push_dest_branch(rest, cwd):
-    """Return the destination branch name this `git push` argv would push to, or None if it
-    can't be confidently resolved (a delete-push, a multi-ref `--all`/`--mirror`/`--tags` form, or
-    a detached/unresolvable HEAD on an implicit push). Same glued-`-o`/PUSH_VALUE_OPTS filtering
+def _push_dest_branches(rest, cwd):
+    """Return every destination branch name this `git push` argv would push to (usually one, but
+    real git accepts multiple refspecs in a single push — see `_push_force_hit`, #327), or `[]` if
+    none can be confidently resolved (a delete-push, a multi-ref `--all`/`--mirror`/`--tags` form,
+    or a detached/unresolvable HEAD on an implicit push). Same `_strip_push_value_opts` filtering
     `_push_force_hit` applies before reading positionals (#246); a bare `git push` or `git push
     <remote>` (no refspec) is resolved as pushing the current branch under its own name — git's
     push.default=simple/current behavior (the default since git 2.0) — mirroring the implicit-push
     branch resolution `_push_force_hit` already does for its own fast-forward check (#252)."""
     rest = strip_redirects(rest)  # a trailing `> file`/`2>&1` must not inflate positionals (#359)
-    filtered, i, n = [], 0, len(rest)
-    while i < n:
-        tok = rest[i]
-        if tok.startswith("-o") and tok != "-o" and not tok.startswith("--"):
-            i += 1  # glued push-option value (#246) — see _push_force_hit's identical guard
-            continue
-        filtered.append(tok)
-        if tok in PUSH_VALUE_OPTS and i + 1 < n:
-            i += 1
-        i += 1
-    rest = filtered
+    rest = _strip_push_value_opts(rest)
 
     if _has_flag_char(rest, "d", ("--delete",)):
-        return None  # a branch delete-push — no content pushed, out of scope
+        return []  # a branch delete-push — no content pushed, out of scope
     positionals = []
     for tok in rest:
         if tok in ("--all", "--mirror", "--tags"):
-            return None  # multi-ref push — not a single destination
+            return []  # multi-ref push — not resolvable to specific destinations
         elif not tok.startswith("-"):
             positionals.append(tok)
-    if len(positionals) > 2:
-        return None  # too ambiguous to reason about safely — conservative allow
 
-    if len(positionals) == 2:
-        _remote, refspec = positionals
-        refspec = refspec[1:] if refspec.startswith("+") else refspec
-        src, _, dst = refspec.partition(":")
-        dst = dst if ":" in refspec else src
-        if not src or not dst:
-            return None  # a delete-refspec (":branch" / "branch:") — no content pushed, out of scope
-        if ":" not in refspec and dst in ("HEAD", "@"):
-            # bare `HEAD` (no colon) resolves to the current branch's actual name (#319); `@` is
-            # git's documented `HEAD` synonym and hits the same bug (#326)
-            return _current_branch(cwd)
-        prefix = "refs/heads/"
-        return dst[len(prefix):] if dst.startswith(prefix) else dst
+    if len(positionals) >= 2:
+        remote, branches = positionals[0], []
+        for refspec in positionals[1:]:
+            resolved = _resolve_refspec(remote, refspec, cwd)
+            if resolved is not None:
+                branches.append(resolved[0])
+        return branches
 
-    return _current_branch(cwd)
+    branch = _current_branch(cwd)
+    return [branch] if branch else []
 
 
 def _branch_protected(branch, cwd):
@@ -293,10 +319,10 @@ def _branch_protected(branch, cwd):
 
 
 def _push_protected_hit(rest, cwd):
-    branch = _push_dest_branch(rest, cwd)
-    if branch is None:
-        return False
-    return _branch_protected(branch, cwd)
+    """True if ANY destination branch this push resolves to (there can be more than one — a
+    multi-refspec push, #327) is GitHub-protected — a throwaway extra refspec must not shield a
+    protected-branch push hiding among the others."""
+    return any(_branch_protected(branch, cwd) for branch in _push_dest_branches(rest, cwd))
 
 
 def _reset_hard_hit(rest, cwd):

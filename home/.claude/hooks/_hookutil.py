@@ -363,9 +363,15 @@ def pieces(command):
 # their own value and are skipped as ordinary flags by `git_subcommand()` below. `--exec-path` is
 # deliberately NOT here: real git's bare `--exec-path` (no `=`) takes NO value at all — it just
 # prints the current exec-path and exits immediately, never reaching a subcommand; only the glued
-# `--exec-path=<path>` form sets it, and that's self-contained in one token (#211).
+# `--exec-path=<path>` form sets it, and that's self-contained in one token (#211). `--super-prefix`
+# is included for the same reason as every other separate-value global here — real git's own
+# grammar for `--namespace`/`--config-env`/etc. accepts a separate-token value, and treating
+# `--super-prefix` as boolean would otherwise walk its value in as if it were the subcommand (#208)
+# — even though live-verified (git 2.54.0) this specific flag isn't currently accepted by the
+# top-level `git` command at all (`fatal: unknown option`, exit 129, in both separate and glued
+# form) — so this is defensive/forward-compatible, not a currently-reachable bypass.
 GIT_GLOBAL_VALUE_OPTS = {
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env",
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix",
 }
 # Global opts that redirect git at a DIFFERENT repo than the hook-input cwd. A rail that consults
 # cwd's live git state (worktree list, status, merge-base, ...) can't safely follow these — it
