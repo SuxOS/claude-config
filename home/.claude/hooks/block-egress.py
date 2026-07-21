@@ -42,7 +42,15 @@ remains as the belt to this hook's suspenders). Exit 2 = block; exit 0 = allow.
 import re
 import sys
 
-from _hookutil import basename, gh_subcommand, hook_tool_input, load_hook_input, pieces, strip_prefixes
+from _hookutil import (
+    basename,
+    gh_subcommand,
+    hook_tool_input,
+    load_hook_input,
+    pieces,
+    strip_prefixes,
+    walk_past_flags,
+)
 
 # Per-interpreter inline-code flags. Only the flags that actually take *code* — `-c` is code for
 # python/shell but a syntax check for node/ruby/perl, so it is NOT listed for those; `-p` prints
@@ -144,21 +152,12 @@ GH_API_VALUE_OPTS = FIELD_FLAGS | {
 def _gh_api_endpoint(argv):
     """Return the first positional token (the REST/GraphQL endpoint) in a `gh api ...` argv
     already anchored to `["gh", "api", ...rest]`, walking past gh api's own leading flags — the
-    same shape as `gh_subcommand()`/npm's `_npm_subcommand()` walking past a CLI's global flags —
-    or None if there's no positional at all. A glued `--flag=value` or bare boolean short flag is
-    one self-contained token either way; only a `GH_API_VALUE_OPTS` token needs its separate next
-    token skipped too."""
-    i, n = 2, len(argv)
-    while i < n:
-        tok = argv[i]
-        if tok in GH_API_VALUE_OPTS:
-            i += 2
-            continue
-        if tok.startswith("-"):
-            i += 1
-            continue
-        return tok
-    return None
+    same shape as `gh_subcommand()`/npm's `_npm_subcommand()` walking past a CLI's global flags,
+    delegated to the shared `_hookutil.walk_past_flags()` (#300) — or None if there's no
+    positional at all. A glued `--flag=value` or bare boolean short flag is one self-contained
+    token either way; only a `GH_API_VALUE_OPTS` token needs its separate next token skipped too."""
+    idx = walk_past_flags(argv, 2, GH_API_VALUE_OPTS)
+    return argv[idx] if idx is not None else None
 
 
 def _unreadable_field_value(v):

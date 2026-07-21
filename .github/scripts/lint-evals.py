@@ -25,7 +25,6 @@ Exit 0 = every fixture is well-formed; exit 1 = one or more violations (each pri
 what + why + fix). Invalid JSON is itself a failure. Paths: argv[1..], else every tracked fixture
 under home/.claude/skills/*/evals/evals.json relative to the repo root.
 """
-import glob
 import json
 import sys
 from pathlib import Path

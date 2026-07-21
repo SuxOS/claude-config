@@ -94,6 +94,7 @@ from _hookutil import (
     pieces,
     strip_prefixes,
     strip_redirects,
+    walk_past_flags,
 )
 
 # checkout flags that mean this isn't a blind path-restore at all (branch creation, detach,
@@ -640,22 +641,15 @@ NPM_GLOBAL_VALUE_OPTS = {
 
 def _npm_subcommand(argv):
     """Return (subcommand, rest_argv) for an `npm ...` argv, walking past known global value
-    flags to find it — or None for a non-npm command or one with no subcommand at all."""
+    flags to find it — or None for a non-npm command or one with no subcommand at all. Delegates
+    the walk itself to `_hookutil.walk_past_flags()` (#300), same shared shape
+    `git_subcommand()`/`gh_subcommand()` use — only `NPM_GLOBAL_VALUE_OPTS` stays local here."""
     if not argv or basename(argv[0]) != "npm":
         return None
-    i, n = 1, len(argv)
-    while i < n:
-        tok = argv[i]
-        if tok in NPM_GLOBAL_VALUE_OPTS:
-            i += 2  # separate-value form: --registry value / -w value
-            continue
-        if tok.startswith("-"):
-            i += 1  # glued `--flag=value` or a boolean flag
-            continue
-        break
-    if i >= n:
+    idx = walk_past_flags(argv, 1, NPM_GLOBAL_VALUE_OPTS)
+    if idx is None:
         return None
-    return argv[i], argv[i + 1:]
+    return argv[idx], argv[idx + 1:]
 
 
 def _merge_publish_hit(argv):
