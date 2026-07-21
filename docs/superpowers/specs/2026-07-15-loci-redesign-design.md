@@ -1,7 +1,8 @@
 # Loci Redesign — workspace / org / repo
 
 **Date:** 2026-07-15
-**Status:** approved — implementing
+**Status:** shipped — the `verify` skill and the `sync` skill (deferred pending
+`colinxs.repos` having clones) remain intentionally not built
 **Branch:** `add-org-watch-and-control-panel`
 
 ## What this is

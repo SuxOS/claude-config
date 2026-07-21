@@ -53,13 +53,18 @@ recognize) is allowed, never blocked.
   - `git push` straight to a branch GitHub reports as protected (bypassing PR review entirely),
     UNLESS the destination can't be resolved from the argv (a delete-push, a multi-ref
     `--all`/`--mirror`/`--tags` form, or a detached HEAD) or `gh api
-    repos/{owner}/{repo}/branches/<branch>/protection` doesn't confirm it (#252). This hook installs
+    repos/<owner>/<repo>/branches/<branch>/protection` doesn't confirm it (#252). `<owner>`/`<repo>`
+    are resolved from the SPECIFIC remote the push argv actually targets (`git remote get-url
+    <remote>`, parsed against github.com URL forms), not `gh`'s own ambient default-repo context —
+    those can diverge in a fork workflow (`origin` = your fork, `upstream` = the real repo,
+    possibly gh-configured as the default), where trusting gh's ambient resolution instead of the
+    push's actual destination could check the wrong repo's protection (#264). This hook installs
     into every repo the user works in (install.sh symlinks hooks/ into `~/.claude/hooks/` globally),
     and plenty of ordinary repos push straight to `main` with no PR workflow at all — #242 itself
     warned that a blanket "push to main/master" name match would be false-positive-prone there, so
     this asks GitHub whether the branch is ACTUALLY protected rather than guessing from its name.
-    Same fail-open convention as every state-consulting predicate here: no `gh` on PATH, no auth, no
-    GitHub remote, or any API error reads as "not protected," never as a block.
+    Same fail-open convention as every state-consulting predicate here: no `gh` on PATH, no auth, an
+    unparsable/non-GitHub remote URL, or any API error reads as "not protected," never as a block.
 
 A piece's command word is read through `_hookutil.strip_prefixes()`/`git_subcommand()` (#193, #230)
 — the same wrapper/prefix canonicalization and git-global-option walk block-checkout-held-branch.py
@@ -72,6 +77,7 @@ Fail-open on any error — a hook bug must never wedge the session (repo convent
 block; exit 0 = allow.
 """
 import os
+import re
 import subprocess
 import sys
 from urllib.parse import quote
@@ -101,6 +107,14 @@ CHECKOUT_SKIP_OPTS = {"-b", "-B", "-c", "-C", "--orphan", "-d", "--detach", "-p"
 # 2` conservative-allow branch below on an otherwise ordinary `git push --exec <path> -f origin
 # main` (#288).
 PUSH_VALUE_OPTS = {"-o", "--push-option", "--receive-pack", "--repo", "--exec"}
+
+# Matches the github.com URL forms `git remote get-url` can hand back: https (with an optional
+# userinfo, e.g. a token-authenticated CI remote), the git@host: scp-like shorthand, ssh://, and
+# the plain git:// protocol — capturing owner/repo with an optional trailing `.git` (#264).
+GITHUB_REMOTE_RE = re.compile(
+    r"^(?:https?://(?:[^@/]+@)?github\.com/|git@github\.com:|ssh://git@github\.com/|git://github\.com/)"
+    r"(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
+)
 
 
 def _has_flag_char(rest, chars, long_names=()):
@@ -299,16 +313,58 @@ def _push_dest_branches(rest, cwd):
     return [branch] if branch else []
 
 
-def _branch_protected(branch, cwd):
-    """True only if GitHub confirms `branch` is a protected branch of cwd's repo. False for
-    everything else — not protected, no `gh` on PATH, `gh` unauthenticated, no GitHub remote
-    configured, a network hiccup, ... — same fail-open contract as every other repo-state check in
-    this file: an unresolved answer must never be read as "protected" (#252). `{owner}`/`{repo}`
-    are `gh api`'s own placeholders, resolved from cwd's git remotes the same way `gh repo view`
-    does; the branch name is substituted literally (percent-encoded, since GitHub's branch-
-    protection endpoint requires a literal `/` in a branch name to be escaped as `%2F`) since we're
-    checking the push's actual destination, not necessarily the branch checked out in cwd."""
-    endpoint = f"repos/{{owner}}/{{repo}}/branches/{quote(branch, safe='')}/protection"
+def _remote_owner_repo(remote, cwd):
+    """Resolve (owner, repo) from `remote`'s OWN configured URL (`git remote get-url`) — NOT `gh
+    api`'s ambient default-repo context, which `gh` resolves from cwd's git remotes using its own
+    heuristic and which need not agree with the specific remote a push argv names (#264). In a
+    fork workflow (`origin` = your fork, `upstream` = the real repo, possibly gh-configured as the
+    default via `gh repo set-default`), trusting gh's ambient resolution instead of the push's
+    actual destination remote could check the wrong repo's protection — a false BLOCK on a safe
+    push to your own fork, or a missed block the other direction. None if `remote` is unset, its
+    URL can't be read, or it isn't a github.com URL this can parse — same fail-open contract as
+    every other repo-state check in this file: an unresolved answer must never be read as
+    "protected"."""
+    url = git_out(["remote", "get-url", remote], cwd)
+    if not url:
+        return None
+    m = GITHUB_REMOTE_RE.match(url.strip())
+    if not m:
+        return None
+    return m.group("owner"), m.group("repo")
+
+
+def _push_remote(rest, cwd):
+    """Return the remote name a `git push` argv actually pushes to — the explicit positional if
+    one is given, otherwise the current branch's configured push remote (`branch.<name>.remote`,
+    the same implicit-push remote git itself resolves to) — or None if neither can be determined."""
+    rest = strip_redirects(rest)
+    rest = _strip_push_value_opts(rest)
+    positionals = [tok for tok in rest if not tok.startswith("-")]
+    if positionals:
+        return positionals[0]
+    branch = _current_branch(cwd)
+    if branch is None:
+        return None
+    remote = git_out(["config", "--get", f"branch.{branch}.remote"], cwd)
+    return remote.strip() if remote else None
+
+
+def _branch_protected(branch, owner_repo, cwd):
+    """True only if GitHub confirms `branch` is a protected branch of the SPECIFIC repo
+    `owner_repo` resolves to (#264). False for everything else — not protected, `owner_repo`
+    unresolved, no `gh` on PATH, `gh` unauthenticated, a network hiccup, ... — same fail-open
+    contract as every other repo-state check in this file: an unresolved answer must never be
+    read as "protected" (#252). The branch name is substituted literally (percent-encoded, since
+    GitHub's branch-protection endpoint requires a literal `/` in a branch name to be escaped as
+    `%2F`) since we're checking the push's actual destination, not necessarily the branch checked
+    out in cwd."""
+    if owner_repo is None:
+        return False
+    owner, repo = owner_repo
+    endpoint = (
+        f"repos/{quote(owner, safe='')}/{quote(repo, safe='')}"
+        f"/branches/{quote(branch, safe='')}/protection"
+    )
     try:
         r = subprocess.run(
             ["gh", "api", endpoint], cwd=cwd, capture_output=True, timeout=5,
@@ -320,9 +376,15 @@ def _branch_protected(branch, cwd):
 
 def _push_protected_hit(rest, cwd):
     """True if ANY destination branch this push resolves to (there can be more than one — a
-    multi-refspec push, #327) is GitHub-protected — a throwaway extra refspec must not shield a
-    protected-branch push hiding among the others."""
-    return any(_branch_protected(branch, cwd) for branch in _push_dest_branches(rest, cwd))
+    multi-refspec push, #327) is GitHub-protected on the repo the PUSHED-TO remote actually points
+    at (#264, `_push_remote()`/`_remote_owner_repo()`) — a throwaway extra refspec must not shield
+    a protected-branch push hiding among the others."""
+    branches = _push_dest_branches(rest, cwd)
+    if not branches:
+        return False
+    remote = _push_remote(rest, cwd)
+    owner_repo = _remote_owner_repo(remote, cwd) if remote else None
+    return any(_branch_protected(branch, owner_repo, cwd) for branch in branches)
 
 
 def _reset_hard_hit(rest, cwd):
