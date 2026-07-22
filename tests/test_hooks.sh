@@ -1128,6 +1128,16 @@ assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\
 # unset env var, fail-SAFE toward block.
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \\\"\$(cat somefile)\\\"\"}}" "blocks rm -rf on a \$(...) command-substitution target — unresolvable, fail safe (#365)"
 assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \`whoami\`\"}}"               "blocks rm -rf on a backtick command-substitution target — unresolvable, fail safe (#365)"
+# brace-expansion targets (security review HIGH, #365): `{a,b}` is bash's FIRST expansion, so a
+# brace-expression target must expand to its real paths BEFORE classification — never be misread
+# as one nonexistent literal `{a,b}` path and silently allowed while the shell deletes both.
+mkdir -p "$dfsrepo/seq1" "$dfsrepo/seq2"
+echo x > "$dfsrepo/seq1/f.txt"
+echo x > "$dfsrepo/seq2/f.txt"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf {node_modules,tracked}\"}}"   "blocks rm -rf on a brace expansion where one expanded dir is real tracked data (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf {track,untrack}ed\"}}"        "blocks rm -rf on a preamble/postscript brace form expanding to a tracked dir (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf seq{1..2}\"}}"                "blocks rm -rf on a {x..y} sequence expansion resolving to real non-empty dirs (#365)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf {node_modules,does-not-exist}\"}}" "allows rm -rf on a brace expansion where every expanded path is provably safe (#365)"
 rm -rf "$dfsrepo"
 
 # mv/cp -f overwrite protection

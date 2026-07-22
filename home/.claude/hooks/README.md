@@ -93,6 +93,11 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   `-b`/`--backup` is present. Both are deliberately narrow — a directory destination, multiple
   sources, or `-t`/`--target-directory` on `mv`/`cp` is too ambiguous to reason about here and is
   left alone (conservative allow), same posture as every predicate in block-destructive-git.py.
+  Every rm/mv/cp operand is first run through ONE shell-style expansion pass (command substitution
+  `` `...` ``/`$(...)`, brace expansion `{a,b}`/`{1..5}`, tilde, `$env`/`${env}`, then globs — the
+  #365 security-review hardening) and the RESULT is classified, never the literal token; an operand
+  the pass can't confidently resolve (a substitution only knowable at shell-run time, an over-wide
+  brace range, an unset `$var`, an empty glob) is treated as unsafe — fail-SAFE toward block.
   Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
 - **`block-destructive-mcp.py`** — PreToolUse (matcher `mcp__.*__.*`). Extends the Tier-A cardinal
   rail to MCP tool calls (#260): every other destructive-action guard here only inspects Bash argv

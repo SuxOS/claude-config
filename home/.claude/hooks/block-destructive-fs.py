@@ -37,12 +37,13 @@ prefix canonicalization every other rail here uses — so `command rm -rf x`, `s
 reach the real command word. `_hookutil.strip_redirects()` is applied before any positional is
 counted (#359) so a trailing `> log 2>&1` can't inflate `rm`'s target list or `mv`/`cp`'s positional
 count. Every target token is then run through ONE shell-style expansion pass (`_expand_target()`:
-command substitution `` `...` ``/`$(...)`, tilde, `$env`/`${env}`, then globs) BEFORE it is
-classified — expand first, classify the result, never the literal token — so `rm -rf ~/dir`,
-`$HOME/dir`, `*`, or `rm -rf "$(cat manifest)"` can't be misread as a literally-nonexistent
-"nothing to lose" path and silently allowed while the shell expands/substitutes and deletes the
-real data. A target the pass can't confidently expand (a `` `...` ``/`$(...)` substitution whose
-result is only known at shell-run time, an unknown `~user`, an env var this process lacks, a glob
+command substitution `` `...` ``/`$(...)`, brace expansion `{a,b}`/`{1..5}`, tilde, `$env`/`${env}`,
+then globs) BEFORE it is classified — expand first, classify the result, never the literal token —
+so `rm -rf ~/dir`, `$HOME/dir`, `*`, `{realdir1,realdir2}`, or `rm -rf "$(cat manifest)"` can't be
+misread as a literally-nonexistent "nothing to lose" path and silently allowed while the shell
+expands/substitutes and deletes the real data. A target the pass can't confidently expand (a
+`` `...` ``/`$(...)` substitution whose result is only known at shell-run time, a brace expansion
+wider than `_BRACE_MAX_WORDS`, an unknown `~user`, an env var this process lacks, a glob
 matching nothing) is treated AS unsafe — fail-SAFE toward blocking, never toward allow. For
 `mv`/`cp -f`, EVERY operand (source as well as destination) goes through that same pass, so a
 substituted source (`cp -f `id` dst`) blocks too — a source the shell runs is as unresolvable as a
@@ -117,39 +118,181 @@ def _has_command_substitution(token):
     return False
 
 
+# Breadth cap on one token's brace expansion. Brace expansion is statically decidable (pure text
+# rewriting, unlike a `$(...)` whose result only exists at shell-run time), so up to this many
+# words the pass EXPANDS and classifies each result like tilde/glob; past it (`{1..999999}`) the
+# token is treated as unresolvable -> None -> block, the fail-SAFE direction — never "too big to
+# check, assume fine," and never an unbounded enumeration inside a PreToolUse hook.
+_BRACE_MAX_WORDS = 512
+
+_SEQ_INT_RE = re.compile(r"^(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?$")
+_SEQ_CHAR_RE = re.compile(r"^([A-Za-z])\.\.([A-Za-z])(?:\.\.(-?\d+))?$")
+
+
+class _BraceOverflow(Exception):
+    """A brace expansion would exceed _BRACE_MAX_WORDS — caught at `_brace_expand()`'s boundary
+    and surfaced as None (unresolvable -> block), never propagated further."""
+
+
+def _brace_alternatives(token, start):
+    """Parse the brace expression opening at `token[start] == '{'`: find its matching unescaped
+    `}` (nested braces tracked by depth) and split the inside on TOP-LEVEL commas only (a comma
+    inside a nested `{...}` belongs to the inner expression). Returns (index_of_closing_brace,
+    [alternatives]), or (None, None) when no matching `}` exists — an unbalanced `{` is literal
+    in bash, same as here."""
+    depth, i, n = 0, start, len(token)
+    alts, buf = [], []
+    while i < n:
+        c = token[i]
+        if c == "\\":
+            buf.append(token[i:i + 2])  # escaped char (incl. \{ \, \}) — never syntax
+            i += 2
+            continue
+        if c == "{":
+            depth += 1
+            if depth > 1:
+                buf.append(c)
+            i += 1
+            continue
+        if c == "}":
+            depth -= 1
+            if depth == 0:
+                alts.append("".join(buf))
+                return i, alts
+            buf.append(c)
+            i += 1
+            continue
+        if c == "," and depth == 1:
+            alts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(c)
+        i += 1
+    return None, None
+
+
+def _brace_sequence(body):
+    """Expand a bash sequence expression — `x..y` / `x..y..incr`, integer (`{1..5}`, `{01..10}`
+    zero-padded, `{5..1}` descending) or single-letter (`{a..e}`) — into its word list. Returns
+    None when `body` isn't a sequence form at all (bash leaves `{a}`/`{}`/`{..}` literal);
+    raises _BraceOverflow when the range is real but wider than _BRACE_MAX_WORDS."""
+    m = _SEQ_INT_RE.match(body)
+    if m:
+        lo_s, hi_s = m.group(1), m.group(2)
+        lo, hi = int(lo_s), int(hi_s)
+        step = abs(int(m.group(3))) if m.group(3) else 1
+        step = step or 1  # bash treats a 0 increment as 1
+        if abs(hi - lo) // step + 1 > _BRACE_MAX_WORDS:
+            raise _BraceOverflow()
+        width = 0
+        if any(len(s.lstrip("-")) > 1 and s.lstrip("-").startswith("0") for s in (lo_s, hi_s)):
+            width = max(len(lo_s), len(hi_s))  # {01..10} zero-pads every word to the wider endpoint
+        direction = 1 if hi >= lo else -1
+        return [str(v).zfill(width) for v in range(lo, hi + direction, direction * step)]
+    m = _SEQ_CHAR_RE.match(body)
+    if m:
+        lo, hi = ord(m.group(1)), ord(m.group(2))
+        step = abs(int(m.group(3))) if m.group(3) else 1
+        step = step or 1
+        if abs(hi - lo) // step + 1 > _BRACE_MAX_WORDS:
+            raise _BraceOverflow()
+        direction = 1 if hi >= lo else -1
+        return [chr(v) for v in range(lo, hi + direction, direction * step)]
+    return None
+
+
+def _brace_expand(token):
+    """Expand bash brace expressions in `token` — `{a,b}` alternation and `{x..y[..incr]}`
+    sequences, with preamble/postscript (`dir{1,2}`, `{track,untrack}ed`) and nesting
+    (`{a,b{c,d}}`) — into the word list the shell will actually hand the command. Brace expansion
+    is bash's FIRST expansion (before tilde/$var/glob), so each resulting word re-enters the rest
+    of `_expand_target()`'s pass — `~/{a,b}` becomes `~/a` `~/b` and only THEN tilde-expands,
+    matching the shell's own order. Returns [token] unchanged when no valid expression is present
+    (`{a}`, `{}`, and `${VAR}` are literal, exactly bash's rule — a `{` preceded by `$` is
+    parameter expansion, not brace expansion), or None when a real expansion is wider than
+    _BRACE_MAX_WORDS — callers treat None as unresolvable -> block, fail-SAFE."""
+    try:
+        return _brace_expand_words(token)
+    except _BraceOverflow:
+        return None
+
+
+def _brace_expand_words(token):
+    i, n = 0, len(token)
+    while i < n:
+        c = token[i]
+        if c == "\\":
+            i += 2  # escaped next char (incl. \{) — literal, never an expression opener
+            continue
+        if c == "$" and i + 1 < n and token[i + 1] == "{":
+            i += 2  # ${...} parameter expansion — not brace expansion, bash's own rule
+            continue
+        if c == "{":
+            end, alts = _brace_alternatives(token, i)
+            if end is None:
+                i += 1  # unbalanced `{` — literal from here on, keep scanning
+                continue
+            if len(alts) == 1:
+                seq = _brace_sequence(alts[0])
+                if seq is None:
+                    i += 1  # `{a}`/`{}` — no top-level comma, no sequence: literal in bash too
+                    continue
+                alts = seq
+            pre, post = token[:i], token[end + 1:]
+            out = []
+            for alt in alts:
+                out.extend(_brace_expand_words(pre + alt + post))  # left-to-right, like bash
+                if len(out) > _BRACE_MAX_WORDS:
+                    raise _BraceOverflow()
+            return out
+        i += 1
+    return [token]
+
+
 def _expand_target(token, cwd):
     """Expand ONE rm/mv/cp target token the way the shell will BEFORE the command runs — command
-    substitution (`` `...` ``, `$(...)`), tilde (`~`, `~user`), env vars (`$HOME`, `${VAR}`), then
-    globs (`*`/`?`/`[...]`) — into the concrete filesystem path(s) to classify. Returns a LIST of
-    resolved absolute paths, or None when the token can't be confidently expanded: a command
-    substitution (its result is only known at shell-run time), an unknown `~user`, an env var this
-    process doesn't have (a leftover `$` after expansion), or a glob that matches nothing here.
+    substitution (`` `...` ``, `$(...)`), brace expansion (`{a,b}`, `{1..5}` — bash's FIRST
+    expansion), tilde (`~`, `~user`), env vars (`$HOME`, `${VAR}`), then globs (`*`/`?`/`[...]`)
+    — into the concrete filesystem path(s) to classify. Returns a LIST of resolved absolute
+    paths, or None when the token can't be confidently expanded: a command substitution (its
+    result is only known at shell-run time), a brace expansion wider than _BRACE_MAX_WORDS, an
+    unknown `~user`, an env var this process doesn't have (a leftover `$` after expansion), or a
+    glob that matches nothing here.
 
     This is the SINGLE canonicalization pass (block-egress.py's strip_prefixes/inline_payloads
     design, CLAUDE.md #129): expand once, up front, then classify the RESULT — never classify the
-    literal, unexpanded token. It closes the literal-target bypass a security review confirmed:
-    `_resolve()`/`_path_provably_safe_to_delete()` on a raw `~/dir`, `$HOME/dir`, `*`, or a
-    `` `...` ``/`$(...)` command substitution sees a path that doesn't literally exist and reads it
-    as "nothing to lose" -> ALLOW, while the real shell expands/substitutes it and deletes the
-    actual data (`rm -rf ~/some-important-dir`, or `rm -rf \"$(cat manifest)\"`). An unresolvable
-    token is therefore NEVER "nothing to lose": callers must treat None as "not provably safe"
-    (block), the fail-SAFE direction — the same posture `_path_provably_safe_to_delete` already
-    takes on any target it can't clear as junk."""
+    literal, unexpanded token. It closes the literal-target bypass a security review confirmed —
+    and re-confirmed per missing expansion form: `_resolve()`/`_path_provably_safe_to_delete()`
+    on a raw `~/dir`, `$HOME/dir`, `*`, `{realdir1,realdir2}`, or a `` `...` ``/`$(...)` command
+    substitution sees a path that doesn't literally exist and reads it as "nothing to lose" ->
+    ALLOW, while the real shell expands/substitutes it and deletes the actual data
+    (`rm -rf ~/some-important-dir`, `rm -rf {realdir1,realdir2}`, or `rm -rf \"$(cat manifest)\"`).
+    An unresolvable token is therefore NEVER "nothing to lose": callers must treat None as "not
+    provably safe" (block), the fail-SAFE direction — the same posture
+    `_path_provably_safe_to_delete` already takes on any target it can't clear as junk."""
     if _has_command_substitution(token):
         return None  # a `...`/$(...) the shell will run — the real target is unknowable here, block
-    expanded = os.path.expanduser(token)
-    if expanded.startswith("~"):
-        return None  # unknown user / unresolved tilde — can't prove it's safe to lose
-    expanded = os.path.expandvars(expanded)
-    if "$" in expanded:
-        return None  # an env var absent from this process stayed literal — unresolved, block
-    if _GLOB_META_RE.search(expanded):
-        pattern = expanded if os.path.isabs(expanded) else os.path.join(cwd, expanded)
-        matches = glob.glob(pattern)
-        if not matches:
-            return None  # a glob resolving to nothing here — can't prove safe, block
-        return [os.path.normpath(m) for m in matches]
-    return [_resolve(expanded, cwd)]
+    words = _brace_expand(token)
+    if words is None:
+        return None  # a brace expansion too wide to enumerate — can't prove safe, block
+    out = []
+    for word in words:
+        expanded = os.path.expanduser(word)
+        if expanded.startswith("~"):
+            return None  # unknown user / unresolved tilde — can't prove it's safe to lose
+        expanded = os.path.expandvars(expanded)
+        if "$" in expanded:
+            return None  # an env var absent from this process stayed literal — unresolved, block
+        if _GLOB_META_RE.search(expanded):
+            pattern = expanded if os.path.isabs(expanded) else os.path.join(cwd, expanded)
+            matches = glob.glob(pattern)
+            if not matches:
+                return None  # a glob resolving to nothing here — can't prove safe, block
+            out.extend(os.path.normpath(m) for m in matches)
+        else:
+            out.append(_resolve(expanded, cwd))
+    return out
 
 
 def _under_scratch_root(path):
