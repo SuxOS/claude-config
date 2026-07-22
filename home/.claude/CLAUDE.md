@@ -65,6 +65,16 @@
   noticed. The hook fails OPEN, normalizes plugin `false`≡absent (Code drops disabled keys on
   rewrite), and points at `install.sh --apply` to reconcile. This drift is live and ongoing — Code
   re-enabled `chrome-devtools-mcp` mid-session in the very session the hook shipped.
+- **A fail-OPEN hook can silently DIE and nobody notices it stopped running.** On 2026-07-22
+  `check-settings-drift.py` was dead for an unknown span: `install.sh` had turned the repo's own
+  `home/.claude/hooks/check-settings-drift.py` into a self-referential symlink (points at itself
+  → ELOOP, "Too many levels of symbolic links"), so every `SessionStart` the hook crashed and
+  fail-open swallowed it — the drift safety net was down while looking wired. Fix was `git
+  checkout -- <file>` (the git index still had the real regular file; only the working tree was
+  the self-symlink). Periodically VERIFY a wired hook actually EXECUTES — `printf '{...}' |
+  python3 <hook>` and check exit 0 + output — never assume configured == running; and after any
+  `install.sh` symlink run, check for self-referential/broken symlinks under `~/.claude` and the
+  repo working tree.
 - **Reach for the specialized skill/MCP/tool by default, every session** — `/brainstorming` and
   `/deep-research` for open-ended design/research, connected MCPs (sux, cloudflare, grafana,
   obsidian, semgrep, typescript-lsp) for their exact job — instead of hand-rolling with grep/prose.
