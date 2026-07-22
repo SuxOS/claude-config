@@ -1,0 +1,9 @@
+# CI's Pyflakes-only ruff check (`ruff check --select F`, see ci.yml) is meant to catch defects
+# in code we own, not to relint vendored third-party source. home/.claude/hooks/vendor/ is
+# vendored verbatim (#388) and can rely on patterns ruff flags out of context (names built via
+# exec/globals in bashlex's parser-generator scaffolding) — excluding it here keeps the gate
+# meaningful for this repo's own code without hand-suppressing each finding upstream.
+extend-exclude = ["home/.claude/hooks/vendor"]
+# ci.yml passes explicit file paths (git ls-files '*.py'), and ruff only honors excludes for
+# explicitly-passed paths when force-exclude is set — otherwise extend-exclude above is a no-op.
+force-exclude = true

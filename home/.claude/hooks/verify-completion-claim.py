@@ -60,7 +60,10 @@ VERIFY_CMD = re.compile(
 VERIFY_SLASH = re.compile(r"^/(?:verify|bet|run)\b", re.I)
 VERIFY_SKILLS = {"verify", "bet", "run"}
 # Product-code edits (vs docs/config/tests) — a claim over these is the risky kind.
-CODE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".rb", ".java", ".c", ".cpp", ".sh", ".ipynb")
+CODE_EXT = (
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".rb", ".java", ".kt",
+    ".swift", ".scala", ".php", ".c", ".cpp", ".sh", ".ipynb", ".html", ".css", ".scss",
+)
 
 
 def is_tool_result(record):
@@ -202,7 +205,7 @@ def main():
         sys.exit(0)
 
     edited_code = any(
-        os.path.splitext(path)[1] in CODE_EXT for path in edited_file_paths(records)
+        os.path.splitext(path)[1].lower() in CODE_EXT for path in edited_file_paths(records)
     )
     final_text = ""
     for r in reversed(records):

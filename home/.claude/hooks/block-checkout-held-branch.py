@@ -96,6 +96,9 @@ def checkout_target(argv, cwd):
             return None              # creating a branch, not switching into an existing one
         if tok in DETACH_OPTS:
             return None              # detached HEAD, holds no branch ref
+        if tok.startswith("-") and not tok.startswith("--") and "d" in tok[1:]:
+            return None              # `-d` bundled with another short flag (`-qd`/`-dq`, #385) —
+                                      # still a detach, not a switch, same as the exact-token case
         if tok in IGNORE_WORKTREE_OPTS:
             return None              # git itself skips the collision check — not our case to block
         if tok == "-":
