@@ -120,6 +120,93 @@ NET_RE = re.compile(
 BARE_NET_BINARIES = set(NET_BINARIES)
 DEV_TCP_RE = re.compile(r"/dev/(?:tcp|udp)/")
 
+# LAN-destination ssh carve-out: `ssh` to a POSITIVELY-private destination (the home gateway,
+# a LAN box) is administration, not exfil — the class this hook exists to speed-bump. The
+# exemption fails CLOSED: only a destination that parses cleanly as RFC1918 / loopback /
+# link-local / ULA / a private-use DNS suffix is exempt; an unparseable destination, a
+# public host, or any `-J` jump (traffic leaves via the jump host, which this scan doesn't
+# resolve) stays blocked. scp/sftp/rsync are NOT exempt — their whole job is moving file
+# contents, which is the exfil shape; interactive/remote-command ssh to the LAN is the
+# narrow need this serves.
+# OpenSSH flags that take a separate-token value, so the destination walk can step past
+# `-p 2222` / `-o BatchMode=yes` / `-i key` instead of misreading a value as the host.
+SSH_VALUE_OPTS = {
+    "-B", "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J", "-L", "-l", "-m",
+    "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w",
+}
+_PRIVATE_V4_RE = re.compile(
+    r"^(?:127\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r"|169\.254\.\d{1,3}\.\d{1,3})$"
+)
+_PRIVATE_SUFFIXES = (".local", ".lan", ".internal", ".home.arpa")
+
+
+def _private_host(host):
+    """True only if `host` is positively a private/LAN destination — else False (fail closed)."""
+    if not host:
+        return False
+    h = host.strip("[]").lower()
+    if h == "localhost" or h == "::1":
+        return True
+    if _PRIVATE_V4_RE.match(h):
+        return True
+    if ":" in h and (h.startswith("fe80:") or h.startswith("fc") or h.startswith("fd")):
+        return True  # link-local / ULA IPv6
+    return h.endswith(_PRIVATE_SUFFIXES)
+
+
+# `-o` options that reroute the connection or run a command somewhere other than the stated
+# destination — any of these makes the positional host NOT the real first hop / execution
+# locus, so the private-destination check would be checking the wrong thing. ProxyJump/
+# ProxyCommand reroute the transport (ProxyCommand is arbitrary local command execution);
+# LocalCommand (+PermitLocalCommand) runs a local command on connect. ssh option names are
+# case-insensitive, and both `-o Name=v` (separate) and `-oName=v` (glued) forms count.
+SSH_DISQUALIFYING_OPTS = {"proxyjump", "proxycommand", "localcommand", "permitlocalcommand"}
+
+
+def _ssh_opt_disqualifies(val):
+    """True if an `-o` option VALUE names a transport-rerouting/command-running option."""
+    name = val.split("=", 1)[0].strip().lower()
+    return name in SSH_DISQUALIFYING_OPTS
+
+
+def _ssh_private_dest(argv):
+    """True if this ssh argv's destination is positively private (see carve-out note above).
+
+    Any `-J`/`ProxyJump`/`ProxyCommand`/`LocalCommand` disqualifies — with those, the
+    positional destination is not the real first network hop (or a command runs outside
+    the stated host), so a private-looking positional proves nothing (#427 review: the
+    original `-J`-only check let `-o ProxyJump=evil` / `-o ProxyCommand=...` through as
+    opaque `-o` values). The destination is the first positional past ssh's value-taking
+    flags — the same walk_past_flags() shape every other CLI walk here uses — accepting
+    both the `[user@]host` and `ssh://[user@]host[:port]` forms.
+    """
+    for j, t in enumerate(argv[1:], start=1):
+        if t.startswith("-J"):
+            return False
+        if t == "-o":
+            if j + 1 < len(argv) and _ssh_opt_disqualifies(argv[j + 1]):
+                return False
+        elif t.startswith("-o") and len(t) > 2 and _ssh_opt_disqualifies(t[2:]):
+            return False  # glued: -oProxyJump=evil
+    idx = walk_past_flags(argv, 1, SSH_VALUE_OPTS)
+    if idx is None:
+        return False
+    dest = argv[idx]
+    if dest.startswith("ssh://"):
+        dest = dest[len("ssh://"):].split("/", 1)[0]
+        host = dest.rsplit("@", 1)[-1]
+        # bracketed v6 keeps its port outside the brackets; bare host:port splits on the last colon
+        if host.startswith("["):
+            host = host[1:].split("]", 1)[0]
+        elif host.count(":") == 1:
+            host = host.split(":", 1)[0]
+        return _private_host(host)
+    return _private_host(dest.rsplit("@", 1)[-1])
+
 # `gh api` write signals: an explicit mutating method, or gh's implicit-POST field/body flags.
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 FIELD_FLAGS = {"-f", "-F", "--field", "--raw-field", "--input"}
@@ -341,10 +428,19 @@ def offending(command):
                 return "a `gh api` call with a write method (POST/PUT/PATCH/DELETE or an implicit-POST field flag)"
 
         if cmd in BARE_NET_BINARIES:
-            return (
-                f"a bare `{cmd}` network call as a command word (the anchored `Bash({cmd} *)` "
-                f"deny only catches it as the first word, not after `&&`/`;`/`|` or a prefix)"
-            )
+            if cmd == "ssh" and _ssh_private_dest(argv):
+                pass  # LAN administration, not exfil — see the carve-out note above SSH_VALUE_OPTS
+            else:
+                reason = (
+                    f"a bare `{cmd}` network call as a command word (the anchored `Bash({cmd} *)` "
+                    f"deny only catches it as the first word, not after `&&`/`;`/`|` or a prefix)"
+                )
+                if cmd == "ssh":
+                    reason += (
+                        "; ssh to a positively-private destination (RFC1918 / .lan-style suffix) "
+                        "is exempt, but this destination didn't parse as private"
+                    )
+                return reason
 
         if any(DEV_TCP_RE.search(tok) for tok in argv):
             return "a `/dev/tcp` (or `/dev/udp`) network redirect (a bash built-in socket, not a real file)"

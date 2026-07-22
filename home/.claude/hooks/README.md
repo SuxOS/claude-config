@@ -31,8 +31,11 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   (`python3 -c 'import urllib…'`, `node -e 'fetch(…)'`, `bash -c '…curl…'`) and `gh api` **writes**
   in any argv position (`gh api /repos/O/R -X DELETE`, which slips the prefix deny). **Honest about
   being a speed bump, not a seal** — base64/obfuscated payloads and file-fed code still pass; a real
-  boundary needs OS-level network sandboxing. Registered with `pretooluse-bash.py` via its
-  `check(command, cwd)`; fails open on any error.
+  boundary needs OS-level network sandboxing. **UNREGISTERED from `pretooluse-bash.py`
+  (Colin's order, 2026-07-22)** — its false-positive rate on routine interactive work (LAN
+  ssh, inline python over local files, commit messages mentioning ssh) outweighed the
+  speed-bump value; module, tests, and its fail-closed LAN-ssh carve-out stay in the tree.
+  Re-arm by adding it back to `_RAIL_MODULES`.
 - **`block-checkout-held-branch.py`** — enforces the git-checkout-vs-worktree cardinal rail
   (CLAUDE.md dev-speed tactics, #123): `git checkout <branch>` / `git switch <branch>` raises a
   **loud `fatal: ... already used by worktree` error, exit 128** — not a silent no-op — when that
@@ -54,7 +57,9 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   can require the fd digit be glued to the `>` with no space — the same adjacency rule the shell
   itself uses to tell a real `2>` fd-redirect from an ordinary word `2` followed by an unrelated `>`
   (e.g. `ffmpeg -loglevel 2 > /dev/null`).
-  Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
+  **UNREGISTERED from `pretooluse-bash.py` (Colin's order, 2026-07-22)** — same call as
+  block-egress: legitimate stderr redirects are routine interactive idiom. Module and tests
+  stay; re-arm by adding it back to `_RAIL_MODULES`.
 - **`block-destructive-git.py`** — enforces the work skill's Tier-A rail in prose (home/.claude/
   skills/work/SKILL.md: "never force-push, merge/publish without confirmation, hard-delete, or do
   anything irreversible/destructive without an explicit yes", #230, #242). Eight narrowly-scoped

@@ -35,11 +35,17 @@ _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Registered rail modules, in the order they're checked. Each must define
 # `check(command, cwd) -> message | None`; the first to return a message wins.
+#
+# `block-egress` and `block-suppressed-stderr` are UNREGISTERED by Colin's direct order
+# (2026-07-22): their false-positive rate on routine interactive work (LAN ssh, inline
+# python reading local JSON, commit messages that merely MENTION ssh, stderr redirects)
+# outweighed the speed-bump value on this account. The modules and their standalone tests
+# remain in the tree — re-arm either by adding its name back to this tuple. The data-loss
+# rails (destructive-git/fs, checkout-held-branch) stay armed: they guard irreversible
+# local state, not network policy, and have no comparable false-positive record.
 _RAIL_MODULES = (
-    "block-egress",
     "block-checkout-held-branch",
     "block-sleep-loop",
-    "block-suppressed-stderr",
     "block-destructive-git",
     "block-destructive-fs",
 )
