@@ -764,6 +764,18 @@ assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"mytool 2>/dev
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"build 2>/dev/null-backup/errors.txt"}}'          "allows a redirect into a real /dev/null-prefixed directory path (#386)"
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"build >/dev/nullish.log 2>&1"}}'                 "allows the stdout+dup idiom when the target is only /dev/null-prefixed (#386)"
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>/dev/null;echo done"}}'          "still blocks a real /dev/null redirect immediately followed by a ';' (#386)"
+# PR #420 security review: the #386 lookahead must cover the FULL shell word-terminator set —
+# a suppression that ends a command substitution/subshell (`)`, backtick) or is glued to a
+# following redirect operator is still real suppression, not a longer path. Single quotes are
+# deliberate: the hook must receive the literal $(...)/backtick text, not this shell's expansion.
+# shellcheck disable=SC2016
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"pods=$(kubectl get pods 2>/dev/null)"}}'          "still blocks a suppression closed by a command-substitution ) (PR #420 security review)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"(cd /tmp && make 2>/dev/null)"}}'                 "still blocks a suppression closed by a subshell ) (PR #420 security review)"
+# shellcheck disable=SC2016
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"v=`probe 2>/dev/null`"}}'                         "still blocks a suppression closed by a backtick (PR #420 security review)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"build 2>/dev/null>out.log"}}'                     "still blocks a suppression glued to a following > redirect (PR #420 security review)"
+# shellcheck disable=SC2016
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"n=$(count-things >/dev/null 2>&1)"}}'             "still blocks the stdout+dup idiom inside a command substitution (PR #420 security review)"
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSS" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
