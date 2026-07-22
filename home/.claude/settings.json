@@ -104,7 +104,7 @@
     "plugin-dev@claude-plugins-official": true,
     "pr-review-toolkit@claude-plugins-official": true,
     "skill-creator@claude-plugins-official": true,
-    "learning-output-style@claude-plugins-official": true,
+    "learning-output-style@claude-plugins-official": false,
     "superpowers@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
@@ -124,29 +124,33 @@
         "source": "github",
         "repo": "cloudflare/skills"
       },
-      "autoUpdate": false
+      "autoUpdate": true
     },
     "grafana-ai-marketplace": {
       "source": {
         "source": "github",
         "repo": "grafana/ai-marketplace"
       },
-      "autoUpdate": false
+      "autoUpdate": true
     },
     "claude-plugins-official": {
       "source": {
         "source": "github",
         "repo": "anthropics/claude-plugins-official"
-      }
+      },
+      "autoUpdate": true
     },
     "sux": {
       "source": {
         "source": "git",
         "url": "https://github.com/SuxOS/sux.git"
-      }
+      },
+      "autoUpdate": true
     }
   },
+  "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
+  "outputStyle": "Explanatory",
   "theme": "dark-daltonized",
   "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
