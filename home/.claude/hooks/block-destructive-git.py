@@ -336,8 +336,9 @@ def _remote_owner_repo(remote, cwd):
 
 def _push_remote(rest, cwd):
     """Return the remote name a `git push` argv actually pushes to — the explicit positional if
-    one is given, otherwise the current branch's configured push remote (`branch.<name>.remote`,
-    the same implicit-push remote git itself resolves to) — or None if neither can be determined."""
+    one is given, otherwise git's own implicit-push precedence: `branch.<name>.pushRemote` >
+    `remote.pushDefault` > `branch.<name>.remote` (git-push(1)/git-config(1)) — or None if none
+    of those resolve."""
     rest = strip_redirects(rest)
     rest = _strip_push_value_opts(rest)
     positionals = [tok for tok in rest if not tok.startswith("-")]
@@ -346,6 +347,12 @@ def _push_remote(rest, cwd):
     branch = _current_branch(cwd)
     if branch is None:
         return None
+    push_remote = git_out(["config", "--get", f"branch.{branch}.pushRemote"], cwd)
+    if push_remote:
+        return push_remote.strip()
+    push_default = git_out(["config", "--get", "remote.pushDefault"], cwd)
+    if push_default:
+        return push_default.strip()
     remote = git_out(["config", "--get", f"branch.{branch}.remote"], cwd)
     return remote.strip() if remote else None
 

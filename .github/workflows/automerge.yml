@@ -18,10 +18,6 @@ name: Auto-merge
 on:
   pull_request_target:
     types: [opened, reopened, ready_for_review, synchronize, labeled, unlabeled, edited]
-  pull_request_review:
-    types: [submitted]
-  check_suite:
-    types: [completed]
 
 jobs:
   enable-automerge:

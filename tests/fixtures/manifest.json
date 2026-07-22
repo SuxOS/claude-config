@@ -46,6 +46,11 @@
     {"hook": "verify-completion-claim.py", "transcript": "transcripts/edit-claim-verify-slash.jsonl", "expect_exit": 2, "desc": "a bare /verify MENTION in assistant prose (no actual tool call) is not evidence — blocked (#83)"},
     {"hook": "verify-completion-claim.py", "transcript": "transcripts/edit-claim-bet-slash.jsonl", "expect_exit": 2, "desc": "a bare /bet MENTION in assistant prose (no actual tool call) is not evidence — blocked (#83)"},
     {"hook": "verify-completion-claim.py", "transcript": "transcripts/edit-claim-run-slash.jsonl", "expect_exit": 2, "desc": "a bare /run MENTION in assistant prose (no actual tool call) is not evidence — blocked (#83)"},
-    {"hook": "verify-completion-claim.py", "transcript": "transcripts/verify-slash-invocation-only.jsonl", "expect_exit": 0, "desc": "a standalone /verify invocation turn edits no product code — allowed (see #109 in README for the tag-shape caveat)"}
+    {"hook": "verify-completion-claim.py", "transcript": "transcripts/verify-slash-invocation-only.jsonl", "expect_exit": 0, "desc": "a standalone /verify invocation turn edits no product code — allowed (see #109 in README for the tag-shape caveat)"},
+
+    {"hook": "block-web-egress.py", "stdin": "pretooluse/webfetch-metadata-block.json", "expect_exit": 2, "desc": "real WebFetch envelope targeting the cloud-metadata IP is blocked (#375)"},
+    {"hook": "block-web-egress.py", "stdin": "pretooluse/webfetch-public-allow.json", "expect_exit": 0, "desc": "real WebFetch envelope targeting an ordinary public URL is allowed (#375)"},
+    {"hook": "block-write-overwrite.py", "stdin": "pretooluse/write-dirty-block.json", "cwd_template": "write_overwrite_repo", "expect_exit": 2, "desc": "real Write envelope overwriting a dirty tracked file is blocked (#375)"},
+    {"hook": "block-write-overwrite.py", "stdin": "pretooluse/write-clean-allow.json", "cwd_template": "write_overwrite_repo", "expect_exit": 0, "desc": "real Write envelope overwriting a clean tracked file is allowed (#375)"}
   ]
 }

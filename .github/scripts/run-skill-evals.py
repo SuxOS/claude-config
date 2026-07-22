@@ -124,9 +124,13 @@ def load_files_context(fixture_dir, files):
         fpath = (fixture_dir / name).resolve()
         if fpath != fixture_dir and fixture_dir not in fpath.parents:
             raise ValueError(f"fixture file escapes its eval dir: {name}")
-        if not fpath.exists():
+        if not fpath.is_file():
             raise FileNotFoundError(f"fixture file not found: {name}")
-        chunks.append(f"\n\n--- file: {name} ---\n{fpath.read_text()}")
+        try:
+            text = fpath.read_text()
+        except UnicodeDecodeError as e:
+            raise ValueError(f"fixture file is not valid UTF-8: {name} ({e})")
+        chunks.append(f"\n\n--- file: {name} ---\n{text}")
     return "".join(chunks)
 
 

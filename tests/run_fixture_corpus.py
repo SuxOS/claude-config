@@ -114,11 +114,37 @@ def make_destructive_git_repo():
     return tmp, repo
 
 
+WRITE_OVERWRITE_PLACEHOLDER = "__WRITE_OVERWRITE_REPO__"
+
+
+def make_write_overwrite_repo():
+    """Build a throwaway repo with one tracked file carrying an uncommitted unstaged change
+    (`dirty.txt`), one clean tracked file (`clean.txt`), and one untracked file
+    (`untracked.txt`) — block-write-overwrite.py's `_tracked_and_dirty()` reads live
+    `git status --porcelain` state a static JSON fixture can't capture (#375). Returns
+    (tmp_dir_to_clean_up, repo_path). Raises on any git failure."""
+    tmp = tempfile.mkdtemp(prefix="fixture-write-overwrite-")
+    repo = str(Path(tmp) / "repo")
+    subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True, capture_output=True)
+    (Path(repo) / "dirty.txt").write_text("clean\n")
+    (Path(repo) / "clean.txt").write_text("clean\n")
+    subprocess.run(["git", "-C", repo, "add", "dirty.txt", "clean.txt"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "-m", "init"],
+        check=True, capture_output=True,
+    )
+    (Path(repo) / "dirty.txt").write_text("modified\n")
+    (Path(repo) / "untracked.txt").write_text("untracked\n")
+    return tmp, repo
+
+
 # Registry of every "cwd_template" name a manifest case can reference: placeholder text -> builder.
 # A builder runs at most once per corpus run, only when at least one case actually needs it.
 CWD_TEMPLATES = {
     "held_branch_repo": (HELD_BRANCH_PLACEHOLDER, make_held_branch_repo),
     "destructive_git_repo": (DESTRUCTIVE_GIT_PLACEHOLDER, make_destructive_git_repo),
+    "write_overwrite_repo": (WRITE_OVERWRITE_PLACEHOLDER, make_write_overwrite_repo),
 }
 
 
