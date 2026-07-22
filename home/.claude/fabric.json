@@ -1,11 +1,27 @@
 {
-  "_comment": "Single declared truth for the dev fabric. Global at ~/.claude/fabric.json, read by the loci tools (orient/work/dispatch). Location is fixed (not a walk-up manifest) so it's findable from any cwd; tools walk up from cwd only to detect repo/org locus. The cloud pipeline lives in SuxOS/.github (three-loop-pipeline.md) and is NOT duplicated here — 'pipeline' only points at it.",
+  "_comment": "Single declared truth for the dev fabric. Global at ~/.claude/fabric.json, read by the loci tools (orient/work/dispatch). Location is fixed (not a walk-up manifest) so it's findable from any cwd; tools walk up from cwd only to detect repo/org locus. The cloud pipeline lives in SuxOS/.github (three-loop-pipeline.md) and is NOT duplicated here \u2014 'pipeline' only points at it.",
   "workspace_root": "~/Code",
   "orgs": {
     "SuxOS": {
       "github": "SuxOS",
-      "repos": ["sux", "suxlib", "suxrouter", "claude-config", "suxvault", "suxos-net", ".github"],
-      "pipeline": { "repo": ".github", "loops": ["collate-build", "green-merge", "red-rebase"] }
+      "repos": [
+        "sux",
+        "suxlib",
+        "suxrouter",
+        "claude-config",
+        "suxvault",
+        "suxos-net",
+        ".github",
+        "nix"
+      ],
+      "pipeline": {
+        "repo": ".github",
+        "loops": [
+          "collate-build",
+          "green-merge",
+          "red-rebase"
+        ]
+      }
     },
     "colinxs": {
       "github": "colinxs",
@@ -13,5 +29,8 @@
     }
   },
   "_identity": "Ambient, not looked up: human = m@colinxs.com (desktop, runs as ~/.claude); bot = claude@colinxs.com (cli + cloud, runs as ~/.claude-bot). A session inherits its identity from how it launched.",
-  "bot": { "email": "claude@colinxs.com", "config_dir": "~/.claude-bot" }
+  "bot": {
+    "email": "claude@colinxs.com",
+    "config_dir": "~/.claude-bot"
+  }
 }

@@ -78,6 +78,14 @@
   obsidian, semgrep, typescript-lsp) for their exact job — instead of hand-rolling with grep/prose.
   Deferred tools load on demand via ToolSearch (no pre-load), so an unused connected capability is a
   standing miss, not a neutral default (Cardinal rule #2b).
+- **Never infer a workflow/agent COMPLETED or STALLED from file existence/timestamps or a mid-run
+  status check — verify the ACTUAL final result** (an empty/absent synthesis IS "not done" — e.g.
+  `jq '.report'` on the journal returns nothing; an in-progress agent is not "stalled," it's slow).
+  And NEVER carry an unverified "completed" claim into a handoff — a downstream session inherits it
+  and errors (2026-07-22: a false "landscape COMPLETED" from file timestamps propagated into the v3
+  handoff and broke the next session, which caught it by reading `journal.jsonl` per Cardinal #3).
+  Recover an aborted fan-out from the per-item agent returns (journal.jsonl) or re-run only the
+  synthesis phase — don't re-run the whole thing.
 - **Prefer deferring heavy/async work to the cloud pipeline or the `claude@` bot to keep the
   interactive (m@) quota free** — file issues for the build loop (`dispatch`) or hand sustained
   drudge to bot-owned cloud routines, rather than burning the foreground session on long autonomous
