@@ -22,8 +22,12 @@ net behind the PreToolUse rails, not a replacement for them.
 Fail-open on everything: an unreadable snapshot, a git subprocess quirk, a non-repo cwd, a state
 file that can't be written — all degrade to "say nothing" (repo convention, same as every other
 hook here), never to a crash or a false alarm. State lives outside this repo/the installed config
-tree (tempfile.gettempdir()), keyed by a hash of the repo's real toplevel path so parallel
-worktrees of the same repo — each with a distinct toplevel — never share a baseline.
+tree (tempfile.gettempdir()), keyed by a hash of the repo's real toplevel path AND the hook
+input's `session_id` (#338) — two Claude Code sessions (e.g. a human session and a concurrent
+builder/subagent session) operating in the SAME checkout at the same time must never share a
+baseline: session A's Bash call updating a shared baseline would otherwise get diffed against by
+session B's very next call instead of B's own prior state, both masking a real B-caused
+consequence and false-positiving on A's unrelated write.
 """
 import hashlib
 import json
@@ -45,26 +49,38 @@ def _repo_root(cwd):
 
 def _snapshot(cwd):
     """Map every branch/remote-tracking ref, plus the HEAD pseudo-ref, to its current commit
-    sha. None on any git failure — never a partial/misleading snapshot."""
+    sha, plus a parallel `gone` set of local branch names whose upstream is currently reported
+    "gone" by git (i.e. its remote-tracking ref has been pruned, the shape a squash-merged PR's
+    branch takes right after its remote counterpart is deleted and `git fetch --prune` runs —
+    #356). None on any git failure — never a partial/misleading snapshot."""
     head = git_out(["rev-parse", "HEAD"], cwd)
     if head is None:
         return None
     snap = {"HEAD": head.strip()}
+    gone = []
     out = git_out(
-        ["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads", "refs/remotes"],
+        [
+            "for-each-ref",
+            "--format=%(refname:short) %(objectname) %(upstream:track)",
+            "refs/heads",
+            "refs/remotes",
+        ],
         cwd,
     )
     if out is None:
         return None
     for line in out.splitlines():
-        name, _, sha = line.partition(" ")
+        name, _, rest = line.partition(" ")
+        sha, _, track = rest.partition(" ")
         if name and sha:
             snap[name] = sha
-    return snap
+            if "[gone]" in track:
+                gone.append(name)
+    return {"refs": snap, "gone": gone}
 
 
-def _state_path(root):
-    digest = hashlib.sha256(root.encode()).hexdigest()
+def _state_path(root, session_id):
+    digest = hashlib.sha256(f"{session_id}\n{root}".encode()).hexdigest()
     return os.path.join(STATE_DIR, f"{digest}.json")
 
 
@@ -106,12 +122,21 @@ def _reachable(sha, cwd):
 
 
 def _consequences(prev, current, cwd):
+    prev_refs = prev.get("refs", {})
+    prev_gone = set(prev.get("gone", []))
+    current_refs = current.get("refs", {})
     messages = []
-    for ref, old_sha in prev.items():
-        new_sha = current.get(ref)
+    for ref, old_sha in prev_refs.items():
+        new_sha = current_refs.get(ref)
         if new_sha == old_sha:
             continue
         if new_sha is None:
+            # A local branch whose upstream was already reported "gone" (its remote-tracking ref
+            # pruned) right before it vanished is the routine post-squash-merge cleanup shape
+            # (`git fetch --prune && git branch -D feature`) — the content lives on in the squash
+            # commit, nothing was actually discarded, so don't alarm on it (#356).
+            if ref in prev_gone:
+                continue
             if _reachable(old_sha, cwd) is False:
                 messages.append(
                     f"'{ref}' was removed and its tip commit {old_sha[:12]} is no longer "
@@ -147,11 +172,11 @@ def main():
     if current is None:
         sys.exit(0)
 
-    path = _state_path(root)
+    path = _state_path(root, data.get("session_id") or "")
     prev = _load_state(path)
     _save_state(path, current)
     if prev is None:
-        sys.exit(0)  # first call seen for this repo — nothing to compare against yet
+        sys.exit(0)  # first call seen for this repo+session — nothing to compare against yet
 
     messages = _consequences(prev, current, root)
     if not messages:

@@ -24,7 +24,7 @@ import re
 import sys
 import time
 
-from _hookutil import load_hook_input
+from _hookutil import basename, load_hook_input, pieces, strip_prefixes
 
 SHADOW_LOG_DEFAULT = os.path.expanduser("~/.claude/verify-completion-claim.log")
 
@@ -43,13 +43,52 @@ CLAIM = re.compile(
 # deliberately NOT in this set — it only parses a script for syntax errors, never executes it
 # (see ci.yml's install-smoke job for the same distinction), so it is not real behavioral
 # verification evidence (#329).
-VERIFY_CMD = re.compile(
-    r"\b(?:pytest|npm (?:run )?test|jest|vitest|go test|cargo test|"
-    r"make test|tox|ruff|mypy|tsc|playwright|node .*test)\b",
-    re.I,
-)
+#
+# Matched by TOKENIZING the Bash command (`_hookutil.pieces()`/`strip_prefixes()`) and checking
+# only the actual program/subcommand word of each simple command — never by substring-searching
+# the whole command string. A substring search also false-matches quoted text that happens to
+# contain a verify-shaped phrase, e.g. `git commit -am "fix node parsing edge case; closes flaky
+# test issue"` matching the loose `node .*test` alternative even though only `git commit` ran
+# (#333). This mirrors how VERIFY_SLASH is already anchored to the start of a slash command
+# rather than searched anywhere in it.
+VERIFY_SIMPLE_CMDS = {"pytest", "jest", "vitest", "tox", "ruff", "mypy", "tsc", "playwright"}
+VERIFY_SUBCOMMANDS = {"go": "test", "cargo": "test", "make": "test"}
 VERIFY_SLASH = re.compile(r"^/(?:verify|bet|run)\b", re.I)
 VERIFY_SKILLS = {"verify", "bet", "run"}
+
+
+def _piece_verifies(argv):
+    """True if this single simple command's argv (post wrapper-stripping) is a real verification
+    command invocation, matched on its actual program/subcommand word rather than a substring."""
+    argv = strip_prefixes(argv)
+    if not argv:
+        return False
+    cmd = basename(argv[0]).lower()
+    rest = [a.lower() for a in argv[1:]]
+    if cmd in VERIFY_SIMPLE_CMDS:
+        return True
+    if cmd in VERIFY_SUBCOMMANDS:
+        return bool(rest) and rest[0] == VERIFY_SUBCOMMANDS[cmd]
+    if cmd == "npm":
+        if rest and rest[0] == "test":
+            return True
+        return len(rest) >= 2 and rest[0] == "run" and rest[1] == "test"
+    if cmd == "node":
+        return any("test" in a for a in rest)
+    return False
+
+
+def command_verifies(command):
+    """True if any simple command inside this Bash `command` string is a real verification
+    command — tokenized via `_hookutil.pieces()`, substitution-aware, one simple command at a
+    time, rather than substring-matched against the raw string (#333)."""
+    try:
+        for argv in pieces(command):
+            if _piece_verifies(argv):
+                return True
+    except Exception:
+        return False
+    return False
 # Product-code edits (vs docs/config/tests) — a claim over these is the risky kind.
 CODE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".rb", ".java", ".c", ".cpp", ".sh", ".ipynb")
 
@@ -80,8 +119,56 @@ def turn_lines(transcript_path):
     return records
 
 
+# Signals a Bash tool_result carries a FAILED verification run, checked in addition to the
+# `is_error` field a failed tool call itself sets — a test runner exits nonzero on a failure but
+# Claude Code doesn't necessarily mark that as `is_error` (it's a normal, non-crashing tool
+# result), so the transcript's own content is the only place the failure shows up (#362): a
+# pytest-style "N failed" summary line or an unhandled traceback.
+RESULT_FAILED = re.compile(r"\b[1-9]\d*\s+failed\b|\bFAILED\b|Traceback \(most recent call last\)")
+
+
+def _result_text(result):
+    content = result.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+        )
+    return ""
+
+
+def _result_failed(result):
+    """True if a tool_result block indicates the command it answers actually failed — checked
+    before crediting a matching Bash invocation as real verification evidence (#362): the hook
+    must confirm a passing result was read, not just that a verify-shaped command was run."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("is_error") is True:
+        return True
+    return bool(RESULT_FAILED.search(_result_text(result)))
+
+
+def _tool_results_by_id(records):
+    """Map tool_use_id -> its tool_result block, across this turn's records."""
+    results = {}
+    for r in records:
+        msg = r.get("message") or r
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                tool_use_id = block.get("tool_use_id")
+                if isinstance(tool_use_id, str):
+                    results[tool_use_id] = block
+    return results
+
+
 def verification_ran(records):
-    """True if this turn's records show an actual verification tool call, not just a mention."""
+    """True if this turn's records show an actual verification tool call that SUCCEEDED, not
+    just a mention and not a command that ran but failed (#362)."""
+    results_by_id = _tool_results_by_id(records)
     for r in records:
         msg = r.get("message") or r
         content = msg.get("content")
@@ -94,8 +181,12 @@ def verification_ran(records):
             tool_input = block.get("input") or {}
             if name == "Bash":
                 command = tool_input.get("command")
-                if isinstance(command, str) and VERIFY_CMD.search(command):
-                    return True
+                if not isinstance(command, str) or not command_verifies(command):
+                    continue
+                result = results_by_id.get(block.get("id"))
+                if result is not None and _result_failed(result):
+                    continue
+                return True
             elif name == "SlashCommand":
                 command = tool_input.get("command")
                 if isinstance(command, str) and VERIFY_SLASH.search(command.strip()):
