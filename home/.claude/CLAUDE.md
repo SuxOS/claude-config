@@ -42,7 +42,9 @@
 - Batch independent tool calls into one message; never poll in a loop — block on one
   `--watch`/`wait` call instead.
 - Isolate parallel git mutators in detached scratch worktrees + explicit refspec pushes —
-  never `git checkout` a branch that might be held by a stale worktree. (Re-verified #210: modern
+  and a push creating a NEW remote branch from a detached worktree needs the fully qualified
+  `HEAD:refs/heads/<br>` (short `HEAD:<br>` errors with "not a full refname" unless the branch
+  already exists) — never `git checkout` a branch that might be held by a stale worktree. (Re-verified #210: modern
   git — any version with `git worktree`, 2.5+ — makes this a loud `fatal: ... already used by
   worktree` error, exit 128, not the silent no-op earlier notes here claimed; the rule to avoid it
   stands regardless, since hitting that fatal error mid-sequence still wastes a turn re-diagnosing
