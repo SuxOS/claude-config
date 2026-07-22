@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Advisory check: catch hooks/README.md drift from settings.json / hook source (issue #269).
+"""Catch hooks/README.md drift from settings.json / hook source (issue #269).
 
 hooks/README.md has needed a standalone "fix the stale doc" issue at least six separate times
 (#103, #124, #169, #216, #223, #249, ...) — every time a hook gains a predicate, changes its
@@ -17,9 +17,10 @@ actually recurred, without a full prose parser:
      narrowly-scoped predicates"). If the code adds/removes a dispatched predicate without the
      prose being updated, this flags the mismatch.
 
-This is deliberately ADVISORY (a standalone CI job, not folded into the required `shellcheck`
-job — see ci.yml): unlike lint-settings.py's regex-over-JSON checks, rule 2 parses hand-written
-prose (a number word), which is inherently more fragile than parsing structured config. It also
+This is folded into the required `shellcheck` job as a plain step, same as
+lint-settings.py/lint-evals.py (see ci.yml) — not a standalone advisory job. Even so, rule 2 is
+inherently more fragile than the other, structured-config checks: unlike lint-settings.py's
+regex-over-JSON checks, it parses hand-written prose (a number word). It also
 can't judge free-form claims (e.g. "deliberately NOT extended to X") — only the two mechanical
 facts above, which is what has actually drifted every time so far. Exit 0 = clean or nothing to
 check; exit 1 = a drift found.

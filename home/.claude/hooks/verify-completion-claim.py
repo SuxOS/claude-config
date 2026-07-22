@@ -259,6 +259,23 @@ def evaluate(records, edited_code, final_text):
     return True, "completion claim over edited product code with no verification command"
 
 
+SHADOW_LOG_MAX_LINES = 5000
+
+
+def _rotate_shadow_log(log_path):
+    """Truncate the log to its last SHADOW_LOG_MAX_LINES lines once it grows past that, so a
+    long-running shadow-mode session doesn't grow the file unbounded."""
+    try:
+        with open(log_path) as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        return
+    if len(lines) <= SHADOW_LOG_MAX_LINES:
+        return
+    with open(log_path, "w") as f:
+        f.writelines(lines[-SHADOW_LOG_MAX_LINES:])
+
+
 def log_shadow(log_path, transcript_path, would_fire, reason):
     """Append a structured shadow-mode decision line. Never raises — a logging failure must not
     turn a shadow (non-blocking) run into a wedged session."""
@@ -271,6 +288,7 @@ def log_shadow(log_path, transcript_path, would_fire, reason):
     try:
         with open(log_path, "a") as f:
             f.write(json.dumps(entry) + "\n")
+        _rotate_shadow_log(log_path)
     except Exception:
         pass
 
