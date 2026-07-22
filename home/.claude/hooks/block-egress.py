@@ -158,16 +158,40 @@ def _private_host(host):
     return h.endswith(_PRIVATE_SUFFIXES)
 
 
+# `-o` options that reroute the connection or run a command somewhere other than the stated
+# destination — any of these makes the positional host NOT the real first hop / execution
+# locus, so the private-destination check would be checking the wrong thing. ProxyJump/
+# ProxyCommand reroute the transport (ProxyCommand is arbitrary local command execution);
+# LocalCommand (+PermitLocalCommand) runs a local command on connect. ssh option names are
+# case-insensitive, and both `-o Name=v` (separate) and `-oName=v` (glued) forms count.
+SSH_DISQUALIFYING_OPTS = {"proxyjump", "proxycommand", "localcommand", "permitlocalcommand"}
+
+
+def _ssh_opt_disqualifies(val):
+    """True if an `-o` option VALUE names a transport-rerouting/command-running option."""
+    name = val.split("=", 1)[0].strip().lower()
+    return name in SSH_DISQUALIFYING_OPTS
+
+
 def _ssh_private_dest(argv):
     """True if this ssh argv's destination is positively private (see carve-out note above).
 
-    Any `-J`/`ProxyJump` disqualifies (the first network hop is the jump host, not the
-    destination). The destination is the first positional past ssh's value-taking flags —
-    the same walk_past_flags() shape every other CLI walk here uses — accepting both the
-    `[user@]host` and `ssh://[user@]host[:port]` forms.
+    Any `-J`/`ProxyJump`/`ProxyCommand`/`LocalCommand` disqualifies — with those, the
+    positional destination is not the real first network hop (or a command runs outside
+    the stated host), so a private-looking positional proves nothing (#427 review: the
+    original `-J`-only check let `-o ProxyJump=evil` / `-o ProxyCommand=...` through as
+    opaque `-o` values). The destination is the first positional past ssh's value-taking
+    flags — the same walk_past_flags() shape every other CLI walk here uses — accepting
+    both the `[user@]host` and `ssh://[user@]host[:port]` forms.
     """
-    if "-J" in argv or any(t.startswith("-J") and t != "-J" for t in argv[1:]):
-        return False
+    for j, t in enumerate(argv[1:], start=1):
+        if t.startswith("-J"):
+            return False
+        if t == "-o":
+            if j + 1 < len(argv) and _ssh_opt_disqualifies(argv[j + 1]):
+                return False
+        elif t.startswith("-o") and len(t) > 2 and _ssh_opt_disqualifies(t[2:]):
+            return False  # glued: -oProxyJump=evil
     idx = walk_past_flags(argv, 1, SSH_VALUE_OPTS)
     if idx is None:
         return False
