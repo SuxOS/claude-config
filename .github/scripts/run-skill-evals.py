@@ -160,7 +160,10 @@ def call_claude(user_prompt, system_prompt, model, allowed_tools=ALLOWED_RUN_TOO
         # is variadic and expects its value(s) glued or as following tokens, not omitted (#306).
         "--allowedTools=" + ",".join(allowed_tools),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("claude CLI timed out after 120s")
     if proc.returncode != 0:
         raise RuntimeError(f"claude CLI exited {proc.returncode}: {proc.stderr.strip()[:400]}")
     try:

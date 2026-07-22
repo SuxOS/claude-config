@@ -93,9 +93,9 @@ if [ -e "$settings_dest" ]; then
   echo "settings.json already exists at $settings_dest — not overwritten."
   echo "Reference copy at $settings_src — diff/merge manually as needed."
   if command -v jq >/dev/null 2>&1; then
-    missing_deny="$(jq -n --slurpfile src "$settings_src" --slurpfile dest "$settings_dest" \
+    missing_deny="$(jq -rn --slurpfile src "$settings_src" --slurpfile dest "$settings_dest" \
       '(($src[0].permissions.deny // []) - ($dest[0].permissions.deny // [])) | .[]' 2>/dev/null || true)"
-    missing_hooks="$(jq -n --slurpfile src "$settings_src" --slurpfile dest "$settings_dest" \
+    missing_hooks="$(jq -rn --slurpfile src "$settings_src" --slurpfile dest "$settings_dest" \
       '(($src[0].hooks // {}) | [.. | objects | .command? // empty]) as $src_cmds |
        (($dest[0].hooks // {}) | [.. | objects | .command? // empty]) as $dest_cmds |
        ($src_cmds - $dest_cmds) | .[]' 2>/dev/null || true)"
