@@ -31,6 +31,16 @@ to `/dev/null` — same practical effect (a later stderr write errors out or is 
 just the other spelling for "make stderr go away." Same digit-adjacency guard as the `/dev/null`
 form: the `2` must be its own word, glued to the `>`.
 
+Scanning the raw string has a corollary the regexes alone can't fix: they have zero awareness of
+shell quoting, so they also match `2>/dev/null` sitting inside a QUOTED argument — plain text
+there, not a redirect (`grep -rn "2>/dev/null" hooks/`, a benign search for that exact literal, or
+`git commit -m "docs: explain the 2>/dev/null idiom"`) (#330). Before running the three regexes,
+`_mask_quoted()` blanks out the interior of every single-/double-quoted span (same quote-tracking
+shape as `_hookutil.substitution_inners()`, applied here to suppress rather than surface quoted
+text) so a redirect-shaped substring that's actually quoted text can't match. A real redirect
+whose TARGET happens to be quoted (`2>"/dev/null"`, valid but rare) is masked away too and so goes
+undetected — an accepted false-negative tradeoff for closing the far more common false-positive.
+
 Fail-open on any error — a hook bug must never wedge the session (repo convention). Exit 2 =
 block; exit 0 = allow.
 """
@@ -53,11 +63,44 @@ STDOUT_NULL_THEN_DUP_RE = re.compile(r"(?<![\w])(?:1)?>>?[ \t]*/dev/null[ \t]+2>
 FD_CLOSE_RE = re.compile(r"(?<![\w])2>&[ \t]*-")
 
 
+def _mask_quoted(command):
+    """Return `command` with the interior of every single-/double-quoted span blanked out (spaces),
+    quote characters and everything outside quotes left untouched — so the redirect regexes above
+    can no longer match a `2>/dev/null`-shaped substring that's actually quoted text, not a real
+    redirect (#330). Same quote-tracking shape as `_hookutil.substitution_inners()`; best-effort on
+    an unbalanced quote (masks to the end of the string) since this must fail open like every
+    other rail, never raise."""
+    out = []
+    quote = None  # None | "'" | '"'
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            out.append(c if quote is None else " ")
+            out.append(command[i + 1] if quote is None else " ")
+            i += 2
+            continue
+        if quote is None and c in ("'", '"'):
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if quote is not None and c == quote:
+            quote = None
+            out.append(c)
+            i += 1
+            continue
+        out.append(" " if quote is not None else c)
+        i += 1
+    return "".join(out)
+
+
 def offending(command):
+    masked = _mask_quoted(command)
     return bool(
-        NULL_REDIRECT_RE.search(command)
-        or STDOUT_NULL_THEN_DUP_RE.search(command)
-        or FD_CLOSE_RE.search(command)
+        NULL_REDIRECT_RE.search(masked)
+        or STDOUT_NULL_THEN_DUP_RE.search(masked)
+        or FD_CLOSE_RE.search(masked)
     )
 
 

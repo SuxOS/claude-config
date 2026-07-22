@@ -235,6 +235,51 @@ notebook_transcript="$(build_transcript_records '[
 assert_exit 2 "$VCC" "{\"transcript_path\":\"$notebook_transcript\"}" "blocks a completion claim over a notebook edited only via NotebookEdit, with no verification (#250)"
 rm -f "$notebook_transcript"
 
+# #332 gap 1: past-tense "tests passed" is one of the most natural post-test-run phrasings, and
+# the old CLAIM regex's `tests? pass` alternative required a word boundary immediately after
+# "pass" — "passed"'s trailing "ed" broke that boundary, so this claim was invisible.
+passed_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All tests passed, ship it."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$passed_transcript\"}" "blocks a past-tense 'tests passed' completion claim over an unverified edit (#332)"
+rm -f "$passed_transcript"
+
+# #332 gap 2: a negation word/contraction close before the trigger word denies the claim rather
+# than making it ("Not done yet", "isn't fixed") — the old regex was pure word-presence matching
+# with no negation awareness at all.
+negated_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Not done yet, still working on it."}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$negated_transcript\"}" "does not block on 'Not done yet' — a negated trigger word is not a completion claim (#332)"
+rm -f "$negated_transcript"
+
+isnt_fixed_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "This isn'"'"'t fixed, need another pass."}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$isnt_fixed_transcript\"}" "does not block on \"isn't fixed\" — negation guard covers contractions too (#332)"
+rm -f "$isnt_fixed_transcript"
+
 # #324: shadow mode must never block, even on a turn the enforcing predicate would fire on, and
 # must log a structured would_fire decision instead — the whole point is to observe without risk.
 echo "== verify-completion-claim.py shadow mode (#324) =="
@@ -549,6 +594,10 @@ assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 # subcommand and miss the checkout entirely.
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --super-prefix /x checkout held\"}}" "blocks a held checkout past a separate-value --super-prefix (#208)"
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --super-prefix=/x checkout held\"}}" "blocks a held checkout past a glued --super-prefix= (#208)"
+# #331: a multi-line quoted commit message that merely CONTAINS "git checkout held" as text must
+# not be torn across lines before quote-tracking sees it — that used to spill the quoted text out
+# as if it were real shell syntax and false-block an ordinary commit.
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git commit -m 'notes:\ngit checkout held\ndone'\"}}" "allows an ordinary commit whose multi-line quoted message merely mentions checking out the held branch (#331)"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 
@@ -589,6 +638,11 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"for sleep in 
 # `sleep 5` rather than staying buried inside `echo`'s argument.
 # shellcheck disable=SC2016
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while ! test -f /tmp/ready; do echo \"waiting $(sleep 5)\"; done"}}' "blocks a sleep hidden inside \$(...) in a loop piece (#200)"
+# #331: a multi-line quoted commit message containing loop/sleep-shaped TEXT must not be torn
+# across lines before quote-tracking runs — that used to shred the quoted argument into separate
+# shlex passes, each falling back to the quote-blind regex splitter, so "while true; do\nsleep 5"
+# sitting inside a commit message body read as a real polling loop.
+assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"notes:\nwhile true; do\nsleep 5\ndone\""}}' "allows an ordinary commit whose multi-line quoted message merely mentions a sleep loop (#331)"
 assert_exit 0 "$BSL" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSL" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
 assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
@@ -612,6 +666,15 @@ assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&1 >/dev/null"}}'                 "allows the reordered form (stderr dup'd before stdout is redirected, so stderr stays visible) (#201)"
 # #205: `2>&-` closes fd 2 outright — same practical effect as redirecting it to /dev/null.
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&-"}}'                            "blocks the 2>&- fd-close idiom (#205)"
+# #330: the redirect regexes must not fire on a quoted STRING that merely contains the same text —
+# a benign search for the literal, or a commit message that discusses the idiom, does no redirection.
+# shellcheck disable=SC2016
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"grep -rn \"2>/dev/null\" hooks/"}}'               "allows a grep whose search literal merely contains 2>/dev/null as quoted text (#330)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"docs: explain the 2>/dev/null idiom\""}}' "allows a commit message that merely mentions the 2>/dev/null idiom (#330)"
+assert_exit 0 "$BSS" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo '2>/dev/null'\"}}"                  "allows a single-quoted literal containing 2>/dev/null (#330)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"echo \"the idiom is &>/dev/null, or 2>&1 with >/dev/null first\""}}' "allows a quoted string mentioning multiple suppression idioms as text (#330)"
+# A real redirect must still be caught even when it sits right next to a quoted argument.
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl \"http://x\" 2>/dev/null"}}'                 "still blocks a real redirect that follows a quoted argument (#330)"
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSS" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
@@ -997,6 +1060,13 @@ assert_exit 0 "$BWE" '[1,2,3]'                                                  
 assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":[1,2,3]}'                                       "fails open on a non-object tool_input (#360)"
 assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":123}}'                                   "fails open on a non-string url field (#360)"
 assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"not a url at all"}}'                    "fails open on an unparseable/schemeless url (#360)"
+
+# #398: alternate IPv4 encodings a WHATWG-spec-compliant fetch normalizes to a literal IP.
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://2130706433/latest/meta-data/"}}' "blocks a pure-decimal-encoded loopback IPv4 literal (#398)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://0x7f000001/"}}'                  "blocks a hex-encoded loopback IPv4 literal (#398)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://0177.0.0.1/"}}'                  "blocks an octal-per-octet loopback IPv4 literal (#398)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://2852039166/"}}'                  "blocks a pure-decimal-encoded metadata-IP literal (169.254.169.254) (#398)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://134744072/"}}'                   "allows a pure-decimal-encoded PUBLIC IPv4 literal (8.8.8.8) (#398)"
 
 echo "== block-write-overwrite.py (#364) =="
 BWO="$HOOKS/block-write-overwrite.py"
