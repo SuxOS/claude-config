@@ -10,8 +10,9 @@ name: Fixer (15m, bugs only)
 # Reusable workflow: SuxOS/.github/.github/workflows/fixer.yml
 
 on:
-  schedule:
-    - cron: "6,21,36,51 * * * *" # every 15m, offset to dodge top-of-hour rush
+  # Fixer Cadence v2: bugs tier is change-triggered on merge, not a metronome.
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
