@@ -17,11 +17,17 @@ actually recurred, without a full prose parser:
      narrowly-scoped predicates"). If the code adds/removes a dispatched predicate without the
      prose being updated, this flags the mismatch.
 
+  3. RAIL-MODULE-DRIFT (#384) — pretooluse-bash.py dispatches every rail named in its own
+     `_RAIL_MODULES` tuple; hooks/README.md documents each of those rails with a bullet stating
+     "Registered with `pretooluse-bash.py` via its `check(command, cwd)`". A rail added to
+     `_RAIL_MODULES` without a matching README bullet (or vice versa) drifts silently, the same
+     bug class rules 1/2 exist to catch, just for pretooluse-bash.py's own dispatch wiring.
+
 This is folded into the required `shellcheck` job as a plain step, same as
 lint-settings.py/lint-evals.py (see ci.yml) — not a standalone advisory job. Even so, rule 2 is
 inherently more fragile than the other, structured-config checks: unlike lint-settings.py's
 regex-over-JSON checks, it parses hand-written prose (a number word). It also
-can't judge free-form claims (e.g. "deliberately NOT extended to X") — only the two mechanical
+can't judge free-form claims (e.g. "deliberately NOT extended to X") — only the mechanical
 facts above, which is what has actually drifted every time so far. Exit 0 = clean or nothing to
 check; exit 1 = a drift found.
 """
@@ -34,6 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SETTINGS_PATH = REPO_ROOT / "home" / ".claude" / "settings.json"
 README_PATH = REPO_ROOT / "home" / ".claude" / "hooks" / "README.md"
 BLOCK_DESTRUCTIVE_GIT_PATH = REPO_ROOT / "home" / ".claude" / "hooks" / "block-destructive-git.py"
+PRETOOLUSE_BASH_PATH = REPO_ROOT / "home" / ".claude" / "hooks" / "pretooluse-bash.py"
 
 NUMBER_WORDS = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
@@ -43,6 +50,12 @@ NUMBER_WORDS = {
 README_MATCHER_RE = re.compile(r"\*\*`([a-zA-Z0-9_-]+\.py)`\*\*.*?\(matcher `([^`]+)`\)")
 README_PREDICATE_COUNT_RE = re.compile(r"\b([A-Za-z]+)\s+narrowly-scoped\s+predicates")
 HIT_CALL_RE = re.compile(r"(_[a-zA-Z0-9_]+_hit)\(")
+RAIL_MODULES_RE = re.compile(r"_RAIL_MODULES\s*=\s*\((.*?)\)", re.DOTALL)
+RAIL_MODULE_NAME_RE = re.compile(r'"([a-zA-Z0-9_-]+)"')
+README_BULLET_RE = re.compile(r"- \*\*`([a-zA-Z0-9_-]+\.py)`\*\*.*?(?=\n- \*\*`|\Z)", re.DOTALL)
+README_REGISTERED_WITH_RE = re.compile(
+    r"Registered\s+with\s+`pretooluse-bash\.py`\s+via\s+its\s+`check\(command,\s+cwd\)`", re.DOTALL
+)
 
 
 def settings_hook_matchers(settings_path):
@@ -119,9 +132,46 @@ def check_destructive_git_predicate_count(hook_path, readme_path):
     ]
 
 
+def rail_modules(pretooluse_bash_path):
+    """Return the set of rail module names in pretooluse-bash.py's `_RAIL_MODULES` tuple."""
+    m = RAIL_MODULES_RE.search(pretooluse_bash_path.read_text())
+    if not m:
+        return set()
+    return set(RAIL_MODULE_NAME_RE.findall(m.group(1)))
+
+
+def readme_registered_rails(readme_text):
+    """Return the set of hook basenames (minus '.py') whose README bullet states they're
+    'Registered with `pretooluse-bash.py` via its `check(command, cwd)`'."""
+    out = set()
+    for bullet_m in README_BULLET_RE.finditer(readme_text):
+        if README_REGISTERED_WITH_RE.search(bullet_m.group(0)):
+            out.add(bullet_m.group(1)[: -len(".py")])
+    return out
+
+
+def check_rail_module_drift(pretooluse_bash_path, readme_path):
+    problems = []
+    wired = rail_modules(pretooluse_bash_path)
+    documented = readme_registered_rails(readme_path.read_text())
+    for name in sorted(wired - documented):
+        problems.append(
+            f"{readme_path}: '{name}.py' is registered in {pretooluse_bash_path.name}'s "
+            f"_RAIL_MODULES but has no 'Registered with `pretooluse-bash.py`' bullet in "
+            f"hooks/README.md."
+        )
+    for name in sorted(documented - wired):
+        problems.append(
+            f"{readme_path}: '{name}.py' has a 'Registered with `pretooluse-bash.py`' bullet in "
+            f"hooks/README.md but is not in {pretooluse_bash_path.name}'s _RAIL_MODULES."
+        )
+    return problems
+
+
 def main():
     problems = check_matcher_drift(SETTINGS_PATH, README_PATH)
     problems += check_destructive_git_predicate_count(BLOCK_DESTRUCTIVE_GIT_PATH, README_PATH)
+    problems += check_rail_module_drift(PRETOOLUSE_BASH_PATH, README_PATH)
     if problems:
         print(f"hooks/README.md drift check: {len(problems)} problem(s) found\n", file=sys.stderr)
         for p in problems:

@@ -53,11 +53,24 @@ from _hookutil import hook_tool_input, load_hook_input
 # literal redirect target. `(?<![\w])` before the `2` requires it to be its own word — not the
 # tail of a longer word/number (`foo2>x` redirects fd 1 via the unnumbered `>`, not fd 2; `22>x`
 # targets fd 22, not fd 2) — matching the shell's own "digits-only preceding word" IO_NUMBER rule.
-NULL_REDIRECT_RE = re.compile(r"(?:(?<![\w])2|&)>>?[ \t]*/dev/null")
+# `(?=[\s;&|()<>`]|$)` after `null` requires a word/path boundary right there — whitespace, any
+# shell word-terminating metacharacter (`;`/`&`/`|`/`(`/`)`/`<`/`>`/backtick), or end-of-string —
+# so a real, longer path that merely STARTS with the seven characters `/dev/null`
+# (`/dev/nullish.log`, `/dev/null-backup/errors.txt`) doesn't match as a prefix of the literal
+# target (#386), mirroring the same "own word" care already taken for the digit above. The class
+# must be the FULL terminator set, not just `;&|`: a suppression inside a command substitution or
+# subshell ends in `)` (`x=$(cmd 2>/dev/null)`) or a closing backtick, and a glued second redirect
+# ends in `>`/`<` (`cmd 2>/dev/null>out.log`) — an earlier `[\s;&|]`-only class let all of those
+# bypass the rail (PR #420 security review). None of these characters can continue an unquoted
+# path word, so the #386 false-positive fix is unaffected. Known accepted false positive: a
+# backtick GLUED to the target (`2>/dev/null\`cmd\``, target = /dev/null + substitution output) is
+# indistinguishable from a closing backtick in a raw-text scan and matches anyway — vanishingly
+# rare next to the closing-backtick suppression this must catch.
+NULL_REDIRECT_RE = re.compile(r"(?:(?<![\w])2|&)>>?[ \t]*/dev/null(?=[\s;&|()<>`]|$)")
 # The `>/dev/null 2>&1` idiom (#201): stdout redirected to null (bare `>` or explicit `1>`, with
 # the same "own word" guard as above so `21>/dev/null` isn't misread as fd 1), then a literal
 # `2>&1` afterward, in that order.
-STDOUT_NULL_THEN_DUP_RE = re.compile(r"(?<![\w])(?:1)?>>?[ \t]*/dev/null[ \t]+2>&1")
+STDOUT_NULL_THEN_DUP_RE = re.compile(r"(?<![\w])(?:1)?>>?[ \t]*/dev/null(?=[\s;&|()<>`]|$)[ \t]+2>&1")
 # `2>&-` (#205): closes fd 2 outright instead of redirecting it — same "own word" digit-adjacency
 # guard as NULL_REDIRECT_RE, with optional whitespace before the `-` target (same as `/dev/null`).
 FD_CLOSE_RE = re.compile(r"(?<![\w])2>&[ \t]*-")

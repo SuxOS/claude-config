@@ -164,6 +164,21 @@ content_transcript="$(build_transcript_records '[
 assert_exit 2 "$VCC" "{\"transcript_path\":\"$content_transcript\"}" "blocks a completion claim where the verify word only appears in an edited file's own written content (#83)"
 rm -f "$content_transcript"
 
+# #381: an uppercase/mixed-case extension (e.g. `Foo.PY`) must still be recognized as product
+# code — a case-sensitive CODE_EXT membership check would silently skip the whole rail.
+uppercase_ext_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "Foo.PY"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, fixed."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$uppercase_ext_transcript\"}" "blocks an unverified completion claim over an uppercase-extension file edit (#381)"
+rm -f "$uppercase_ext_transcript"
+
 bash_verify_transcript="$(build_transcript_records '[
   {"message": {"role": "user", "content": "please fix the bug"}},
   {"message": {"role": "assistant", "content": [
@@ -618,6 +633,12 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout -b brandnew\"}}" "allows creating a new branch (not a switch into a held one) (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held -- file.txt\"}}" "allows a path restore from a held branch (-- paths, not a switch) (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --detach held\"}}"  "allows a detach at a held branch (holds no branch ref) (#123)"
+# #385: `-d` bundled into a single token with another short flag (`git checkout -qd held` /
+# `git switch -dq held`) is still a detach — git bundles booleans the same way it does for -f/-q
+# elsewhere — and must not fall through to the generic flag-skip branch and be miscounted as a
+# plain branch switch.
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout -qd held\"}}" "allows a detach at a held branch via bundled -qd (#385)"
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch -dq held\"}}"    "allows a detach at a held branch via bundled -dq (#385)"
 # #259: --ignore-other-worktrees tells git itself to skip the collision check, so it would NOT
 # raise the fatal error this hook front-runs — blocking here would be a false positive.
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --ignore-other-worktrees held\"}}" "allows a held switch with --ignore-other-worktrees — git itself skips the check (#259)"
@@ -737,6 +758,24 @@ assert_exit 0 "$BSS" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"echo \"the idiom is &>/dev/null, or 2>&1 with >/dev/null first\""}}' "allows a quoted string mentioning multiple suppression idioms as text (#330)"
 # A real redirect must still be caught even when it sits right next to a quoted argument.
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl \"http://x\" 2>/dev/null"}}'                 "still blocks a real redirect that follows a quoted argument (#330)"
+# #386: a real path that merely STARTS with the seven characters `/dev/null` is a distinct,
+# readable target, not stderr suppression — the regex must not match it as an unanchored prefix.
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"mytool 2>/dev/nullish.log"}}'                     "allows a redirect to a real path that merely starts with /dev/null (#386)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"build 2>/dev/null-backup/errors.txt"}}'          "allows a redirect into a real /dev/null-prefixed directory path (#386)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"build >/dev/nullish.log 2>&1"}}'                 "allows the stdout+dup idiom when the target is only /dev/null-prefixed (#386)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>/dev/null;echo done"}}'          "still blocks a real /dev/null redirect immediately followed by a ';' (#386)"
+# PR #420 security review: the #386 lookahead must cover the FULL shell word-terminator set —
+# a suppression that ends a command substitution/subshell (`)`, backtick) or is glued to a
+# following redirect operator is still real suppression, not a longer path. Single quotes are
+# deliberate: the hook must receive the literal $(...)/backtick text, not this shell's expansion.
+# shellcheck disable=SC2016
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"pods=$(kubectl get pods 2>/dev/null)"}}'          "still blocks a suppression closed by a command-substitution ) (PR #420 security review)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"(cd /tmp && make 2>/dev/null)"}}'                 "still blocks a suppression closed by a subshell ) (PR #420 security review)"
+# shellcheck disable=SC2016
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"v=`probe 2>/dev/null`"}}'                         "still blocks a suppression closed by a backtick (PR #420 security review)"
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"build 2>/dev/null>out.log"}}'                     "still blocks a suppression glued to a following > redirect (PR #420 security review)"
+# shellcheck disable=SC2016
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"n=$(count-things >/dev/null 2>&1)"}}'             "still blocks the stdout+dup idiom inside a command substitution (PR #420 security review)"
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSS" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
@@ -1413,6 +1452,23 @@ echo "== real-shape fixture corpus (tests/fixtures) =="
 if ! python3 "$REPO_DIR/tests/run_fixture_corpus.py"; then
   fail=1
 fi
+
+# --- vendored bashlex smoke test (#388, step 1/3 of #206) ---------------------------------
+# Proves the vendored dependency lands cleanly and is importable, from both the repo tree
+# directly and an install.sh-built tree reached only via symlinks (the shape it's actually used
+# in — install.sh symlinks home/.claude/hooks/ straight into ~/.claude/hooks/, no pip step).
+echo "== vendored bashlex smoke test (#388) =="
+if ! python3 "$REPO_DIR/tests/smoke_vendor_bashlex.py" "$HOOKS"; then
+  fail=1
+fi
+installed_home="$(mktemp -d)"
+if ! HOME="$installed_home" bash "$REPO_DIR/install.sh" >/dev/null 2>&1; then
+  echo "install.sh failed against a scratch HOME" >&2
+  fail=1
+elif ! python3 "$REPO_DIR/tests/smoke_vendor_bashlex.py" "$installed_home/.claude/hooks"; then
+  fail=1
+fi
+rm -rf "$installed_home"
 
 if [ "$fail" -ne 0 ]; then
   echo "HOOK TESTS FAILED" >&2
