@@ -8,14 +8,19 @@ Claude Code does **not** prompt before tool calls, so the `permissions.deny` lis
 
 <!-- doc-fact: settings-deny "Bash(curl *)" -->
 <!-- doc-fact: settings-deny "Bash(wget *)" -->
-<!-- doc-fact: settings-deny "Bash(ssh *)" -->
 <!-- doc-fact: settings-deny "Bash(scp *)" -->
 <!-- doc-fact: settings-deny "Bash(tar *)" -->
 <!-- doc-fact: settings-deny "Bash(gh api -X *)" -->
 <!-- doc-fact: settings-deny "Bash(gh api --method *)" -->
-The deny list (`Bash(curl *)`, `Bash(wget *)`, `Bash(ssh *)`, `Bash(scp *)`, `Bash(tar *)`,
+The deny list (`Bash(curl *)`, `Bash(wget *)`, `Bash(scp *)`, `Bash(tar *)`,
 `Bash(gh api -X *)`, `Bash(gh api --method *)`) is **defense-in-depth against casual or
-accidental misuse — a speed bump, not a boundary.** It is deliberately *not* a real
+accidental misuse — a speed bump, not a boundary.** `Bash(ssh *)` was removed from the
+deny list by owner decision (Colin, 2026-07-22): ssh to the home gateway and other LAN
+boxes is routine interactive administration on this account, and the same order
+unregistered the `block-egress.py` / `block-suppressed-stderr.py` rails from
+`pretooluse-bash.py` — so **ssh (and the bypass-shaped egress forms those rails caught)
+is currently unenforced, deliberately**. The rails and a fail-closed LAN-destination
+ssh carve-out remain in the tree, dormant; re-arm via `_RAIL_MODULES`. It is deliberately *not* a real
 network-egress or exfiltration boundary, and must not be mistaken for one. Two structural
 reasons it cannot be, as long as the current allow-list stands:
 
