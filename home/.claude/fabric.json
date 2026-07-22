@@ -12,7 +12,8 @@
         "suxvault",
         "suxos-net",
         ".github",
-        "nix"
+        "nix",
+        "suxdash"
       ],
       "pipeline": {
         "repo": ".github",
