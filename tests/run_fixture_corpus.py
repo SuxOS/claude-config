@@ -16,9 +16,10 @@ regenerate/redact fixtures when the schema evolves.
 
 The manifest (tests/fixtures/manifest.json) lists cases of two kinds:
   - "stdin"      : a full PreToolUse hook-input payload piped straight to the hook. A case may
-                   also set "cwd_template": "held_branch_repo" (#170) when the hook under test
-                   reads live git state from `cwd` (block-checkout-held-branch.py) — the fixture's
-                   placeholder cwd is swapped for a throwaway repo built by make_held_branch_repo().
+                   also set "cwd_template" to a name in CWD_TEMPLATES ("held_branch_repo" (#170),
+                   "destructive_git_repo" (#291)) when the hook under test reads live git state
+                   from `cwd` — the fixture's placeholder cwd is swapped for a throwaway repo built
+                   by that template's builder function.
   - "transcript" : a Stop-hook transcript JSONL; the runner synthesizes the Stop envelope
                    ({stop_hook_active, transcript_path -> the fixture}) and pipes that.
 
@@ -54,6 +55,21 @@ STOP_ENVELOPE_BASE = {
 # torn down at the end of main().
 HELD_BRANCH_PLACEHOLDER = "__HELD_BRANCH_REPO__"
 
+# block-destructive-git.py's force-push and clean-force predicates likewise consult live git
+# state (a remote-tracking ref, `git clean -n`'s preview) that a static JSON fixture can't
+# capture (#291) — same "cwd_template" shape as held_branch_repo, a distinct placeholder/builder
+# pair registered in CWD_TEMPLATES below.
+DESTRUCTIVE_GIT_PLACEHOLDER = "__DESTRUCTIVE_GIT_REPO__"
+
+# audit-git-consequences.py is stateful ACROSS two consecutive Bash calls for the same repo (it
+# diffs the ref snapshot recorded after the previous call against the current one) rather than
+# reading a single static state, so a static JSON fixture can't exercise it either (#344): a case
+# needs a real git mutation to happen BETWEEN two hook invocations against the same throwaway
+# repo. A case sets "pre_stdin" (a fixture run first, its exit code ignored, purely to record the
+# baseline snapshot) and "mutate_git" (a git argv run against the template repo between the two
+# hook calls) alongside its usual "cwd_template"/"stdin"/"expect_exit".
+CONSEQUENCE_AUDIT_PLACEHOLDER = "__CONSEQUENCE_AUDIT_REPO__"
+
 
 def make_held_branch_repo():
     """Build a throwaway repo whose branch `held` is checked out in a second worktree. Returns
@@ -71,6 +87,71 @@ def make_held_branch_repo():
     subprocess.run(["git", "-C", repo, "branch", "held"], check=True, capture_output=True)
     subprocess.run(["git", "-C", repo, "worktree", "add", "-q", heldwt, "held"], check=True, capture_output=True)
     return tmp, repo
+
+
+def make_destructive_git_repo():
+    """Build a throwaway repo whose `origin/main` remote-tracking ref sits AHEAD of the local
+    `main` tip (a real `git push`, then a local `reset --hard` back a commit, leaves the
+    remote-tracking ref cached at the newer commit) plus one untracked file. Returns
+    (tmp_dir_to_clean_up, repo_path). Raises on any git failure (#291).
+
+    This one repo state serves all four block-destructive-git.py fixtures: `git push -f origin
+    main` is a real (non-fast-forward) force-push hit — `origin/main` is not an ancestor of the
+    local `main` tip, so forcing it would discard the `feature` commit; `git push -f origin
+    new-feature` is a safe force-push (no `origin/new-feature` remote-tracking ref exists at all,
+    same as pushing a brand-new branch); `git clean -f` is a clean-force hit (the untracked file
+    would actually be removed); `git clean -nf` is the dry-run form, always safe by construction."""
+    tmp = tempfile.mkdtemp(prefix="fixture-destructive-git-")
+    bare = str(Path(tmp) / "remote.git")
+    repo = str(Path(tmp) / "repo")
+    subprocess.run(["git", "init", "--bare", "-q", bare], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(["git", "-C", repo, "remote", "add", "origin", bare], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "feature"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(["git", "-C", repo, "push", "-q", "origin", "main"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", repo, "reset", "-q", "--hard", "HEAD~1"], check=True, capture_output=True)
+    (Path(repo) / "untracked.txt").write_text("fixture\n")
+    return tmp, repo
+
+
+def make_consequence_audit_repo():
+    """Build a throwaway repo with two commits, ready for a pre_stdin baseline call followed by a
+    "mutate_git" git mutation and then the case's real assertion call. Returns (tmp_dir_to_clean_
+    up, repo_path). Raises on any git failure (#344)."""
+    tmp = tempfile.mkdtemp(prefix="fixture-consequence-audit-")
+    repo = str(Path(tmp) / "repo")
+    subprocess.run(["git", "init", "-q", "-b", "main", repo], check=True, capture_output=True)
+    subprocess.run(["git", "-C", repo, "config", "user.email", "t@t"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", repo, "config", "user.name", "t"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", repo, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "--allow-empty", "-m", "second"],
+        check=True, capture_output=True,
+    )
+    return tmp, repo
+
+
+# Registry of every "cwd_template" name a manifest case can reference: placeholder text -> builder.
+# A builder runs at most once per corpus run, only when at least one case actually needs it.
+CWD_TEMPLATES = {
+    "held_branch_repo": (HELD_BRANCH_PLACEHOLDER, make_held_branch_repo),
+    "destructive_git_repo": (DESTRUCTIVE_GIT_PLACEHOLDER, make_destructive_git_repo),
+    "consequence_audit_repo": (CONSEQUENCE_AUDIT_PLACEHOLDER, make_consequence_audit_repo),
+}
 
 
 def run_hook(hook_path, stdin_bytes):
@@ -103,17 +184,24 @@ def validate_transcript(transcript):
             raise ValueError(f"malformed JSONL at {transcript.name}:{lineno} — {e}")
 
 
-def build_stdin(case, held_branch_repo=None):
+def build_stdin_from_path(stdin_path, cwd_template, template_repos):
+    """The stdin payload bytes for a raw fixture path, with its cwd_template placeholder (if any)
+    substituted for the live repo path built for it."""
+    raw = (FIXTURES / stdin_path).read_bytes()
+    if cwd_template:
+        placeholder, _builder = CWD_TEMPLATES[cwd_template]
+        raw = raw.replace(placeholder.encode(), template_repos[cwd_template].encode())
+    return raw
+
+
+def build_stdin(case, template_repos):
     """The stdin payload bytes for a case: a raw PreToolUse fixture, or a synthesized Stop envelope.
 
-    `held_branch_repo` is the live repo path substituted for HELD_BRANCH_PLACEHOLDER when a case
-    is marked "cwd_template": "held_branch_repo" (see make_held_branch_repo).
+    `template_repos` maps a "cwd_template" name (see CWD_TEMPLATES) to the live repo path built
+    for it; a case's fixture placeholder is substituted for that path when the case sets one.
     """
     if "stdin" in case:
-        raw = (FIXTURES / case["stdin"]).read_bytes()
-        if case.get("cwd_template") == "held_branch_repo":
-            raw = raw.replace(HELD_BRANCH_PLACEHOLDER.encode(), held_branch_repo.encode())
-        return raw
+        return build_stdin_from_path(case["stdin"], case.get("cwd_template"), template_repos)
     if "transcript" in case:
         transcript = FIXTURES / case["transcript"]
         if not transcript.exists():
@@ -138,14 +226,19 @@ def main():
 
     fails = 0
 
-    held_branch_tmp = held_branch_repo = None
-    if any(case.get("cwd_template") == "held_branch_repo" for case in cases):
-        held_branch_tmp, held_branch_repo = make_held_branch_repo()
+    needed_templates = {case["cwd_template"] for case in cases if case.get("cwd_template")}
+    template_tmp_dirs = {}
+    template_repos = {}
+    for name in needed_templates:
+        _placeholder, builder = CWD_TEMPLATES[name]
+        template_tmp_dirs[name], template_repos[name] = builder()
 
     referenced = {
         (FIXTURES / (case["stdin"] if "stdin" in case else case["transcript"])).resolve()
         for case in cases
         if "stdin" in case or "transcript" in case
+    } | {
+        (FIXTURES / case["pre_stdin"]).resolve() for case in cases if case.get("pre_stdin")
     }
     tracked = set((FIXTURES / "pretooluse").glob("*.json")) | set((FIXTURES / "transcripts").glob("*.jsonl"))
     orphans = sorted(f for f in tracked if f.resolve() not in referenced)
@@ -170,7 +263,23 @@ def main():
             continue
 
         try:
-            stdin_bytes = build_stdin(case, held_branch_repo)
+            if case.get("pre_stdin"):
+                pre_bytes = build_stdin_from_path(
+                    case["pre_stdin"], case.get("cwd_template"), template_repos
+                )
+                run_hook(hook_path, pre_bytes)  # baseline call — its own exit code isn't asserted
+            if case.get("mutate_git"):
+                subprocess.run(
+                    ["git", "-C", template_repos[case["cwd_template"]]] + case["mutate_git"],
+                    check=True, capture_output=True,
+                )
+        except (FileNotFoundError, ValueError, subprocess.CalledProcessError) as e:
+            print(f"  FAIL: {hook_name} <- {src} — pre_stdin/mutate_git setup failed: {e}", file=sys.stderr)
+            fails += 1
+            continue
+
+        try:
+            stdin_bytes = build_stdin(case, template_repos)
         except (FileNotFoundError, ValueError) as e:
             print(f"  FAIL: {hook_name} <- {src} — {e}", file=sys.stderr)
             fails += 1
@@ -186,8 +295,8 @@ def main():
             )
             fails += 1
 
-    if held_branch_tmp:
-        shutil.rmtree(held_branch_tmp, ignore_errors=True)
+    for tmp_dir in template_tmp_dirs.values():
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     total = len(cases) + len(orphans)
     if fails:

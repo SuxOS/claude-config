@@ -297,13 +297,53 @@ def strip_prefixes(argv):
     return argv[i:]
 
 
+def _iter_logical_lines(command):
+    """Split `command` on newlines that fall OUTSIDE an open quote span (#331).
+
+    A double- or single-quoted argument can legitimately span multiple lines (a multi-line
+    `git commit -m "..."` message). Splitting on every raw `\\n` before any quote-tracking happens
+    tears such an argument across several independent lines, each of which then looks
+    quote-unbalanced to `_split_pieces()`'s per-line `shlex` pass and falls back to the
+    quote-blind `SPLIT_RE` regex splitter — so text INSIDE the quoted string gets read as real
+    shell syntax (a `while true; do sleep 5; done` sitting in a commit message body reads as an
+    actual polling loop to block-sleep-loop.py). Tracking quote state across the whole command
+    first, and only splitting where a newline falls between quotes, keeps a multi-line quoted
+    argument intact as one logical line for a single `shlex` pass. Backslash escapes the next
+    character (POSIX shell's own rule) so an escaped quote can't prematurely close a span."""
+    start = 0
+    quote = None  # None | "'" | '"'
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            i += 2
+            continue
+        if quote is None and c in ("'", '"'):
+            quote = c
+            i += 1
+            continue
+        if quote is not None and c == quote:
+            quote = None
+            i += 1
+            continue
+        if quote is None and c == "\n":
+            yield command[start:i]
+            start = i + 1
+            i += 1
+            continue
+        i += 1
+    yield command[start:]
+
+
 def _split_pieces(command):
     """Yield the argv list of each simple command, respecting shell quoting where possible.
 
     Splits on control operators (`&&`, `||`, `;`, `|`, `&`) but only outside quotes, so a `;`
-    inside a `-c "..."` payload is preserved. Newlines separate commands, so split on them first.
-    On a line shlex can't tokenize (unbalanced quotes), fall back to a raw regex split so we still
-    scan something rather than crash. This is the base tokenizer `pieces()` wraps with
+    inside a `-c "..."` payload is preserved. Newlines separate commands, so split on them first —
+    via `_iter_logical_lines()`, which tracks quote state across the WHOLE command first so a
+    quoted argument that spans multiple lines isn't torn apart before its quoting is even seen
+    (#331). On a line shlex can't tokenize (unbalanced quotes), fall back to a raw regex split so
+    we still scan something rather than crash. This is the base tokenizer `pieces()` wraps with
     substitution-recursion below; nothing outside this module should call it directly.
 
     A bare `(`/`)` subshell-grouping token — `PUNCT` includes them so shlex splits them out even
@@ -323,7 +363,7 @@ def _split_pieces(command):
     same "shared helper, not baked into the base tokenizer" shape as `strip_prefixes()`, since
     different rails read this argv for different things.
     """
-    for line in command.split("\n"):
+    for line in _iter_logical_lines(command):
         if not line.strip():
             continue
         try:
@@ -494,6 +534,31 @@ GIT_GLOBAL_VALUE_OPTS = {
 GIT_GLOBAL_CWD_OPTS = {"-C", "--git-dir", "--work-tree"}
 
 
+def walk_past_flags(argv, start, value_opts):
+    """Walk `argv` from index `start`, skipping a `value_opts` flag plus its separate-token value,
+    or any other `-`-prefixed token as a self-contained boolean/glued flag, stopping at the first
+    non-flag token. Return that token's index, or None if the walk runs off the end without
+    finding one.
+
+    This exact "walk past a CLI's leading flags to find the first positional" shape used to be
+    hand-duplicated 4 times — here twice (`git_subcommand()`/`gh_subcommand()`), plus
+    block-destructive-git.py's `_npm_subcommand()` and block-egress.py's `_gh_api_endpoint()` (#300)
+    — each with its own value-opts set (the exact global-flag surface differs per CLI) but identical
+    walk logic. Callers keep only their per-CLI `value_opts` set local; the walk itself lives here
+    once."""
+    i, n = start, len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in value_opts:
+            i += 2
+            continue
+        if tok.startswith("-"):
+            i += 1
+            continue
+        return i
+    return None
+
+
 def git_subcommand(argv):
     """Return (subcommand, rest_argv) for a `git ...` argv, walking past global options to find
     it — or None for a non-git command, a command with no subcommand at all, or one that
@@ -505,23 +570,16 @@ def git_subcommand(argv):
     """
     if not argv or basename(argv[0]) != "git":
         return None
-    i, n = 1, len(argv)
-    while i < n:
-        tok = argv[i]
-        if tok in GIT_GLOBAL_VALUE_OPTS:
-            if tok in GIT_GLOBAL_CWD_OPTS:
-                return None
-            i += 2
-            continue
-        if tok.startswith("-"):
-            if tok.startswith("--git-dir=") or tok.startswith("--work-tree="):
-                return None
-            i += 1
-            continue
-        break
-    if i >= n:
+    idx = walk_past_flags(argv, 1, GIT_GLOBAL_VALUE_OPTS)
+    if idx is None:
         return None
-    return argv[i], argv[i + 1:]
+    # a cwd-redirecting global (bare or `=`-glued) anywhere in the skipped prefix means this
+    # argv targets a different repo than cwd — `walk_past_flags()` already walked past it as an
+    # ordinary value/boolean flag, so check the skipped span for it after the fact (#300).
+    for tok in argv[1:idx]:
+        if tok in GIT_GLOBAL_CWD_OPTS or tok.startswith("--git-dir=") or tok.startswith("--work-tree="):
+            return None
+    return argv[idx], argv[idx + 1:]
 
 
 # gh's own global flag that redirects it at a different repo than cwd's. Unlike git's subcommands,
@@ -539,25 +597,16 @@ def gh_subcommand(argv):
     `argv` should already be run through `strip_prefixes()` by the caller, same convention as
     `git_subcommand()`. Mirrors that function's shape; gh has only the one global value-flag
     (plus boolean `--help`, which never reaches a subcommand and so needs no special handling).
+    The glued forms (`--repo=owner/repo`, `-Rowner/repo`) need no special-case branch: they're
+    self-contained `-`-prefixed tokens, so `walk_past_flags()`'s generic boolean/glued-flag skip
+    already lands past them the same as any other flag (#300).
     """
     if not argv or basename(argv[0]) != "gh":
         return None
-    i, n = 1, len(argv)
-    while i < n:
-        tok = argv[i]
-        if tok in GH_GLOBAL_VALUE_OPTS:
-            i += 2
-            continue
-        if tok.startswith("--repo=") or (tok.startswith("-R") and tok != "-R"):
-            i += 1  # glued: --repo=owner/repo / -Rowner/repo
-            continue
-        if tok.startswith("-"):
-            i += 1  # --help or any other boolean flag
-            continue
-        break
-    if i >= n:
+    idx = walk_past_flags(argv, 1, GH_GLOBAL_VALUE_OPTS)
+    if idx is None:
         return None
-    return argv[i], argv[i + 1:]
+    return argv[idx], argv[idx + 1:]
 
 
 def gh_skip_repo_flag(tokens):

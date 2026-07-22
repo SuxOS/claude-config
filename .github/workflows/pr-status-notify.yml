@@ -1,0 +1,71 @@
+name: PR status notify
+
+# Closes a visibility gap (#315): the pipeline's stop conditions (`needs-human`, `hold`) are
+# documented in dispatch/SKILL.md and docs/NEXT-SESSION.md, but the only way any of them
+# surfaced was a human manually running the read-only, on-demand `orient` skill — a PR could
+# sit blocked indefinitely between sessions with nothing pushing the signal out. This is a
+# self-contained workflow (not a SuxOS/.github reusable call — this bot's token can't reach
+# that repo, see CLAUDE.md) that reacts the moment either label lands on a PR here.
+#
+# pull_request_target (not pull_request) so this always runs the base branch's copy of this
+# file with a write token, the same reasoning automerge.yml already uses for its own `labeled`
+# trigger — it never checks out PR code, only reads the event payload and calls the API.
+#
+# #403 extends the same pattern to issues: `hold`'s own label description ("Block all
+# automation on this PR/issue") and the dispatch/SKILL.md stop-condition docs apply to issues
+# too (e.g. holding an issue to pause the build loop from picking it up), not just PRs.
+
+on:
+  pull_request_target:
+    types: [labeled]
+  issues:
+    types: [labeled]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-status-notify-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event.label.name }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: github.event_name == 'pull_request_target' && (github.event.label.name == 'needs-human' || github.event.label.name == 'hold')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: annotate + comment on the newly blocked PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          msg="PR #${PR_NUMBER} (${PR_TITLE}) was labeled '${LABEL}' and is now blocked pending human action."
+          echo "::warning::${msg}"
+          echo "### :warning: ${msg}" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR_NUMBER" --body "**${msg}**
+
+          This PR won't auto-merge (or be requeued) until \`${LABEL}\` is removed — see the \`dispatch\` skill's requeue flow."
+
+  notify-issue:
+    if: github.event_name == 'issues' && (github.event.label.name == 'needs-human' || github.event.label.name == 'hold')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: annotate + comment on the newly blocked issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          set -euo pipefail
+          msg="Issue #${ISSUE_NUMBER} (${ISSUE_TITLE}) was labeled '${LABEL}' and is now blocked pending human action."
+          echo "::warning::${msg}"
+          echo "### :warning: ${msg}" >> "$GITHUB_STEP_SUMMARY"
+          gh issue comment "$ISSUE_NUMBER" --body "**${msg}**
+
+          This issue won't be picked up by the build loop until \`${LABEL}\` is removed — see the \`dispatch\` skill's requeue flow."

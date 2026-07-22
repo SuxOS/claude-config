@@ -183,6 +183,68 @@ bash_verify_transcript="$(build_transcript_records '[
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$bash_verify_transcript\"}" "does not block a completion claim after an actual Bash tool_use ran npm test (#83)"
 rm -f "$bash_verify_transcript"
 
+# #333: VERIFY_CMD must match the tokenized command WORD, not substring-search the whole Bash
+# command string — a quoted commit message that happens to contain "node"/"test" must not be
+# credited as a real `node ... test` invocation.
+quoted_commit_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "git commit -am \"fix node parsing edge case; closes flaky test issue\""}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "[main abc1234] fix node parsing edge case; closes flaky test issue"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Fixed, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$quoted_commit_transcript\"}" "blocks a completion claim where 'node'/'test' only appear inside a quoted commit message, not a real verify command (#333)"
+rm -f "$quoted_commit_transcript"
+
+# #362: verification_ran() must check the matched command's own tool_result outcome, not just
+# that a verify-shaped command was invoked — a FAILED pytest run must not count as verification.
+failed_test_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "pytest"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "3 failed, 12 passed"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, tests passing."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$failed_test_transcript\"}" "blocks a completion claim backed by a pytest run that actually FAILED (#362)"
+rm -f "$failed_test_transcript"
+
+passing_test_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "pytest"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "0 failed, 12 passed"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, tests passing."}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$passing_test_transcript\"}" "does not block a completion claim backed by a pytest run that actually passed (#362)"
+rm -f "$passing_test_transcript"
+
 # #329: `bash -n` only parses a script for syntax errors, it never executes any logic — it must
 # not count as verification evidence for a completion claim.
 bash_n_transcript="$(build_transcript_records '[
@@ -234,6 +296,73 @@ notebook_transcript="$(build_transcript_records '[
 ]')"
 assert_exit 2 "$VCC" "{\"transcript_path\":\"$notebook_transcript\"}" "blocks a completion claim over a notebook edited only via NotebookEdit, with no verification (#250)"
 rm -f "$notebook_transcript"
+
+# #332 gap 1: past-tense "tests passed" is one of the most natural post-test-run phrasings, and
+# the old CLAIM regex's `tests? pass` alternative required a word boundary immediately after
+# "pass" — "passed"'s trailing "ed" broke that boundary, so this claim was invisible.
+passed_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All tests passed, ship it."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$passed_transcript\"}" "blocks a past-tense 'tests passed' completion claim over an unverified edit (#332)"
+rm -f "$passed_transcript"
+
+# #332 gap 2: a negation word/contraction close before the trigger word denies the claim rather
+# than making it ("Not done yet", "isn't fixed") — the old regex was pure word-presence matching
+# with no negation awareness at all.
+negated_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Not done yet, still working on it."}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$negated_transcript\"}" "does not block on 'Not done yet' — a negated trigger word is not a completion claim (#332)"
+rm -f "$negated_transcript"
+
+isnt_fixed_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": "This isn'"'"'t fixed, need another pass."}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$isnt_fixed_transcript\"}" "does not block on \"isn't fixed\" — negation guard covers contractions too (#332)"
+rm -f "$isnt_fixed_transcript"
+
+# #324: shadow mode must never block, even on a turn the enforcing predicate would fire on, and
+# must log a structured would_fire decision instead — the whole point is to observe without risk.
+echo "== verify-completion-claim.py shadow mode (#324) =="
+shadow_log="$(mktemp -u)"
+shadow_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "assistant", "content": "All tests pass now."}}
+]')"
+VERIFY_COMPLETION_CLAIM_SHADOW=1 VERIFY_COMPLETION_CLAIM_LOG="$shadow_log" \
+  assert_exit 0 "$VCC" "{\"transcript_path\":\"$shadow_transcript\"}" \
+  "shadow mode never blocks even when the predicate would fire"
+if [ -f "$shadow_log" ] && grep -q '"would_fire": true' "$shadow_log"; then
+  echo "  ok: shadow log recorded would_fire=true for a claim that would have blocked"
+else
+  echo "  FAIL: shadow log missing/incorrect would_fire entry" >&2
+  fail=1
+fi
+rm -f "$shadow_log" "$shadow_transcript"
 
 echo "== block-egress.py =="
 BE="$HOOKS/block-egress.py"
@@ -479,7 +608,8 @@ tmprepo="$(mktemp -d)"
 heldwt="$(mktemp -d)"
 git -C "$tmprepo" init -q -b main
 git -C "$tmprepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-git -C "$tmprepo" branch held
+git -C "$tmprepo" checkout -q -b held
+git -C "$tmprepo" checkout -q main  # leaves @{-1}=held (needed for the #241 '-' shorthand cases below)
 git -C "$tmprepo" worktree add -q "$heldwt" held
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout held\"}}"       "blocks checkout of a branch held by another worktree (#123)"
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch held\"}}"         "blocks switch to a branch held by another worktree (#123)"
@@ -492,6 +622,12 @@ assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 # raise the fatal error this hook front-runs — blocking here would be a false positive.
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch --ignore-other-worktrees held\"}}" "allows a held switch with --ignore-other-worktrees — git itself skips the check (#259)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout --ignore-other-worktrees held\"}}" "allows a held checkout with --ignore-other-worktrees — git itself skips the check (#259)"
+# #241: bare `-` is the `cd -`-style previous-branch shorthand — it must resolve to the real
+# branch name (here @{-1}=held, set up above) rather than being absorbed by the generic
+# tok.startswith("-") flag branch and silently skipping the whole check.
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout -\"}}"  "blocks 'git checkout -' when it resolves to a branch held by another worktree (#241)"
+assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git switch -\"}}"    "blocks 'git switch -' when it resolves to a branch held by another worktree (#241)"
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout - -- file.txt\"}}" "allows a path restore from '-' (-- paths, not a switch) (#241)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout nonexistent\"}}" "allows checkout of a branch no worktree holds (#123)"
 assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"echo git checkout held\"}}"   "allows a non-git command that merely mentions checkout (#123)"
 # #193: a wrapper/prefix word ahead of `git` must not shift the command word out of argv[0].
@@ -520,6 +656,10 @@ assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input
 # subcommand and miss the checkout entirely.
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --super-prefix /x checkout held\"}}" "blocks a held checkout past a separate-value --super-prefix (#208)"
 assert_exit 2 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git --super-prefix=/x checkout held\"}}" "blocks a held checkout past a glued --super-prefix= (#208)"
+# #331: a multi-line quoted commit message that merely CONTAINS "git checkout held" as text must
+# not be torn across lines before quote-tracking sees it — that used to spill the quoted text out
+# as if it were real shell syntax and false-block an ordinary commit.
+assert_exit 0 "$BCHB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git commit -m 'notes:\ngit checkout held\ndone'\"}}" "allows an ordinary commit whose multi-line quoted message merely mentions checking out the held branch (#331)"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 
@@ -560,6 +700,11 @@ assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"for sleep in 
 # `sleep 5` rather than staying buried inside `echo`'s argument.
 # shellcheck disable=SC2016
 assert_exit 2 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"while ! test -f /tmp/ready; do echo \"waiting $(sleep 5)\"; done"}}' "blocks a sleep hidden inside \$(...) in a loop piece (#200)"
+# #331: a multi-line quoted commit message containing loop/sleep-shaped TEXT must not be torn
+# across lines before quote-tracking runs — that used to shred the quoted argument into separate
+# shlex passes, each falling back to the quote-blind regex splitter, so "while true; do\nsleep 5"
+# sitting inside a commit message body read as a real polling loop.
+assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"notes:\nwhile true; do\nsleep 5\ndone\""}}' "allows an ordinary commit whose multi-line quoted message merely mentions a sleep loop (#331)"
 assert_exit 0 "$BSL" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSL" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
 assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
@@ -583,6 +728,15 @@ assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&1 >/dev/null"}}'                 "allows the reordered form (stderr dup'd before stdout is redirected, so stderr stays visible) (#201)"
 # #205: `2>&-` closes fd 2 outright — same practical effect as redirecting it to /dev/null.
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>&-"}}'                            "blocks the 2>&- fd-close idiom (#205)"
+# #330: the redirect regexes must not fire on a quoted STRING that merely contains the same text —
+# a benign search for the literal, or a commit message that discusses the idiom, does no redirection.
+# shellcheck disable=SC2016
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"grep -rn \"2>/dev/null\" hooks/"}}'               "allows a grep whose search literal merely contains 2>/dev/null as quoted text (#330)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"docs: explain the 2>/dev/null idiom\""}}' "allows a commit message that merely mentions the 2>/dev/null idiom (#330)"
+assert_exit 0 "$BSS" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo '2>/dev/null'\"}}"                  "allows a single-quoted literal containing 2>/dev/null (#330)"
+assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"echo \"the idiom is &>/dev/null, or 2>&1 with >/dev/null first\""}}' "allows a quoted string mentioning multiple suppression idioms as text (#330)"
+# A real redirect must still be caught even when it sits right next to a quoted argument.
+assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl \"http://x\" 2>/dev/null"}}'                 "still blocks a real redirect that follows a quoted argument (#330)"
 assert_exit 0 "$BSS" 'not-json'                                                                                      "fails open on malformed JSON"
 assert_exit 0 "$BSS" '[1,2,3]'                                                                                       "fails open on valid-but-non-object top-level JSON (#318)"
 assert_exit 0 "$BSS" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
@@ -681,6 +835,16 @@ assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore . b.txt\"}}"           "blocks restore . <extra pathspec> — '.' still discards everything (#320)"
 git -C "$dgrepo" checkout -q -- f.txt
 assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . b.txt\"}}"       "allows checkout -- . <extra pathspec> on a clean tree — nothing to discard (#320)"
+
+# #366: a trailing redirect operator+target must not ride into positionals and be misread as a
+# discard-everything "." pathspec — the opposite-direction false-BLOCK counterpart to #359 (which
+# fixed a false-negative from the same missing strip_redirects() in _push_force_hit).
+echo y >> "$dgrepo/f.txt"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- f.txt > .\"}}"    "allows a single-file checkout whose trailing redirect target '.' isn't a discard-everything pathspec (#366)"
+assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore f.txt > out.log\"}}"  "allows a single-file restore with a trailing '> file' redirect (#366)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git checkout -- . > out.log\"}}"  "still blocks a real checkout -- . discard with a trailing redirect present (#366)"
+assert_exit 2 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\":{\"command\":\"git restore . > out.log\"}}"      "still blocks a real restore . discard with a trailing redirect present (#366)"
+git -C "$dgrepo" checkout -q -- f.txt
 
 # #347: --pathspec-from-file supplies the discard pathspec via a file instead of argv — a bare
 # '.' inside the referenced file must be read the same conservative, fail-open way
@@ -1031,6 +1195,69 @@ assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","too
 assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write","tool_input":"not-an-object"}' "fails open on a non-dict tool_input (#358)"
 assert_exit 0 "$BDM" '{"tool_name":"mcp__plugin_github_github__label_write"}'                              "fails open on a missing tool_input (#358)"
 
+echo "== block-web-egress.py (#360) =="
+BWE="$HOOKS/block-web-egress.py"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://example.com/page"}}'          "allows an ordinary https fetch (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://example.com/page"}}'            "allows an ordinary http fetch (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://169.254.169.254/latest/meta-data/"}}' "blocks the cloud-metadata IP (link-local) (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://metadata.google.internal/computeMetadata/v1/"}}' "blocks the GCP metadata hostname (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://127.0.0.1:8080/admin"}}'        "blocks a loopback IPv4 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://[::1]/"}}'                      "blocks a loopback IPv6 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://10.1.2.3/"}}'                  "blocks a private 10/8 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://192.168.1.1/"}}'                "blocks a private 192.168/16 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://172.16.0.5/"}}'                 "blocks a private 172.16/12 literal target (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"file:///etc/passwd"}}'                  "blocks a non-http(s) file:// scheme (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"ftp://example.com/file"}}'              "blocks a non-http(s) ftp:// scheme (#360)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"gopher://example.com/"}}'               "blocks a non-http(s) gopher:// scheme (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"https://8.8.8.8/"}}'                    "allows a public IP literal target (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebSearch","tool_input":{"query":"claude code hooks"}}'                "allows WebSearch — no url field to check (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{}}'                                            "allows a missing url field — nothing to check (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"Bash","tool_input":{"command":"curl http://169.254.169.254/"}}'        "ignores a non-matching tool_name (#360)"
+assert_exit 0 "$BWE" 'not-json'                                                                            "fails open on malformed JSON (#360)"
+assert_exit 0 "$BWE" '[1,2,3]'                                                                             "fails open on valid-but-non-object top-level JSON (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":[1,2,3]}'                                       "fails open on a non-object tool_input (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":123}}'                                   "fails open on a non-string url field (#360)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"not a url at all"}}'                    "fails open on an unparseable/schemeless url (#360)"
+
+# #398: alternate IPv4 encodings a WHATWG-spec-compliant fetch normalizes to a literal IP.
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://2130706433/latest/meta-data/"}}' "blocks a pure-decimal-encoded loopback IPv4 literal (#398)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://0x7f000001/"}}'                  "blocks a hex-encoded loopback IPv4 literal (#398)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://0177.0.0.1/"}}'                  "blocks an octal-per-octet loopback IPv4 literal (#398)"
+assert_exit 2 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://2852039166/"}}'                  "blocks a pure-decimal-encoded metadata-IP literal (169.254.169.254) (#398)"
+assert_exit 0 "$BWE" '{"tool_name":"WebFetch","tool_input":{"url":"http://134744072/"}}'                   "allows a pure-decimal-encoded PUBLIC IPv4 literal (8.8.8.8) (#398)"
+
+echo "== block-write-overwrite.py (#364) =="
+BWO="$HOOKS/block-write-overwrite.py"
+bworepo="$(mktemp -d)"
+git -C "$bworepo" init -q -b main
+git -C "$bworepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+echo hello > "$bworepo/clean.txt"
+git -C "$bworepo" add clean.txt
+git -C "$bworepo" -c user.email=t@t -c user.name=t commit -q -m "add clean.txt"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/clean.txt\",\"content\":\"new\"}}" "allows overwriting a clean tracked file — nothing to lose (#364)"
+echo modified >> "$bworepo/clean.txt"
+assert_exit 2 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/clean.txt\",\"content\":\"new\"}}" "blocks overwriting a tracked file with an uncommitted UNSTAGED change (#364)"
+git -C "$bworepo" checkout -q -- clean.txt
+echo staged >> "$bworepo/clean.txt"
+git -C "$bworepo" add clean.txt
+assert_exit 2 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/clean.txt\",\"content\":\"new\"}}" "blocks overwriting a tracked file with an uncommitted STAGED change (#364)"
+git -C "$bworepo" reset -q
+git -C "$bworepo" checkout -q -- clean.txt
+echo untracked > "$bworepo/untracked.txt"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/untracked.txt\",\"content\":\"new\"}}" "allows overwriting an untracked file — no git history to discard (#364)"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$bworepo/brand-new.txt\",\"content\":\"new\"}}" "allows creating a brand-new file that doesn't exist yet (#364)"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$bworepo/clean.txt\",\"old_string\":\"a\",\"new_string\":\"b\"}}" "ignores Edit — out of scope, requires an exact old_string match (#364)"
+assert_exit 0 "$BWO" '{"tool_name":"Write","tool_input":{"file_path":"clean.txt","content":"x"}}'          "fails open on a relative file_path — nothing safe to resolve (#364)"
+nonrepo="$(mktemp -d)"
+echo x > "$nonrepo/f.txt"
+assert_exit 0 "$BWO" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$nonrepo/f.txt\",\"content\":\"new\"}}" "fails open on a target outside any git repo (#364)"
+rm -rf "$nonrepo"
+assert_exit 0 "$BWO" 'not-json'                                                                            "fails open on malformed JSON (#364)"
+assert_exit 0 "$BWO" '[1,2,3]'                                                                              "fails open on valid-but-non-object top-level JSON (#364)"
+assert_exit 0 "$BWO" '{"tool_name":"Write","tool_input":[1,2,3]}'                                          "fails open on a non-object tool_input (#364)"
+assert_exit 0 "$BWO" '{"tool_name":"Write","tool_input":{"content":"x"}}'                                  "fails open on a missing file_path (#364)"
+rm -rf "$bworepo"
+
 echo "== audit-git-consequences.py (#236 PostToolUse consequence audit) =="
 AGC="$HOOKS/audit-git-consequences.py"
 assert_exit 0 "$AGC" 'not-json'                                                                    "fails open on malformed JSON (#236)"
@@ -1094,7 +1321,38 @@ assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\
 git -C "$agcrepo" branch -D tag-branch
 assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D tag-branch\"}}" "deleting a branch whose tip is still reachable via a tag is not flagged as discarded (#351)"
 
+# #356: the routine post-squash-merge branch cleanup shape (`git fetch --prune && git branch -D
+# feature`, required since `-d` refuses a squash-merged branch) must not be flagged — the deleted
+# branch's upstream reads "gone" (pruned) BEFORE the branch itself is deleted.
+squashremote="$(mktemp -d)"
+git -C "$squashremote" init -q --bare
+git -C "$agcrepo" remote add origin "$squashremote"
+git -C "$agcrepo" checkout -q -b squash-feature
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "squash-feature work"
+git -C "$agcrepo" push -q -u origin squash-feature
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call recording squash-feature with a live upstream (#356 setup)"
+git -C "$squashremote" branch -D squash-feature
+git -C "$agcrepo" fetch -q --prune origin
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git fetch --prune origin\"}}" "baseline call recording squash-feature's upstream now gone after the PR's remote branch is deleted (#356 setup)"
+git -C "$agcrepo" branch -D squash-feature
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D squash-feature\"}}" "deleting a branch after routine post-squash-merge cleanup (upstream already gone) is not flagged as discarded (#356)"
+rm -rf "$squashremote"
+
 rm -rf "$agcrepo"
+
+# #338: state must be keyed by session_id + repo root, not repo root alone — a concurrent
+# session's own baseline-recording call must never clobber another session's baseline for the
+# same checkout.
+agcrepo2="$(mktemp -d)"
+git -C "$agcrepo2" init -q -b main
+git -C "$agcrepo2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+git -C "$agcrepo2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2
+assert_exit 0 "$AGC" "{\"session_id\":\"sessA\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session A's first call records its own baseline at c2 (#338 setup)"
+git -C "$agcrepo2" reset -q --hard HEAD~1
+assert_exit 0 "$AGC" "{\"session_id\":\"sessB\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session B's own first call for the same repo records its own baseline, without touching session A's (#338 setup)"
+assert_exit 2 "$AGC" "{\"session_id\":\"sessA\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session A's baseline (c2) survives session B's intervening first call — the discarded c2 commit is still flagged against A's own history (#338)"
+rm -rf "$agcrepo2"
 
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
 PTB="$HOOKS/pretooluse-bash.py"
@@ -1123,6 +1381,16 @@ git -C "$tmprepo" add f.txt
 assert_exit 2 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git reset --hard\"}}"            "dispatches to the destructive-git rail and blocks reset --hard over a dirty tree (#230)"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
+
+echo "== check-settings-drift.py =="
+CSD="$HOOKS/check-settings-drift.py"
+# Advisory SessionStart hook: it NEVER blocks (always exit 0) — it only emits an
+# additionalContext banner when live ~/.claude/settings.json drifts from the repo source on the
+# safety-critical fields. Assert it never exits 2 and fails open on bad input (a config-drift
+# detector must never wedge session start).
+assert_exit 0 "$CSD" '{"hook_event_name":"SessionStart","source":"startup"}' "advisory SessionStart hook never blocks"
+assert_exit 0 "$CSD" 'not-json'                                              "fails open on malformed stdin"
+assert_exit 0 "$CSD" '[1,2,3]'                                               "fails open on non-object top-level JSON"
 
 # --- layer 3: real-shape fixture corpus (#117) --------------------------------------------
 # Layer 2's JSON is hand-authored, so a hook that mis-models the REAL Claude Code tool-input /

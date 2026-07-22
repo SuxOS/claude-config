@@ -82,6 +82,28 @@ jobs:
         if: ${{ !cancelled() }}
         run: bash tests/test_hooks.sh
 
+      # ruff/pyflakes (#292): py_compile (above) only catches syntax errors, not runtime defects
+      # like #272 (a hook that can crash with an unhandled TypeError, breaking its documented
+      # fail-open contract) — undefined names, unused imports, and similar Pyflakes-class checks
+      # generalize that bug class across every tracked *.py instead of relying on a human to spot
+      # the next one. Scoped to `--select F` (ruff's Pyflakes-equivalent rule set) only, NOT ruff's
+      # broader default (which also includes pycodestyle style rules like E702 "multiple statements
+      # on one line") — this codebase's hooks deliberately chain compact `i += 1; continue`-style
+      # statements throughout _hookutil.py and friends, a real style choice, not a defect; a
+      # style-rule linter would flag dozens of intentional lines with nothing to fix. Folded into
+      # this required job for the same auto-merge-gating reason as the other integrity steps
+      # (CLAUDE.md).
+      - name: lint Python hooks/scripts with ruff (pyflakes rules)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet ruff
+          mapfile -t files < <(git ls-files '*.py')
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no tracked Python files to lint"; exit 0
+          fi
+          python3 -m ruff check --select F "${files[@]}"
+
       # argv-canon fuzzer (#199): tests/test_hooks.sh only covers hand-picked bypass shapes;
       # this generates the combinatorial wrapper/flag/env/grouping space from an independent
       # reference grammar and asserts strip_prefixes()/block-egress's offending() recover the
@@ -126,6 +148,29 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/lint-evals.py
 
+      # hooks-doc-lint (#269): hooks/README.md has needed a standalone "fix the stale doc" issue
+      # at least six separate times (#103, #124, #169, #216, #223, #249) — every time a hook gains
+      # a predicate or changes its matcher, the prose silently falls behind. Mirrors lint-settings.py
+      # (#82): turns the two mechanically-extractable drift shapes (a hook's settings.json matcher
+      # vs its README bullet; block-destructive-git.py's dispatched-predicate count vs the count
+      # named in prose) into an enforced check instead of a recurring hand-fix. Deterministic, no
+      # secrets/model call, so folded into this required job like the other integrity linters
+      # rather than a standalone advisory job (see CLAUDE.md).
+      - name: lint hooks/README.md for drift from settings.json / hook source
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/lint-hooks-doc.py
+
+      # doc-facts (#278): generalizes hooks-doc-lint's one-file-pair drift check into a mechanism
+      # any tracked doc can use — a `<!-- doc-fact: ... -->` annotation asserts a concrete,
+      # checkable claim (a file exists/doesn't, a settings.json deny rule is present, a regex
+      # matches N times) next to the prose making that claim, verified here against live repo
+      # state instead of trusting the prose to stay in sync by hand. Complements, doesn't replace,
+      # hooks-doc-lint's two hand-built checks above. Deterministic, no secrets/model call, so
+      # folded into this required job like the other integrity linters (see CLAUDE.md).
+      - name: lint doc-fact annotations against live repo state
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/lint-doc-facts.py
+
   # skill-evals (ADVISORY, #140): runs each skill's evals.json against a model and grades the
   # resulting response with an LLM judge — the runner layer #95 envisioned above the deterministic
   # evals-lint rail (which only checks eval SHAPE). A model call means cost + secrets + non-determinism,
@@ -167,6 +212,25 @@ jobs:
       - name: fuzz argv canonicalization against real subprocess execution
         run: python3 tests/fuzz_argv_exec.py
 
+  # fuzz-git-state (ADVISORY, #310): tests/fuzz_argv_canon.py/fuzz_argv_exec.py cover the
+  # argv-CANONICALIZATION half of block-destructive-git.py's rails; this covers the other half —
+  # the predicates that consult LIVE git repo state (force-push fast-forward, clean -n preview,
+  # branch merged-into-HEAD, working-tree dirtiness) — against ground truth obtained by actually
+  # performing the real git action in a disposable repo copy, not a second guess through the same
+  # git plumbing the predicate itself already trusts. Standalone ADVISORY job, never folded into
+  # the required `shellcheck` job — same reasoning as fuzz-argv-exec/skill-evals (CLAUDE.md): this
+  # depends on real git subprocess behavior across many generated repo states, a heavier and
+  # slower dependency than the pure-computation fuzzer already folded into the required job.
+  fuzz-git-state:
+    name: fuzz-git-state
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: fuzz block-destructive-git.py's git-state predicates against real git ground truth
+        run: python3 tests/fuzz_git_state.py
+
   # `bash -n install.sh` only catches parse errors, not logic bugs (wrong case glob, broken
   # idempotency check, etc). This actually runs the script end-to-end against a scratch HOME
   # and checks the result, then runs it a second time to assert idempotency (#42).
@@ -187,7 +251,10 @@ jobs:
           for entry in home/.claude/*; do
             name="$(basename "$entry")"
             case "$name" in
-              settings.json) continue ;;
+              # settings.json + the settings.bot.json variant are COPIED per identity (install.sh),
+              # not symlinked — mirror install.sh's own skip list. CLAUDE.md is symlinked but checked
+              # separately below.
+              settings.json|settings.bot.json) continue ;;
               CLAUDE.md) continue ;;
             esac
             link="$scratch_home/.claude/$name"
@@ -228,3 +295,55 @@ jobs:
           fi
           [ -e "$scratch_home/.claude/settings.json" ] && { echo "settings.json should not have been created" >&2; exit 1; }
           echo "install.sh missing-settings.json hard-fail test passed (#334)"
+
+      # #293: install.sh detected settings.json drift (missing_deny/missing_hooks) but only ever
+      # printed it. Proves --apply actually patches the live settings.json: restores a rule/hook
+      # removed from a scratch copy, keeps a rule the "user" added that isn't in the repo
+      # reference, and a second --apply is a no-op (no second backup, no further changes).
+      - name: install.sh --apply merges missing settings.json drift, preserving user rules
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          scratch_home="$(mktemp -d)"
+          HOME="$scratch_home" bash install.sh >/dev/null
+
+          settings="$scratch_home/.claude/settings.json"
+          python3 - "$settings" <<'PYEOF'
+          import json, sys
+          path = sys.argv[1]
+          data = json.load(open(path))
+          assert "Bash(tar *)" in data["permissions"]["deny"]
+          data["permissions"]["deny"] = [r for r in data["permissions"]["deny"] if r != "Bash(tar *)"]
+          data["permissions"]["deny"].append("Bash(my-custom-user-rule *)")
+          data["hooks"]["PreToolUse"] = [g for g in data["hooks"]["PreToolUse"] if g["matcher"] != "Write"]
+          json.dump(data, open(path, "w"), indent=2)
+          PYEOF
+
+          HOME="$scratch_home" bash install.sh --apply
+
+          python3 - "$settings" <<'PYEOF'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          deny = data["permissions"]["deny"]
+          assert "Bash(tar *)" in deny, "missing deny rule was not restored"
+          assert "Bash(my-custom-user-rule *)" in deny, "user-added deny rule was dropped"
+          matchers = [g["matcher"] for g in data["hooks"]["PreToolUse"]]
+          assert "Write" in matchers, "missing hook matcher group was not restored"
+          PYEOF
+
+          shopt -s nullglob
+          backups=("$scratch_home"/.claude/settings.json.bak-*)
+          shopt -u nullglob
+          [ "${#backups[@]}" -eq 1 ] || { echo "expected exactly one settings.json backup, got: ${backups[*]}" >&2; exit 1; }
+
+          # second --apply must be a no-op: no second backup, file unchanged
+          before_hash="$(sha256sum "$settings")"
+          HOME="$scratch_home" bash install.sh --apply
+          after_hash="$(sha256sum "$settings")"
+          [ "$before_hash" = "$after_hash" ] || { echo "settings.json changed on a second --apply run" >&2; exit 1; }
+          shopt -s nullglob
+          backups=("$scratch_home"/.claude/settings.json.bak-*)
+          shopt -u nullglob
+          [ "${#backups[@]}" -eq 1 ] || { echo "second --apply run created another backup: ${backups[*]}" >&2; exit 1; }
+
+          echo "install.sh --apply merge test passed (#293)"

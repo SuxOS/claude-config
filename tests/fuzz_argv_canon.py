@@ -283,7 +283,7 @@ def offending_violation(prefix_tokens):
 
 
 def checkout_target_violation(prefix_tokens):
-    return BLOCK_CHECKOUT.checkout_target(prefix_tokens + CHECKOUT_ARGV) != "held"
+    return BLOCK_CHECKOUT.checkout_target(prefix_tokens + CHECKOUT_ARGV, None) != "held"
 
 
 def sleep_loop_command(prefix_tokens):
@@ -467,7 +467,7 @@ def main():
         if checkout_target_violation(prefix_tokens):
             minimal = tuple(shrink(prefix_tokens, checkout_target_violation))
             if ("checkout", minimal) not in violations:
-                got = BLOCK_CHECKOUT.checkout_target(list(minimal) + CHECKOUT_ARGV)
+                got = BLOCK_CHECKOUT.checkout_target(list(minimal) + CHECKOUT_ARGV, None)
                 violations[("checkout", minimal)] = (
                     "block-checkout-held-branch checkout_target() invariant: prefix %r + %r should "
                     "recover branch %r, got %r" % (list(minimal), CHECKOUT_ARGV, "held", got)

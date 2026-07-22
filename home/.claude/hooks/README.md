@@ -109,6 +109,27 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   autonomous session, so a match blocks unconditionally (mirrors `block-destructive-git.py`'s
   merge/publish predicate). `create`/`update`/`list`/`get` tools are out of scope — not Tier-A on
   their own. Fails open on any error or unrecognized tool-name/tool-input shape.
+- **`block-web-egress.py`** — PreToolUse (matcher `WebFetch|WebSearch`). Extends the egress rail to
+  the native web tools (#360): neither had a hook nor a deny rule, even though block-egress.py's own
+  block message points bypassed Bash egress traffic AT them. Reads `tool_input.url` (WebFetch's
+  fetch target — WebSearch's `query` has no URL to check) and blocks on a non-http(s) scheme or a
+  LITERAL loopback/link-local/private/reserved IP target or known metadata hostname (covers the
+  169.254.169.254 cloud-metadata address, since it's link-local) — no DNS resolution performed, so a
+  hostname that merely resolves to one of these is invisible here, same "speed bump, not a seal"
+  honesty as block-egress.py. No repo state can prove a fetch target safe and there's no human to
+  confirm in an autonomous session, so a match blocks unconditionally. Fails open on any error or
+  unrecognized shape.
+- **`block-write-overwrite.py`** — PreToolUse (matcher `Write`). Blocks a blind full-file overwrite
+  of a git-tracked file that has uncommitted staged-or-unstaged changes (#364): every other
+  "discard uncommitted work" guard here is Bash-scoped (block-destructive-git.py's
+  `_reset_hard_hit`/`_discard_hit`), but Write fully replaces a file's content with no diff-aware
+  merge and had zero enforcement. Runs `git status --porcelain` scoped to `tool_input.file_path` in
+  the file's own directory; blocks when the file is tracked AND dirty (any porcelain line other than
+  the untracked `??` marker) — reusing block-destructive-git.py's `_working_tree_dirty()` signal,
+  scoped to one path. `Edit` is deliberately out of scope (it requires an exact `old_string` match,
+  so it can't blindly clobber an unseen change the way Write can). Unconditional on a hit, same
+  Tier-A shape as block-destructive-mcp.py. Fails open on any error, a relative `file_path`, or a
+  target outside a readable git repo.
 - **`audit-git-consequences.py`** — PostToolUse (matcher `Bash`). A complementary, last-resort net
   behind the PreToolUse argv rails above (#236): instead of recognizing a destructive git COMMAND
   before it runs, it snapshots the cwd's branch/remote-tracking ref tips (via `git_out()`/
@@ -122,6 +143,18 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   the repo's real toplevel path (so parallel worktrees never share a baseline); fails open on
   anything unreadable/unwritable/non-repo. Wired in settings.json under `hooks.PostToolUse`.
 
+- **`check-settings-drift.py`** — SessionStart (matcher `startup|resume|clear|compact`). Advisory
+  only — never blocks, always fails open. Warns when the live `~/.claude/settings.json` has drifted
+  from the claude-config repo source on the safety-critical fields (`permissions.deny`, `hooks`,
+  `permissions.defaultMode`, `disableClaudeAiConnectors`) plus a softer `enabledPlugins` note.
+  settings.json is COPIED, not symlinked (Claude Code rewrites it in place — install.sh), so it
+  diverges silently: a dual-account login once wiped the entire deny list + all hooks for a whole
+  session before anyone noticed. Locates the repo source via THIS file's own symlink
+  (`realpath(__file__)/../settings.json`) — no hard-coded clone path; normalizes plugin
+  `false` ≡ absent (Code drops disabled plugins on rewrite) so only genuine on↔off flips are drift.
+  Emits the SessionStart `additionalContext` banner pointing at `install.sh --apply` to reconcile.
+  Wired in settings.json under `hooks.SessionStart`.
+
 ## Available but DISABLED by default
 
 - **`verify-completion-claim.py`** — Stop hook. The "no completion claim without fresh evidence"
@@ -134,6 +167,28 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
       ]
 
   Then restart Claude Code. It fails open on any parse error and self-limits via `stop_hook_active`.
+
+  **Shadow mode (#324)** — graduate it from "read the source" to "watch it run" without risking a
+  disruptive false positive: wire it as a live Stop hook that only logs, never blocks, by setting
+  `VERIFY_COMPLETION_CLAIM_SHADOW=1` in the `command` string itself:
+
+      "Stop": [
+        { "hooks": [ { "type": "command", "command": "VERIFY_COMPLETION_CLAIM_SHADOW=1 $HOME/.claude/hooks/verify-completion-claim.py" } ] }
+      ]
+
+  Every turn it evaluates appends one JSON line — `{"ts", "transcript_path", "would_fire",
+  "reason"}` — to `~/.claude/verify-completion-claim.log` (override the path with
+  `VERIFY_COMPLETION_CLAIM_LOG`) instead of exiting 2. Run it passively across real sessions, then
+  review the log for false positives (`would_fire: true` on a turn that was actually fine) and
+  false negatives (a turn you know should have fired but didn't) before ever dropping the
+  `VERIFY_COMPLETION_CLAIM_SHADOW=1` prefix to arm it live. Summarize a log at a glance with:
+
+      python3 -c "
+      import collections, json
+      c = collections.Counter()
+      for line in open('$HOME/.claude/verify-completion-claim.log'):
+          c[json.loads(line)['would_fire']] += 1
+      print(c)"
 
 ## Testing a hook before you trust it
 

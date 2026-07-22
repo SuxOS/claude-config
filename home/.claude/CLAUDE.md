@@ -50,7 +50,51 @@
 - Don't suppress a command's stderr if you might need it to diagnose — `2>/dev/null` on a
   step you'll have to re-debug just moves the cost, it doesn't remove it.
 - Verify shell/OS assumptions before looping a command across N items (zsh glob rules ≠
-  bash; macOS coreutils ≠ GNU) — one failed dry run beats N failed real ones.
+  bash; macOS coreutils ≠ GNU) — one failed dry run beats N failed real ones. Concrete trap:
+  **BSD `xargs -I{}` silently CAPS each replacement string at 255 bytes** — piping a long value
+  (a token, a base64 blob) through it truncates with NO error (this silently cut an 856-char
+  service-account token → a cryptic downstream decode failure). Use `"$(cmd)"` command-
+  substitution or a here-string for anything that can exceed 255 chars, never `xargs -I`.
+- **The Bash tool runs a zsh login shell (macOS); CI/workflows run bash — a standing drift
+  source.** NEVER name a variable with a zsh-reserved name in any script the Bash tool runs:
+  `status`, `path`, `cdpath`, `argv`, `pipestatus` are special/read-only in zsh (`status` is
+  read-only — assigning it silently fails and broke a `gh run` watcher loop TWICE in one
+  session). Keep scripts bash/POSIX-portable and pick non-reserved names (`state`, `p`, `args`,
+  `rc`) even when the interactive shell is zsh.
+- **zsh `nomatch` is ON by default — an unquoted glob that matches nothing ABORTS the whole
+  command**, not a silent pass-through. `ls *.uc` or `for f in *.ts` with zero matches makes zsh
+  exit with "no matches found" and kill the command; bash (nullglob off) instead passes the
+  literal pattern through unchanged. Same zsh≠bash drift as the reserved-variable-name gotcha
+  above — in any command the Bash tool runs, quote a glob that might not match, or guard it
+  (`setopt nullglob`, or a plain existence check) before looping over it. Keep scripts portable
+  across the three real targets (POSIX sh / bash 5 / TS·Python) rather than leaning on
+  zsh-specific idioms.
+- **A `SessionStart` hook (`check-settings-drift.py`) warns when live `~/.claude/settings.json`
+  has drifted from the claude-config repo source** on the safety-critical fields (`permissions.
+  deny`, `hooks`, `defaultMode`, `disableClaudeAiConnectors`) plus `enabledPlugins`. settings.json
+  is COPIED, not symlinked (Code rewrites it in place — install.sh:67), so it diverges silently: a
+  dual-account login once wiped the ENTIRE deny list + all hooks for a whole session before anyone
+  noticed. The hook fails OPEN, normalizes plugin `false`≡absent (Code drops disabled keys on
+  rewrite), and points at `install.sh --apply` to reconcile. This drift is live and ongoing — Code
+  re-enabled `chrome-devtools-mcp` mid-session in the very session the hook shipped.
+- **Reach for the specialized skill/MCP/tool by default, every session** — `/brainstorming` and
+  `/deep-research` for open-ended design/research, connected MCPs (sux, cloudflare, grafana,
+  obsidian, semgrep, typescript-lsp) for their exact job — instead of hand-rolling with grep/prose.
+  Deferred tools load on demand via ToolSearch (no pre-load), so an unused connected capability is a
+  standing miss, not a neutral default (Cardinal rule #2b).
+- **Never infer a workflow/agent COMPLETED or STALLED from file existence/timestamps or a mid-run
+  status check — verify the ACTUAL final result** (an empty/absent synthesis IS "not done" — e.g.
+  `jq '.report'` on the journal returns nothing; an in-progress agent is not "stalled," it's slow).
+  And NEVER carry an unverified "completed" claim into a handoff — a downstream session inherits it
+  and errors (2026-07-22: a false "landscape COMPLETED" from file timestamps propagated into the v3
+  handoff and broke the next session, which caught it by reading `journal.jsonl` per Cardinal #3).
+  Recover an aborted fan-out from the per-item agent returns (journal.jsonl) or re-run only the
+  synthesis phase — don't re-run the whole thing.
+- **Prefer deferring heavy/async work to the cloud pipeline or the `claude@` bot to keep the
+  interactive (m@) quota free** — file issues for the build loop (`dispatch`) or hand sustained
+  drudge to bot-owned cloud routines, rather than burning the foreground session on long autonomous
+  work. The interactive session is the setpoint/orchestrator; the cloud plane does the sustained
+  drain (Cardinal rule #5 + the two-account human/bot split).
 - Prompt-cache long-lived context (this file, project CLAUDE.md) at the front of a
   session; don't re-paste large docs when a file reference will do.
 - **Never put comments in a code snippet meant to be copy-pasted.** Strip all explanatory
@@ -254,6 +298,13 @@
   tool's docs describe the value as a plain argument or as something that gets re-interpreted
   (split, expanded, re-exec'd) — the latter needs a splice-and-reprocess handler like
   `_hookutil._env_split_string()`, not a skip.
+- **Changing a rail's internal helper SIGNATURE (not just its `check()` contract) can silently
+  break `tests/fuzz_argv_canon.py`** (#241): that fuzzer calls some rail internals directly
+  (`BLOCK_CHECKOUT.checkout_target(...)`) rather than only through the hook's stdin JSON contract
+  `tests/test_hooks.sh` drives, so `test_hooks.sh` passing green does not prove the fuzzer still
+  runs — it can fail with a plain `TypeError` instead. Before changing an internal function's
+  signature (adding a required param like a `cwd` a new code path needs), `grep` the function name
+  across `tests/fuzz_argv_canon.py` and update every direct call site too.
 
 ## The tools — locus, not a grammar
 Work is organized by **where it happens** (workspace ⊃ org ⊃ repo), not by punctuation.

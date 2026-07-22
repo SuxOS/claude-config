@@ -46,13 +46,14 @@ schedule of their own) plus its own self-contained pipeline for `.github`'s own 
 
 | Loop | File(s) in `<org>/<r>` | If `<r>` is `.github` itself |
 |---|---|---|
-| collate-build | `issue-build.yml` (+ `fixer.yml` to stop new proposals too) | `self-issue-build.yml` (+ `self-fixer.yml`) |
+| collate-build | `issue-build.yml` (+ all `fixer*.yml` cadences to stop new proposals too — check `gh workflow list`) | `self-issue-build.yml` (+ `self-fixer.yml`) |
 | green-merge | `automerge.yml` (+ `pr-drain.yml` reconcile backstop) | `self-automerge.yml` |
 | red-rebase | `pr-auto-update.yml` (+ `pr-unstick.yml`, `claude-autofix.yml`) | n/a — `.github` has no red-rebase loop of its own |
 
 Not every repo has every file (e.g. `claude-config` currently has no `pr-auto-update`/
-`pr-drain`/`pr-unstick` — a red/behind PR here has nothing to auto-rebase or unstick it,
-so it needs a manual `git pull --rebase` or `hold`/close) — confirm with
+`pr-unstick` — a red/behind PR here has nothing to auto-rebase or unstick it, so it needs
+a manual `git pull --rebase` or `hold`/close; it DOES have `pr-drain.yml`, the green-merge
+reconcile backstop noted in the row above) — confirm with
 `gh workflow list --repo <org>/<r>` before disabling. Wiring it is a repo-side thin wrapper
 around the `SuxOS/.github` reusable `pr-auto-update.yml`/`pr-unstick.yml` (mirroring
 `issue-build.yml`'s/`automerge.yml`'s pattern in this repo's `.github/workflows/`), but

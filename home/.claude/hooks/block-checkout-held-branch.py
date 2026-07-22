@@ -58,7 +58,7 @@ DETACH_OPTS = {"-d", "--detach"}
 IGNORE_WORKTREE_OPTS = {"--ignore-other-worktrees"}
 
 
-def checkout_target(argv):
+def checkout_target(argv, cwd):
     """Return the branch a `git checkout`/`git switch` argv would SWITCH to, or None.
 
     Returns None for anything that isn't an unambiguous single-branch switch: a non-git command,
@@ -71,7 +71,15 @@ def checkout_target(argv):
     the real `git` command word instead of silently bypassing this guard the way a bare
     `basename(argv[0]) != "git"` check would. Also `strip_redirects()` (#359), so a trailing
     `> file`/`2>&1` on the command doesn't inflate the positional count past the exact-one-target
-    gate below and hide a real switch into a held branch."""
+    gate below and hide a real switch into a held branch.
+
+    A bare `-` positional (`git checkout -`/`git switch -`, the documented `cd -`-style shorthand
+    for the previously checked-out branch, #241) is resolved to its real branch name via `git
+    rev-parse --abbrev-ref @{-1}` in `cwd` before being returned — `holding_worktree()` compares
+    against real branch names out of `git worktree list`, so the literal token `-` would never
+    match anything and this whole case would silently no-op otherwise. `cwd` unresolved or no
+    previous branch to resolve (`@{-1}` invalid, e.g. the first checkout in a repo) returns None,
+    the same conservative fail-open every other unresolvable shape here gets."""
     sub = git_subcommand(strip_prefixes(argv))
     if sub is None or sub[0] not in ("checkout", "switch"):
         return None
@@ -90,6 +98,10 @@ def checkout_target(argv):
             return None              # detached HEAD, holds no branch ref
         if tok in IGNORE_WORKTREE_OPTS:
             return None              # git itself skips the collision check — not our case to block
+        if tok == "-":
+            positionals.append(tok)  # `git checkout -`/`git switch -`: the previous-branch shorthand
+            j += 1                   # (like `cd -`) — a real single positional, not a flag (#241)
+            continue
         if tok.startswith("-"):
             j += 1                   # some other flag (-f/-q/--track/…); value-taking forms are rare
             continue                 # and only cause a harmless miss, never a false block
@@ -98,6 +110,11 @@ def checkout_target(argv):
     if len(positionals) != 1:        # 0 = nothing to switch to; >1 = likely `checkout <ref> <paths>`
         return None
     target = positionals[0]
+    if target == "-":
+        resolved = git_out(["rev-parse", "--abbrev-ref", "@{-1}"], cwd)
+        if not resolved or not resolved.strip() or resolved.strip() == "@{-1}":
+            return None               # no previous branch to resolve — nothing to check
+        return resolved.strip()
     if target.startswith("refs/heads/"):
         target = target[len("refs/heads/"):]
     return target
@@ -128,7 +145,7 @@ def holding_worktree(target, cwd):
 def offending(command, cwd):
     """Return (target, worktree_path) for a checkout of a branch another worktree holds, else None."""
     for argv in pieces(command):
-        target = checkout_target(argv)
+        target = checkout_target(argv, cwd)
         if not target:
             continue
         held = holding_worktree(target, cwd)
