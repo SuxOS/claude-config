@@ -27,6 +27,7 @@ Exit 0 = every case matched its expected exit code; exit 1 = one or more mismatc
 printed with hook + fixture + expected/actual + description). Run: python3 tests/run_fixture_corpus.py
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -69,6 +70,14 @@ DESTRUCTIVE_GIT_PLACEHOLDER = "__DESTRUCTIVE_GIT_REPO__"
 # baseline snapshot) and "mutate_git" (a git argv run against the template repo between the two
 # hook calls) alongside its usual "cwd_template"/"stdin"/"expect_exit".
 CONSEQUENCE_AUDIT_PLACEHOLDER = "__CONSEQUENCE_AUDIT_REPO__"
+
+# block-destructive-fs.py's brace-expansion cases (#365) need real, non-empty directories at the
+# fixture's `cwd` — and unlike every other template here, that cwd must NOT come from
+# tempfile.mkdtemp(): the rail treats anything under a scratch root (tempfile.gettempdir(),
+# /tmp, ...) as always-safe-to-delete, so a block-expected case built there would false-negative
+# before the expansion logic under test ever ran. Built under the repo checkout root instead —
+# the same placement tests/test_hooks.sh's own dfs section uses, for the same reason.
+DESTRUCTIVE_FS_PLACEHOLDER = "__DESTRUCTIVE_FS_REPO__"
 
 
 def make_held_branch_repo():
@@ -145,12 +154,31 @@ def make_consequence_audit_repo():
     return tmp, repo
 
 
+def make_destructive_fs_repo():
+    """Build a throwaway directory tree for the block-destructive-fs.py brace-expansion cases
+    (#365): two real, NON-EMPTY directories (`realdir1`, `realdir2` — the block case) and two
+    already-empty ones (`emptydir1`, `emptydir2` — the allow case, proving the rail expands and
+    classifies rather than blanket-blocking every `{`). `git init`'d so the rail's
+    `git check-ignore` fallback consults this repo's own (absent) ignore rules deterministically,
+    not whatever repo happens to enclose the checkout. Deliberately NOT under tempfile.mkdtemp()
+    — see DESTRUCTIVE_FS_PLACEHOLDER above. Returns (dir_to_clean_up, repo_path)."""
+    base = REPO_ROOT / f".dfs-fixture-scratch-{os.getpid()}"
+    repo = base / "repo"
+    for d in ("realdir1", "realdir2", "emptydir1", "emptydir2"):
+        (repo / d).mkdir(parents=True)
+    (repo / "realdir1" / "f.txt").write_text("fixture\n")
+    (repo / "realdir2" / "f.txt").write_text("fixture\n")
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True, capture_output=True)
+    return str(base), str(repo)
+
+
 # Registry of every "cwd_template" name a manifest case can reference: placeholder text -> builder.
 # A builder runs at most once per corpus run, only when at least one case actually needs it.
 CWD_TEMPLATES = {
     "held_branch_repo": (HELD_BRANCH_PLACEHOLDER, make_held_branch_repo),
     "destructive_git_repo": (DESTRUCTIVE_GIT_PLACEHOLDER, make_destructive_git_repo),
     "consequence_audit_repo": (CONSEQUENCE_AUDIT_PLACEHOLDER, make_consequence_audit_repo),
+    "destructive_fs_repo": (DESTRUCTIVE_FS_PLACEHOLDER, make_destructive_fs_repo),
 }
 
 

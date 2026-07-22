@@ -226,6 +226,22 @@ def basename(word):
     return word.rsplit("/", 1)[-1]
 
 
+def has_flag_char(rest, chars, long_names=()):
+    """True if any token in `rest` sets one of `chars` (single-letter short flags, matched even
+    inside a combined cluster like `-fd`) or exactly matches a name in `long_names`. Hoisted out of
+    block-destructive-git.py (#263) once block-destructive-fs.py (#345) needed the identical
+    bundled-short-flag scan — same "shared helper, not a second copy" move as `strip_prefixes()`
+    (#193) and `git_subcommand()` (#230)."""
+    for tok in rest:
+        if tok in long_names:
+            return True
+        if tok.startswith("--"):
+            continue
+        if tok.startswith("-") and any(c in chars for c in tok[1:]):
+            return True
+    return False
+
+
 def strip_prefixes(argv):
     """Drop everything before the real command word, in one pass: grouping noise, bare
     `NAME=VALUE` env assignments, `sudo`/`doas`, and value-consuming wrappers + their args
