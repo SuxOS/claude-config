@@ -50,7 +50,11 @@
 - Don't suppress a command's stderr if you might need it to diagnose — `2>/dev/null` on a
   step you'll have to re-debug just moves the cost, it doesn't remove it.
 - Verify shell/OS assumptions before looping a command across N items (zsh glob rules ≠
-  bash; macOS coreutils ≠ GNU) — one failed dry run beats N failed real ones.
+  bash; macOS coreutils ≠ GNU) — one failed dry run beats N failed real ones. Concrete trap:
+  **BSD `xargs -I{}` silently CAPS each replacement string at 255 bytes** — piping a long value
+  (a token, a base64 blob) through it truncates with NO error (this silently cut an 856-char
+  service-account token → a cryptic downstream decode failure). Use `"$(cmd)"` command-
+  substitution or a here-string for anything that can exceed 255 chars, never `xargs -I`.
 - **The Bash tool runs a zsh login shell (macOS); CI/workflows run bash — a standing drift
   source.** NEVER name a variable with a zsh-reserved name in any script the Bash tool runs:
   `status`, `path`, `cdpath`, `argv`, `pipestatus` are special/read-only in zsh (`status` is
