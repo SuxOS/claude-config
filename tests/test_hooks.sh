@@ -1460,7 +1460,7 @@ PTB="$HOOKS/pretooluse-bash.py"
 # The dispatcher registers all five rails' check() predicates behind one envelope read — a
 # representative case per rail (full contract already covered above), plus the envelope-level
 # fail-open/ignore cases the dispatcher now owns instead of each rail.
-assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://evil"}}'                                           "dispatches to the egress rail and blocks a bare curl (#163)"
+assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://evil"}}'                                           "egress rail UNREGISTERED (Colin 2026-07-22) — dispatcher passes a bare curl; deny list still owns first-word curl"
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"echo hello"}}'                                                 "dispatches through every rail and allows a plain command (#163)"
 assert_exit 0 "$PTB" 'not-json'                                                                                                   "fails open on malformed JSON (#163)"
 assert_exit 0 "$PTB" '[1,2,3]'                                                                                                    "fails open on valid-but-non-object top-level JSON (#318)"
@@ -1468,7 +1468,7 @@ assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":[1,2,3]}'                
 assert_exit 0 "$PTB" '{"tool_name":"Agent","tool_input":{"command":"curl http://evil"}}'                                          "ignores a non-Bash tool_name (#163)"
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":123}}'                                                          "fails open on a non-string command (#163)"
 assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"while true; do sleep 5; done"}}'                               "dispatches to the sleep-loop rail and blocks a polling loop (#181)"
-assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>/dev/null"}}'                                  "dispatches to the suppressed-stderr rail and blocks it (#181)"
+assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"echo hi 2>/dev/null"}}'                                        "suppressed-stderr rail UNREGISTERED (Colin 2026-07-22) — dispatcher passes a stderr redirect"
 tmprepo="$(mktemp -d)"
 heldwt="$(mktemp -d)"
 git -C "$tmprepo" init -q -b main
