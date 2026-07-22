@@ -179,7 +179,9 @@ def _tool_results_by_id(records):
 
 def verification_ran(records):
     """True if this turn's records show an actual verification tool call that SUCCEEDED, not
-    just a mention and not a command that ran but failed (#362)."""
+    just a mention and not a command that ran but failed — checked for Bash (#362) and, the same
+    way, for SlashCommand/Skill invocations of /verify|/bet|/run (#418): a matching invocation
+    whose own tool_result reports failure is not evidence either."""
     results_by_id = _tool_results_by_id(records)
     for r in records:
         msg = r.get("message") or r
@@ -201,12 +203,20 @@ def verification_ran(records):
                 return True
             elif name == "SlashCommand":
                 command = tool_input.get("command")
-                if isinstance(command, str) and VERIFY_SLASH.search(command.strip()):
-                    return True
+                if not isinstance(command, str) or not VERIFY_SLASH.search(command.strip()):
+                    continue
+                result = results_by_id.get(block.get("id"))
+                if result is not None and _result_failed(result):
+                    continue
+                return True
             elif name == "Skill":
                 skill = tool_input.get("skill")
-                if isinstance(skill, str) and skill.lower() in VERIFY_SKILLS:
-                    return True
+                if not isinstance(skill, str) or skill.lower() not in VERIFY_SKILLS:
+                    continue
+                result = results_by_id.get(block.get("id"))
+                if result is not None and _result_failed(result):
+                    continue
+                return True
     return False
 
 

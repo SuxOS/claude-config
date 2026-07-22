@@ -260,6 +260,46 @@ passing_test_transcript="$(build_transcript_records '[
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$passing_test_transcript\"}" "does not block a completion claim backed by a pytest run that actually passed (#362)"
 rm -f "$passing_test_transcript"
 
+# #418: the same #362 tool_result-correlation gap applied to SlashCommand/Skill — a /verify (or
+# Skill) invocation whose own tool_result reports failure must not count as verification evidence.
+failed_slash_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": "t2", "name": "SlashCommand", "input": {"command": "/verify"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "3 failed, 12 passed", "is_error": false}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, tests passing."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$failed_slash_transcript\"}" "blocks a completion claim backed by a /verify run that itself reported failure (#418)"
+rm -f "$failed_slash_transcript"
+
+failed_skill_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": "t2", "name": "Skill", "input": {"skill": "verify"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "Traceback (most recent call last):"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, tests passing."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$failed_skill_transcript\"}" "blocks a completion claim backed by a Skill(verify) run that itself reported failure (#418)"
+rm -f "$failed_skill_transcript"
+
 # #329: `bash -n` only parses a script for syntax errors, it never executes any logic — it must
 # not count as verification evidence for a completion claim.
 bash_n_transcript="$(build_transcript_records '[
