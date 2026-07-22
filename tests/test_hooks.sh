@@ -183,6 +183,68 @@ bash_verify_transcript="$(build_transcript_records '[
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$bash_verify_transcript\"}" "does not block a completion claim after an actual Bash tool_use ran npm test (#83)"
 rm -f "$bash_verify_transcript"
 
+# #333: VERIFY_CMD must match the tokenized command WORD, not substring-search the whole Bash
+# command string — a quoted commit message that happens to contain "node"/"test" must not be
+# credited as a real `node ... test` invocation.
+quoted_commit_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "git commit -am \"fix node parsing edge case; closes flaky test issue\""}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "[main abc1234] fix node parsing edge case; closes flaky test issue"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Fixed, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$quoted_commit_transcript\"}" "blocks a completion claim where 'node'/'test' only appear inside a quoted commit message, not a real verify command (#333)"
+rm -f "$quoted_commit_transcript"
+
+# #362: verification_ran() must check the matched command's own tool_result outcome, not just
+# that a verify-shaped command was invoked — a FAILED pytest run must not count as verification.
+failed_test_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "pytest"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "3 failed, 12 passed"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, tests passing."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$failed_test_transcript\"}" "blocks a completion claim backed by a pytest run that actually FAILED (#362)"
+rm -f "$failed_test_transcript"
+
+passing_test_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "pytest"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "0 failed, 12 passed"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, tests passing."}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$passing_test_transcript\"}" "does not block a completion claim backed by a pytest run that actually passed (#362)"
+rm -f "$passing_test_transcript"
+
 # #329: `bash -n` only parses a script for syntax errors, it never executes any logic — it must
 # not count as verification evidence for a completion claim.
 bash_n_transcript="$(build_transcript_records '[
@@ -1163,7 +1225,38 @@ assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\
 git -C "$agcrepo" branch -D tag-branch
 assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D tag-branch\"}}" "deleting a branch whose tip is still reachable via a tag is not flagged as discarded (#351)"
 
+# #356: the routine post-squash-merge branch cleanup shape (`git fetch --prune && git branch -D
+# feature`, required since `-d` refuses a squash-merged branch) must not be flagged — the deleted
+# branch's upstream reads "gone" (pruned) BEFORE the branch itself is deleted.
+squashremote="$(mktemp -d)"
+git -C "$squashremote" init -q --bare
+git -C "$agcrepo" remote add origin "$squashremote"
+git -C "$agcrepo" checkout -q -b squash-feature
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "squash-feature work"
+git -C "$agcrepo" push -q -u origin squash-feature
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call recording squash-feature with a live upstream (#356 setup)"
+git -C "$squashremote" branch -D squash-feature
+git -C "$agcrepo" fetch -q --prune origin
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git fetch --prune origin\"}}" "baseline call recording squash-feature's upstream now gone after the PR's remote branch is deleted (#356 setup)"
+git -C "$agcrepo" branch -D squash-feature
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D squash-feature\"}}" "deleting a branch after routine post-squash-merge cleanup (upstream already gone) is not flagged as discarded (#356)"
+rm -rf "$squashremote"
+
 rm -rf "$agcrepo"
+
+# #338: state must be keyed by session_id + repo root, not repo root alone — a concurrent
+# session's own baseline-recording call must never clobber another session's baseline for the
+# same checkout.
+agcrepo2="$(mktemp -d)"
+git -C "$agcrepo2" init -q -b main
+git -C "$agcrepo2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+git -C "$agcrepo2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2
+assert_exit 0 "$AGC" "{\"session_id\":\"sessA\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session A's first call records its own baseline at c2 (#338 setup)"
+git -C "$agcrepo2" reset -q --hard HEAD~1
+assert_exit 0 "$AGC" "{\"session_id\":\"sessB\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session B's own first call for the same repo records its own baseline, without touching session A's (#338 setup)"
+assert_exit 2 "$AGC" "{\"session_id\":\"sessA\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session A's baseline (c2) survives session B's intervening first call — the discarded c2 commit is still flagged against A's own history (#338)"
+rm -rf "$agcrepo2"
 
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
 PTB="$HOOKS/pretooluse-bash.py"

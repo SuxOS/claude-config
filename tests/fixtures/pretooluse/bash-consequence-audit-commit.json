@@ -1,0 +1,16 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "/home/user/.claude/projects/example-project/00000000-0000-0000-0000-000000000000.jsonl",
+  "cwd": "__CONSEQUENCE_AUDIT_REPO__",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git commit --allow-empty -m third"
+  },
+  "tool_response": {
+    "stdout": "[main 0000000] third\n",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false
+  }
+}
