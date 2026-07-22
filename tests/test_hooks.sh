@@ -198,6 +198,68 @@ bash_verify_transcript="$(build_transcript_records '[
 assert_exit 0 "$VCC" "{\"transcript_path\":\"$bash_verify_transcript\"}" "does not block a completion claim after an actual Bash tool_use ran npm test (#83)"
 rm -f "$bash_verify_transcript"
 
+# #333: VERIFY_CMD must match the tokenized command WORD, not substring-search the whole Bash
+# command string — a quoted commit message that happens to contain "node"/"test" must not be
+# credited as a real `node ... test` invocation.
+quoted_commit_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Bash", "input": {"command": "git commit -am \"fix node parsing edge case; closes flaky test issue\""}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "[main abc1234] fix node parsing edge case; closes flaky test issue"}
+  ]}},
+  {"message": {"role": "assistant", "content": "Fixed, all done."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$quoted_commit_transcript\"}" "blocks a completion claim where 'node'/'test' only appear inside a quoted commit message, not a real verify command (#333)"
+rm -f "$quoted_commit_transcript"
+
+# #362: verification_ran() must check the matched command's own tool_result outcome, not just
+# that a verify-shaped command was invoked — a FAILED pytest run must not count as verification.
+failed_test_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "pytest"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "3 failed, 12 passed"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, tests passing."}}
+]')"
+assert_exit 2 "$VCC" "{\"transcript_path\":\"$failed_test_transcript\"}" "blocks a completion claim backed by a pytest run that actually FAILED (#362)"
+rm -f "$failed_test_transcript"
+
+passing_test_transcript="$(build_transcript_records '[
+  {"message": {"role": "user", "content": "please fix the bug"}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "name": "Edit", "input": {"file_path": "foo.py"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}
+  ]}},
+  {"message": {"role": "assistant", "content": [
+    {"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "pytest"}}
+  ]}},
+  {"message": {"role": "user", "content": [
+    {"type": "tool_result", "tool_use_id": "t2", "content": "0 failed, 12 passed"}
+  ]}},
+  {"message": {"role": "assistant", "content": "All done, tests passing."}}
+]')"
+assert_exit 0 "$VCC" "{\"transcript_path\":\"$passing_test_transcript\"}" "does not block a completion claim backed by a pytest run that actually passed (#362)"
+rm -f "$passing_test_transcript"
+
 # #329: `bash -n` only parses a script for syntax errors, it never executes any logic — it must
 # not count as verification evidence for a completion claim.
 bash_n_transcript="$(build_transcript_records '[
@@ -1031,6 +1093,112 @@ assert_exit 0 "$BDG" "{\"tool_name\":\"Bash\",\"cwd\":\"$dgrepo\",\"tool_input\"
 
 rm -rf "$dgrepo" "$dgremote"
 
+echo "== block-destructive-fs.py (#345) =="
+BDF="$HOOKS/block-destructive-fs.py"
+# NOTE: fixtures live under $REPO_DIR, not `mktemp -d` — the rail itself treats anything under a
+# scratch root (tempfile.gettempdir(), /tmp, ...) as always-safe-to-delete, so a "should block"
+# fixture placed under /tmp (as most of this file's git fixtures are) would false-negative here.
+dfsroot="$REPO_DIR/.dfs-test-scratch-$$"
+mkdir -p "$dfsroot"
+
+# rm -rf: existence / emptiness / scope gating
+mkdir -p "$dfsroot/nonempty"
+echo x > "$dfsroot/nonempty/f.txt"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf nonempty\"}}"                 "blocks rm -rf on a non-empty directory with no safety signal (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -fr nonempty\"}}"                 "recognizes the reordered -fr bundled form (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm --recursive --force nonempty\"}}" "recognizes the long-flag form (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf does-not-exist\"}}"           "allows rm -rf on a target that doesn't exist — nothing to lose (#345)"
+mkdir -p "$dfsroot/empty"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf empty\"}}"                    "allows rm -rf on an already-empty directory (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -r nonempty\"}}"                  "allows rm -r with no force flag — out of scope (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -f nonempty/f.txt\"}}"            "allows rm -f with no recursive flag — out of scope (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"rm -rf nonempty\"}}"                                      "allows rm -rf with no cwd to resolve the relative target against — fail open (#345)"
+
+# scratch roots (/tmp) — routine cleanup, never blocked regardless of contents
+tmptarget="$(mktemp -d)"
+echo x > "$tmptarget/f.txt"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf $tmptarget\"}}"               "allows rm -rf on a non-empty path under a scratch root (#345)"
+rm -rf "$tmptarget"
+
+# gitignored build-artifact cleanup (node_modules/dist/.venv) must not be blocked
+dfsrepo="$REPO_DIR/.dfs-test-scratch-repo-$$"
+mkdir -p "$dfsrepo"
+git -C "$dfsrepo" init -q -b main
+echo "node_modules/" > "$dfsrepo/.gitignore"
+git -C "$dfsrepo" add .gitignore
+git -C "$dfsrepo" -c user.email=t@t -c user.name=t commit -q -m init
+mkdir -p "$dfsrepo/node_modules/pkg"
+echo x > "$dfsrepo/node_modules/pkg/index.js"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf node_modules\"}}"             "allows rm -rf on a gitignored build directory — routine cleanup (#345)"
+mkdir -p "$dfsrepo/tracked"
+echo x > "$dfsrepo/tracked/keep.txt"
+git -C "$dfsrepo" add tracked/keep.txt
+git -C "$dfsrepo" -c user.email=t@t -c user.name=t commit -q -m "add tracked"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf tracked\"}}"                  "blocks rm -rf on a tracked (not gitignored) directory (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf node_modules tracked\"}}"     "blocks when even one of several rm -rf targets isn't provably safe (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"sudo rm -rf tracked\"}}"             "blocks a destructive rm -rf behind a sudo prefix (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf tracked > log.txt 2>&1\"}}"   "blocks rm -rf with a trailing redirect that must not swallow the target (#345)"
+
+# literal-target bypass (security review HIGH, #365): the rail must EXPAND ~/$env/glob targets
+# BEFORE classifying them — a raw, unexpanded form must never be misread as a nonexistent
+# "nothing to lose" path and silently allowed while the shell expands it and deletes real data.
+export DFS_BYPASS_VAR="$dfsrepo/tracked"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf \$DFS_BYPASS_VAR\"}}"        "blocks rm -rf on a \$env-var target that expands to a tracked dir — no unexpanded-form bypass (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf track*\"}}"                  "blocks rm -rf on a glob that expands to a tracked dir (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf \$DFS_UNSET_XYZ/tracked\"}}" "blocks rm -rf on an unresolvable \$env-var target — fail safe toward block (#365)"
+unset DFS_BYPASS_VAR
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf ~\"}}"                       "blocks rm -rf ~ — tilde expands to the real, non-empty home dir (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \$HOME\"}}"                  "blocks rm -rf \$HOME — the exact motivating bypass, env var expands to real home (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf ~nonexistentuser4242/x\"}}"  "blocks rm -rf on an unresolvable ~user target — fail safe toward block (#365)"
+# command-substitution targets (security review HIGH, #365): a `...`/$(...) target is resolved only
+# at shell-run time, so it's never a literal "nothing to lose" path — same unresolvable class as an
+# unset env var, fail-SAFE toward block.
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \\\"\$(cat somefile)\\\"\"}}" "blocks rm -rf on a \$(...) command-substitution target — unresolvable, fail safe (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"rm -rf \`whoami\`\"}}"               "blocks rm -rf on a backtick command-substitution target — unresolvable, fail safe (#365)"
+# brace-expansion targets (security review HIGH, #365): `{a,b}` is bash's FIRST expansion, so a
+# brace-expression target must expand to its real paths BEFORE classification — never be misread
+# as one nonexistent literal `{a,b}` path and silently allowed while the shell deletes both.
+mkdir -p "$dfsrepo/seq1" "$dfsrepo/seq2"
+echo x > "$dfsrepo/seq1/f.txt"
+echo x > "$dfsrepo/seq2/f.txt"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf {node_modules,tracked}\"}}"   "blocks rm -rf on a brace expansion where one expanded dir is real tracked data (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf {track,untrack}ed\"}}"        "blocks rm -rf on a preamble/postscript brace form expanding to a tracked dir (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf seq{1..2}\"}}"                "blocks rm -rf on a {x..y} sequence expansion resolving to real non-empty dirs (#365)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsrepo\",\"tool_input\":{\"command\":\"rm -rf {node_modules,does-not-exist}\"}}" "allows rm -rf on a brace expansion where every expanded path is provably safe (#365)"
+rm -rf "$dfsrepo"
+
+# mv/cp -f overwrite protection
+echo old > "$dfsroot/dest.txt"
+echo new > "$dfsroot/src.txt"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt dest.txt\"}}"             "blocks mv clobbering an existing non-empty destination file (#345)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f src.txt dest.txt\"}}"          "blocks cp -f clobbering an existing non-empty destination file (#345)"
+# literal-destination bypass (security review HIGH, #365): expand the mv/cp destination too
+export DFS_DST_VAR="$dfsroot/dest.txt"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt \$DFS_DST_VAR\"}}"        "blocks mv clobbering a \$env-var destination that expands to an existing non-empty file (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt \$DFS_UNSET_DST_XYZ\"}}"  "blocks mv onto an unresolvable \$env-var destination — fail safe toward block (#365)"
+unset DFS_DST_VAR
+# command-substitution operands (security review HIGH, #365): mv/cp expand EVERY operand (source as
+# well as destination) through the same pass, so a substituted source the shell runs is as
+# unresolvable as a substituted destination — fail-SAFE toward block (a substituted source can even
+# fragment the positional count, e.g. `mv $(echo x) dst`).
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv \$(echo x) /dest\"}}"             "blocks mv whose source is a \$(...) command substitution — unresolvable operand, fail safe (#365)"
+assert_exit 2 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f \`id\` /dest\"}}"              "blocks cp -f whose source is a backtick command substitution — unresolvable operand, fail safe (#365)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp src.txt dest.txt\"}}"             "allows a bare cp with no -f — out of scope (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv -n src.txt dest.txt\"}}"          "allows mv -n (--no-clobber) over an existing destination (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"cp -f -b src.txt dest.txt\"}}"       "allows cp -f -b — a backup of the prior destination is made (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt does-not-exist.txt\"}}"   "allows mv onto a destination that doesn't exist — nothing to lose (#345)"
+rm -f "$dfsroot/dest.txt"
+touch "$dfsroot/dest.txt"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt dest.txt\"}}"             "allows mv onto an existing but EMPTY destination file (#345)"
+mkdir -p "$dfsroot/destdir"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv src.txt destdir\"}}"              "allows mv into an existing directory destination — out of scope (#345)"
+assert_exit 0 "$BDF" "{\"tool_name\":\"Bash\",\"cwd\":\"$dfsroot\",\"tool_input\":{\"command\":\"mv -t destdir src.txt\"}}"           "allows mv -t (--target-directory) form — out of scope (#345)"
+
+assert_exit 0 "$BDF" 'not-json'                                                                                                       "fails open on malformed JSON (#345)"
+assert_exit 0 "$BDF" '{"tool_name":"Agent","tool_input":{"command":"rm -rf /"}}'                                                      "ignores a non-Bash tool_name (#345)"
+
+rm -rf "$dfsroot"
+
 echo "== block-destructive-mcp.py (#260) =="
 BDM="$HOOKS/block-destructive-mcp.py"
 assert_exit 2 "$BDM" '{"tool_name":"mcp__plugin_github_github__merge_pull_request","tool_input":{}}'    "blocks a namespaced GitHub-plugin merge tool (#260)"
@@ -1190,7 +1358,38 @@ assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\
 git -C "$agcrepo" branch -D tag-branch
 assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D tag-branch\"}}" "deleting a branch whose tip is still reachable via a tag is not flagged as discarded (#351)"
 
+# #356: the routine post-squash-merge branch cleanup shape (`git fetch --prune && git branch -D
+# feature`, required since `-d` refuses a squash-merged branch) must not be flagged — the deleted
+# branch's upstream reads "gone" (pruned) BEFORE the branch itself is deleted.
+squashremote="$(mktemp -d)"
+git -C "$squashremote" init -q --bare
+git -C "$agcrepo" remote add origin "$squashremote"
+git -C "$agcrepo" checkout -q -b squash-feature
+git -C "$agcrepo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "squash-feature work"
+git -C "$agcrepo" push -q -u origin squash-feature
+git -C "$agcrepo" checkout -q main
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git checkout main\"}}" "baseline call recording squash-feature with a live upstream (#356 setup)"
+git -C "$squashremote" branch -D squash-feature
+git -C "$agcrepo" fetch -q --prune origin
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git fetch --prune origin\"}}" "baseline call recording squash-feature's upstream now gone after the PR's remote branch is deleted (#356 setup)"
+git -C "$agcrepo" branch -D squash-feature
+assert_exit 0 "$AGC" "{\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo\",\"tool_input\":{\"command\":\"git branch -D squash-feature\"}}" "deleting a branch after routine post-squash-merge cleanup (upstream already gone) is not flagged as discarded (#356)"
+rm -rf "$squashremote"
+
 rm -rf "$agcrepo"
+
+# #338: state must be keyed by session_id + repo root, not repo root alone — a concurrent
+# session's own baseline-recording call must never clobber another session's baseline for the
+# same checkout.
+agcrepo2="$(mktemp -d)"
+git -C "$agcrepo2" init -q -b main
+git -C "$agcrepo2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+git -C "$agcrepo2" -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2
+assert_exit 0 "$AGC" "{\"session_id\":\"sessA\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session A's first call records its own baseline at c2 (#338 setup)"
+git -C "$agcrepo2" reset -q --hard HEAD~1
+assert_exit 0 "$AGC" "{\"session_id\":\"sessB\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session B's own first call for the same repo records its own baseline, without touching session A's (#338 setup)"
+assert_exit 2 "$AGC" "{\"session_id\":\"sessA\",\"tool_name\":\"Bash\",\"cwd\":\"$agcrepo2\",\"tool_input\":{\"command\":\"echo hi\"}}" "session A's baseline (c2) survives session B's intervening first call — the discarded c2 commit is still flagged against A's own history (#338)"
+rm -rf "$agcrepo2"
 
 echo "== pretooluse-bash.py (#163 envelope dispatcher) =="
 PTB="$HOOKS/pretooluse-bash.py"

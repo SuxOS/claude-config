@@ -1,0 +1,48 @@
+name: Protected-path breaker check
+
+# One-off, human-triggered experiment (#353): does Claude Code's built-in protected-path circuit
+# breaker (settings.README.md:25-36) actually fire in a HEADLESS session under bypassPermissions,
+# the way this repo's own issue-build/fixer pipeline runs? That has only ever been confirmed
+# interactively (#342) — never with nobody attached to answer a prompt. See
+# .github/scripts/check-protected-path-breaker.py for the full experiment design: it runs the real
+# `claude` CLI against a fully disposable scratch $HOME + scratch git repo, never this repo or the
+# runner's real ~/.claude, and prints a structured blocked/bypassed/inconclusive result per target.
+#
+# Deliberately `workflow_dispatch` ONLY (not push/pull_request) — this is a standalone experiment
+# to run and read once in a while, not a merge gate, and never folded into the ruleset-required
+# `shellcheck` job (same gate-vs-advisory split CLAUDE.md documents for `skill-evals`, #140). It
+# skips cleanly (exit 0) whenever there's no model access — no `claude` CLI, or no
+# ANTHROPIC_API_KEY secret — so it stays a green no-op until a human runs it deliberately with a
+# secret configured (`gh workflow run protected-path-breaker.yml`).
+#
+# The job intentionally does NOT commit its result back to the repo — a workflow committing to
+# main on its own needs contents:write and a bot identity, more machinery than a one-off manual
+# experiment warrants. Read the run's own logs/job summary for the outcome; copy anything durable
+# worth keeping into docs/protected-path-breaker.md by hand (see that file's own instructions).
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Model to run the experiment against"
+        required: false
+        default: "sonnet"
+
+permissions:
+  contents: read
+
+jobs:
+  protected-path-breaker:
+    name: protected-path-breaker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: run the protected-path breaker experiment (skips cleanly with no model access)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODEL: ${{ inputs.model }}
+        run: |
+          python3 .github/scripts/check-protected-path-breaker.py --model "$MODEL" \
+            | tee "$GITHUB_STEP_SUMMARY"

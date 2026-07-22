@@ -13,7 +13,9 @@
         "suxos-net",
         ".github",
         "nix",
-        "suxdash"
+        "suxdash",
+        "sux-fileops",
+        "dotfiles"
       ],
       "pipeline": {
         "repo": ".github",

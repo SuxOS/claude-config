@@ -77,6 +77,16 @@
   noticed. The hook fails OPEN, normalizes plugin `false`≡absent (Code drops disabled keys on
   rewrite), and points at `install.sh --apply` to reconcile. This drift is live and ongoing — Code
   re-enabled `chrome-devtools-mcp` mid-session in the very session the hook shipped.
+- **A fail-OPEN hook can silently DIE and nobody notices it stopped running.** On 2026-07-22
+  `check-settings-drift.py` was dead for an unknown span: `install.sh` had turned the repo's own
+  `home/.claude/hooks/check-settings-drift.py` into a self-referential symlink (points at itself
+  → ELOOP, "Too many levels of symbolic links"), so every `SessionStart` the hook crashed and
+  fail-open swallowed it — the drift safety net was down while looking wired. Fix was `git
+  checkout -- <file>` (the git index still had the real regular file; only the working tree was
+  the self-symlink). Periodically VERIFY a wired hook actually EXECUTES — `printf '{...}' |
+  python3 <hook>` and check exit 0 + output — never assume configured == running; and after any
+  `install.sh` symlink run, check for self-referential/broken symlinks under `~/.claude` and the
+  repo working tree.
 - **Reach for the specialized skill/MCP/tool by default, every session** — `/brainstorming` and
   `/deep-research` for open-ended design/research, connected MCPs (sux, cloudflare, grafana,
   obsidian, semgrep, typescript-lsp) for their exact job — instead of hand-rolling with grep/prose.
@@ -280,6 +290,15 @@
   When an issue's whole scope is "verify X, close it if stale," close BOTH the stale target and
   the investigation issue directly (`gh issue close`) once confirmed, rather than leaving either
   as a recommendation for a human to act on later.
+- **This builder sandbox has the real `claude` CLI on PATH but none of `ANTHROPIC_API_KEY`/
+  `CLAUDE_CODE_OAUTH_TOKEN`/`ANTHROPIC_AUTH_TOKEN` set** (#353) — this session authenticates some
+  other way. A model-access-gated script that skip-checks those three vars (`run-skill-evals.py`'s
+  `model_access_reason()` and anything modeled on it) will report "no auth token" and skip cleanly
+  even when run live during a builder session, despite that session obviously having real model
+  access. Don't read that skip as "no `claude` CLI available here" — `shutil.which("claude")`
+  alone will say otherwise — and don't try to force such a script to actually call the model from
+  inside a builder session by hunting for a different credential; the skip is the correct,
+  intended behavior for an unconfigured secret, same as it is in CI.
 - **A `WRAPPER_VALUE_OPTS`/`SUDO_VALUE_OPTS` entry assumes the flag's value is an OPAQUE token to
   skip past — verify that against the real tool's docs before adding one** (#227): `env`'s
   `-S`/`--split-string` broke that assumption silently for years of this table's history — its

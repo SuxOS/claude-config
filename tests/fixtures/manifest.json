@@ -16,6 +16,8 @@
     {"hook": "block-destructive-git.py", "stdin": "pretooluse/bash-destructive-force-push-new-branch.json", "cwd_template": "destructive_git_repo", "expect_exit": 0, "desc": "allows a force-push to a brand-new branch with no remote-tracking ref yet, in the real envelope shape (#291)"},
     {"hook": "block-destructive-git.py", "stdin": "pretooluse/bash-destructive-clean-force.json", "cwd_template": "destructive_git_repo", "expect_exit": 2, "desc": "blocks a forced clean that a dry run shows would actually remove files, in the real envelope shape (#291)"},
     {"hook": "block-destructive-git.py", "stdin": "pretooluse/bash-destructive-clean-dry-run.json", "cwd_template": "destructive_git_repo", "expect_exit": 0, "desc": "allows a dry-run clean (-n) even with untracked files present, in the real envelope shape (#291)"},
+    {"hook": "block-destructive-fs.py", "stdin": "pretooluse/bash-destructive-fs-brace-real-dirs.json", "cwd_template": "destructive_fs_repo", "expect_exit": 2, "desc": "blocks rm -rf {realdir1,realdir2} — brace expansion resolves to two real non-empty dirs, never one nonexistent literal (#365)"},
+    {"hook": "block-destructive-fs.py", "stdin": "pretooluse/bash-destructive-fs-brace-safe-dirs.json", "cwd_template": "destructive_fs_repo", "expect_exit": 0, "desc": "allows rm -rf {emptydir1,emptydir2} — every brace-expanded path is provably safe, expansion classifies rather than blanket-blocks (#365)"},
 
     {"hook": "block-sleep-loop.py", "stdin": "pretooluse/bash-sleep-loop.json", "expect_exit": 2, "desc": "blocks a sleep-based polling loop, in the real envelope shape (#191)"},
     {"hook": "block-sleep-loop.py", "stdin": "pretooluse/bash-sleep-loop-benign.json", "expect_exit": 0, "desc": "allows a bare rate-limiting sleep with no loop, in the real envelope shape (#191)"},
@@ -46,6 +48,9 @@
     {"hook": "verify-completion-claim.py", "transcript": "transcripts/edit-claim-verify-slash.jsonl", "expect_exit": 2, "desc": "a bare /verify MENTION in assistant prose (no actual tool call) is not evidence — blocked (#83)"},
     {"hook": "verify-completion-claim.py", "transcript": "transcripts/edit-claim-bet-slash.jsonl", "expect_exit": 2, "desc": "a bare /bet MENTION in assistant prose (no actual tool call) is not evidence — blocked (#83)"},
     {"hook": "verify-completion-claim.py", "transcript": "transcripts/edit-claim-run-slash.jsonl", "expect_exit": 2, "desc": "a bare /run MENTION in assistant prose (no actual tool call) is not evidence — blocked (#83)"},
-    {"hook": "verify-completion-claim.py", "transcript": "transcripts/verify-slash-invocation-only.jsonl", "expect_exit": 0, "desc": "a standalone /verify invocation turn edits no product code — allowed (see #109 in README for the tag-shape caveat)"}
+    {"hook": "verify-completion-claim.py", "transcript": "transcripts/verify-slash-invocation-only.jsonl", "expect_exit": 0, "desc": "a standalone /verify invocation turn edits no product code — allowed (see #109 in README for the tag-shape caveat)"},
+
+    {"hook": "audit-git-consequences.py", "stdin": "pretooluse/bash-consequence-audit-commit.json", "cwd_template": "consequence_audit_repo", "pre_stdin": "pretooluse/bash-consequence-audit-baseline.json", "mutate_git": ["commit", "--allow-empty", "-m", "third"], "expect_exit": 0, "desc": "a fast-forward commit since the previous PostToolUse snapshot is not flagged, in the real envelope shape (#344)"},
+    {"hook": "audit-git-consequences.py", "stdin": "pretooluse/bash-consequence-audit-reset.json", "cwd_template": "consequence_audit_repo", "pre_stdin": "pretooluse/bash-consequence-audit-baseline.json", "mutate_git": ["reset", "--hard", "HEAD~1"], "expect_exit": 2, "desc": "a hard reset that discards a commit unreachable from any other ref is flagged, in the real envelope shape (#344)"}
   ]
 }
