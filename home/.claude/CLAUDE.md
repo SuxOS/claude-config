@@ -57,6 +57,14 @@
   read-only — assigning it silently fails and broke a `gh run` watcher loop TWICE in one
   session). Keep scripts bash/POSIX-portable and pick non-reserved names (`state`, `p`, `args`,
   `rc`) even when the interactive shell is zsh.
+- **zsh `nomatch` is ON by default — an unquoted glob that matches nothing ABORTS the whole
+  command**, not a silent pass-through. `ls *.uc` or `for f in *.ts` with zero matches makes zsh
+  exit with "no matches found" and kill the command; bash (nullglob off) instead passes the
+  literal pattern through unchanged. Same zsh≠bash drift as the reserved-variable-name gotcha
+  above — in any command the Bash tool runs, quote a glob that might not match, or guard it
+  (`setopt nullglob`, or a plain existence check) before looping over it. Keep scripts portable
+  across the three real targets (POSIX sh / bash 5 / TS·Python) rather than leaning on
+  zsh-specific idioms.
 - **A `SessionStart` hook (`check-settings-drift.py`) warns when live `~/.claude/settings.json`
   has drifted from the claude-config repo source** on the safety-critical fields (`permissions.
   deny`, `hooks`, `defaultMode`, `disableClaudeAiConnectors`) plus `enabledPlugins`. settings.json
