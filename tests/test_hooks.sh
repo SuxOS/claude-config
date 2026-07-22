@@ -787,6 +787,29 @@ assert_exit 0 "$BSL" '[1,2,3]'                                                  
 assert_exit 0 "$BSL" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                     "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$BSL" '{"tool_name":"Agent","tool_input":{"command":"while true; do sleep 5; done"}}'                 "ignores a non-Bash tool_name"
 
+echo "== prefer-structured-tools.py =="
+PST="$HOOKS/prefer-structured-tools.py"
+# shellcheck disable=SC2016
+assert_exit 2 "$PST" '{"tool_name":"Bash","tool_input":{"command":"for x in $repos; do echo $x; done"}}'              "blocks for-loop over an unquoted parameter expansion (zsh word-split footgun)"
+# shellcheck disable=SC2016
+assert_exit 2 "$PST" '{"tool_name":"Bash","tool_input":{"command":"for x in ${repos}; do echo $x; done"}}'            "blocks the braced form of the same unquoted expansion"
+# shellcheck disable=SC2016
+assert_exit 2 "$PST" '{"tool_name":"Bash","tool_input":{"command":"set -- $x; repo=$1; num=$2"}}'                     "blocks set -- over an unquoted parameter expansion (this session's live incident)"
+# shellcheck disable=SC2016
+assert_exit 0 "$PST" '{"tool_name":"Bash","tool_input":{"command":"for x in \"$repos\"; do echo \"$x\"; done"}}'      "allows a for-loop whose expansion IS double-quoted"
+# shellcheck disable=SC2016
+assert_exit 0 "$PST" '{"tool_name":"Bash","tool_input":{"command":"set -- \"$x\""}}'                                  "allows set -- over a double-quoted expansion"
+assert_exit 0 "$PST" '{"tool_name":"Bash","tool_input":{"command":"for r in sux suxlib suxrouter; do gh workflow enable CI --repo SuxOS/$r; done"}}' "allows a for-loop over a literal list with no aggregator (not the flagged shape)"
+assert_exit 2 "$PST" '{"tool_name":"Bash","tool_input":{"command":"for r in sux suxlib; do gh issue list --repo SuxOS/$r --json number | jq length; done"}}' "blocks a for-loop aggregating via jq across items"
+assert_exit 2 "$PST" '{"tool_name":"Bash","tool_input":{"command":"while read -r line; do echo \"$line\" | awk '"'"'{print $1}'"'"'; done < file.txt"}}' "blocks a while-loop aggregating via awk"
+assert_exit 0 "$PST" '{"tool_name":"Bash","tool_input":{"command":"gh pr view 1 --json title | jq .title"}}'          "allows a single one-shot jq filter with no loop keyword"
+assert_exit 0 "$PST" '{"tool_name":"Bash","tool_input":{"command":"for f in *.sh; do shellcheck \"$f\"; done"}}'      "allows an ordinary loop with no jq/awk aggregator"
+assert_exit 0 "$PST" 'not-json'                                                                                       "fails open on malformed JSON"
+assert_exit 0 "$PST" '[1,2,3]'                                                                                        "fails open on valid-but-non-object top-level JSON"
+assert_exit 0 "$PST" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                      "fails open on non-object tool_input"
+# shellcheck disable=SC2016
+assert_exit 0 "$PST" '{"tool_name":"Agent","tool_input":{"command":"for x in $repos; do echo $x; done"}}'             "ignores a non-Bash tool_name"
+
 echo "== block-suppressed-stderr.py =="
 BSS="$HOOKS/block-suppressed-stderr.py"
 assert_exit 2 "$BSS" '{"tool_name":"Bash","tool_input":{"command":"curl http://x 2>/dev/null"}}'                     "blocks stderr redirected to /dev/null (#181)"
