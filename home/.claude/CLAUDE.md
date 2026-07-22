@@ -73,6 +73,11 @@
   zsh-specific idioms.
   Same family: an unquoted word starting with `=` (`echo ===`) triggers zsh's `=cmd` filename
   expansion and errors — quote it in any Bash-tool command.
+- **Bash-tool cwd can reset to the session's primary working dir between calls** when working
+  in a repo outside it (observed: every call in a SuxOS-session editing ~/Code/colinxs/vault),
+  despite the tool doc claiming persistence. Prefix every command in an outside repo with an
+  explicit `cd <repo> &&` — never rely on a prior call's cd; most git/grep commands still
+  "succeed" in the wrong repo, so the failure is silent.
 - **A `SessionStart` hook (`check-settings-drift.py`) warns when live `~/.claude/settings.json`
   has drifted from the claude-config repo source** on the safety-critical fields (`permissions.
   deny`, `hooks`, `defaultMode`, `disableClaudeAiConnectors`) plus `enabledPlugins`. settings.json
