@@ -15,3 +15,16 @@ home/.claude/skills/*-workspace/
 # .git/info/exclude is per-clone and doesn't travel with the repo, so exclude it
 # here too — otherwise a stray `git add -A` on a fresh clone commits the nested repo.
 /.claude/worktrees/
+
+# Cloudflare-plugin skills materialized into ~/.claude/skills (not repo-authored)
+home/.claude/skills/agents-sdk/
+home/.claude/skills/cloudflare/
+home/.claude/skills/cloudflare-email-service/
+home/.claude/skills/cloudflare-one/
+home/.claude/skills/cloudflare-one-migrations/
+home/.claude/skills/durable-objects/
+home/.claude/skills/sandbox-sdk/
+home/.claude/skills/turnstile-spin/
+home/.claude/skills/web-perf/
+home/.claude/skills/workers-best-practices/
+home/.claude/skills/wrangler/
