@@ -281,13 +281,53 @@ def strip_prefixes(argv):
     return argv[i:]
 
 
+def _iter_logical_lines(command):
+    """Split `command` on newlines that fall OUTSIDE an open quote span (#331).
+
+    A double- or single-quoted argument can legitimately span multiple lines (a multi-line
+    `git commit -m "..."` message). Splitting on every raw `\\n` before any quote-tracking happens
+    tears such an argument across several independent lines, each of which then looks
+    quote-unbalanced to `_split_pieces()`'s per-line `shlex` pass and falls back to the
+    quote-blind `SPLIT_RE` regex splitter — so text INSIDE the quoted string gets read as real
+    shell syntax (a `while true; do sleep 5; done` sitting in a commit message body reads as an
+    actual polling loop to block-sleep-loop.py). Tracking quote state across the whole command
+    first, and only splitting where a newline falls between quotes, keeps a multi-line quoted
+    argument intact as one logical line for a single `shlex` pass. Backslash escapes the next
+    character (POSIX shell's own rule) so an escaped quote can't prematurely close a span."""
+    start = 0
+    quote = None  # None | "'" | '"'
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            i += 2
+            continue
+        if quote is None and c in ("'", '"'):
+            quote = c
+            i += 1
+            continue
+        if quote is not None and c == quote:
+            quote = None
+            i += 1
+            continue
+        if quote is None and c == "\n":
+            yield command[start:i]
+            start = i + 1
+            i += 1
+            continue
+        i += 1
+    yield command[start:]
+
+
 def _split_pieces(command):
     """Yield the argv list of each simple command, respecting shell quoting where possible.
 
     Splits on control operators (`&&`, `||`, `;`, `|`, `&`) but only outside quotes, so a `;`
-    inside a `-c "..."` payload is preserved. Newlines separate commands, so split on them first.
-    On a line shlex can't tokenize (unbalanced quotes), fall back to a raw regex split so we still
-    scan something rather than crash. This is the base tokenizer `pieces()` wraps with
+    inside a `-c "..."` payload is preserved. Newlines separate commands, so split on them first —
+    via `_iter_logical_lines()`, which tracks quote state across the WHOLE command first so a
+    quoted argument that spans multiple lines isn't torn apart before its quoting is even seen
+    (#331). On a line shlex can't tokenize (unbalanced quotes), fall back to a raw regex split so
+    we still scan something rather than crash. This is the base tokenizer `pieces()` wraps with
     substitution-recursion below; nothing outside this module should call it directly.
 
     A bare `(`/`)` subshell-grouping token — `PUNCT` includes them so shlex splits them out even
@@ -307,7 +347,7 @@ def _split_pieces(command):
     same "shared helper, not baked into the base tokenizer" shape as `strip_prefixes()`, since
     different rails read this argv for different things.
     """
-    for line in command.split("\n"):
+    for line in _iter_logical_lines(command):
         if not line.strip():
             continue
         try:

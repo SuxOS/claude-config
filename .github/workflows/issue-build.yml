@@ -2,8 +2,8 @@ name: Issue build
 
 # Collate + build stage: clusters queued-for-build issues (n issues -> m PRs, never n->1;
 # confidence-pure), fans out one build session + PR per cluster. confidence:high clusters get
-# `automerge`, the rest `needs-review`. Fires when queued-for-build is applied (by the
-# reusable's own logic or a human); workflow_dispatch drains the queue on demand. Runs on
+# `automerge`, the rest `needs-review`. Fires when the reusable fixer labels an issue
+# bug/enhancement/documentation; workflow_dispatch drains the queue on demand. Runs on
 # the Claude Pro/Max subscription (CLAUDE_CODE_OAUTH_TOKEN). PRs flow into the existing
 # automerge/merge-queue.
 # Reusable workflow: SuxOS/.github/.github/workflows/issue-build.yml
@@ -17,7 +17,7 @@ on:
 
 jobs:
   issue-build:
-    if: github.event_name != 'issues' || github.event.label.name == 'queued-for-build'
+    if: github.event_name != 'issues' || contains(fromJSON('["bug","enhancement","documentation"]'), github.event.label.name)
     # Grant exactly what issue-build.yml needs (default token is read-only → reusable would startup-fail).
     permissions:
       contents: write

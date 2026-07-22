@@ -24,4 +24,5 @@ jobs:
     uses: SuxOS/.github/.github/workflows/fixer.yml@main
     with:
       scope: deep
+      max-turns: 40
     secrets: inherit

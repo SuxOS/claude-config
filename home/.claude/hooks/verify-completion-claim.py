@@ -29,10 +29,19 @@ from _hookutil import load_hook_input
 SHADOW_LOG_DEFAULT = os.path.expanduser("~/.claude/verify-completion-claim.log")
 
 CLAIM = re.compile(
-    r"\b(all set|done|fixed|resolved|passing|tests? pass|all green|shipped|merged|complete[d]?|"
-    r"works now|working now|verified)\b",
+    r"\b(all set|done|fixed|resolved|passing|passed|tests? pass|all green|shipped|merged|"
+    r"complete[d]?|works now|working now|verified)\b",
     re.I,
 )
+# A negation word/contraction within a few tokens BEFORE a CLAIM hit means the claim is being
+# denied, not made ("Not done yet", "isn't fixed") — a bare word-presence regex like CLAIM has no
+# way to see that on its own (#332).
+NEGATION_RE = re.compile(
+    r"\b(?:not|never|no longer|isn't|wasn't|aren't|weren't|doesn't|didn't|won't|wouldn't|"
+    r"couldn't|shouldn't|can't|cannot|hasn't|haven't|hadn't)\b",
+    re.I,
+)
+NEGATION_WINDOW_WORDS = 6
 # A verification actually happened if this turn's records show one of these being RUN — a
 # Bash tool_use whose command matches, a SlashCommand tool_use invoking /verify|/bet|/run, or a
 # Skill tool_use naming one of them. Checked against the tool_use blocks themselves (see
@@ -132,11 +141,27 @@ def edited_file_paths(records):
                 yield path
 
 
+def _negated(text, match_start):
+    """True if a negation word (not/isn't/wasn't/doesn't/...) appears within
+    NEGATION_WINDOW_WORDS words immediately before `match_start` — 'Not done yet' or 'isn't
+    fixed' deny completion rather than claim it, even though the bare trigger word (done/fixed)
+    is still there for CLAIM's word-presence match to find (#332)."""
+    before_words = text[:match_start].split()
+    tail = " ".join(before_words[-NEGATION_WINDOW_WORDS:])
+    return bool(NEGATION_RE.search(tail))
+
+
+def has_unnegated_claim(text):
+    """True if CLAIM matches somewhere in `text` that isn't immediately preceded by a negation
+    (#332) — a message can contain a trigger word while explicitly denying completion."""
+    return any(not _negated(text, m.start()) for m in CLAIM.finditer(text))
+
+
 def evaluate(records, edited_code, final_text):
     """Return (would_fire, reason) for the completion-claim predicate over this turn."""
     if not edited_code:
         return False, "no product-code edit this turn"
-    if not CLAIM.search(final_text):
+    if not has_unnegated_claim(final_text):
         return False, "no completion claim in the final assistant message"
     if verification_ran(records):
         return False, "a verification command ran this turn"

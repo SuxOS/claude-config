@@ -41,6 +41,7 @@ Fail-open on any error, and on anything this can't confidently parse (a malforme
 wedge the session (repo convention). Exit 2 = block; exit 0 = allow.
 """
 import ipaddress
+import socket
 import sys
 from urllib.parse import urlparse
 
@@ -54,6 +55,31 @@ ALLOWED_SCHEMES = {"http", "https"}
 METADATA_HOSTNAMES = {"metadata.google.internal", "metadata.goog"}
 
 
+def _parse_ip_literal(host):
+    """Return `host` parsed as an IP address literal, trying every encoding a spec-compliant URL
+    host parser accepts, or None if none of them do.
+
+    `ipaddress.ip_address()` only accepts strict dotted-decimal/colon-hex forms — it rejects (and
+    so this hook would otherwise wave through as "not an IP") alternate IPv4 encodings the WHATWG
+    URL Standard (implemented by browsers and Node's `URL`/`fetch`) normalizes to canonical
+    dotted-decimal during host parsing: a bare 32-bit decimal or hex integer with no dots at all
+    (`2130706433`, `0x7f000001`, both == 127.0.0.1) and octal-per-octet dotted forms
+    (`0177.0.0.1`). This is a well-known SSRF-filter-bypass class (#398) — a fetch implementation
+    that resolves these the WHATWG way would actually connect to the literal address even though a
+    strict-only check sees an unparseable string and treats it as an ordinary DNS name.
+    `socket.inet_aton()` implements exactly this legacy BSD numbers-and-shorthand grammar (decimal/
+    octal/hex parts, 1-4 dot-separated parts), so it's tried as a fallback once strict parsing
+    fails, rather than hand-rolling the same decode."""
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
 def _disallowed_host_reason(host):
     """Return a human reason `host` is a disallowed literal target, or None (including for an
     ordinary DNS name — this hook does no resolution, see module docstring)."""
@@ -62,9 +88,8 @@ def _disallowed_host_reason(host):
     host = host.strip().lower()
     if host in METADATA_HOSTNAMES:
         return f"a known cloud-metadata hostname (`{host}`)"
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
+    ip = _parse_ip_literal(host)
+    if ip is None:
         return None  # not an IP literal — an ordinary DNS name, nothing more to check offline
     if ip.is_loopback or ip.is_link_local or ip.is_private or ip.is_reserved or ip.is_unspecified:
         return f"a loopback/link-local/private/reserved IP literal (`{host}`)"
