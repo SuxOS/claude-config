@@ -231,6 +231,8 @@ Pipe synthetic hook-input JSON to the script and check the exit code (2 = block,
 This recipe is now automated: `tests/test_hooks.sh` (run in CI inside the required `shellcheck` job) byte-compiles
 every hook and asserts each one's exit-code contract — block, fork/model exemptions, malformed-JSON
 fail-open. Add a case there when you add or change a hook so the contract stays enforced, not just prose.
+Run it with a modern bash, not macOS's system one — the script uses `mapfile` (bash 4+), which macOS's
+frozen bash 3.2 doesn't have: `/opt/homebrew/bin/bash tests/test_hooks.sh`, not a bare `bash tests/test_hooks.sh`.
 
 The synthetic JSON above is hand-authored, so it shares whatever shape the author guessed — the exact
 trap behind the recurring parse-shape bugs (#62/#80/#105/#108/#111/#112). Layer 3 of the same script
