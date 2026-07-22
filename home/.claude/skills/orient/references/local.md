@@ -24,6 +24,8 @@ Coverage gap — local vs org (per in-scope org):
 ```
 gh repo list <org> --limit 1000 --json name -q '.[].name'    # compare to the local clone dirs
 ```
+Compare with `ls -A` (or glob dotdirs explicitly) — a dot-named repo clone (`.github`) is
+invisible to plain `ls` and reads as a false coverage gap.
 
 ## Filter to signal — what earns a line
 
