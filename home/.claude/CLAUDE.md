@@ -69,6 +69,8 @@
   (`setopt nullglob`, or a plain existence check) before looping over it. Keep scripts portable
   across the three real targets (POSIX sh / bash 5 / TS·Python) rather than leaning on
   zsh-specific idioms.
+  Same family: an unquoted word starting with `=` (`echo ===`) triggers zsh's `=cmd` filename
+  expansion and errors — quote it in any Bash-tool command.
 - **A `SessionStart` hook (`check-settings-drift.py`) warns when live `~/.claude/settings.json`
   has drifted from the claude-config repo source** on the safety-critical fields (`permissions.
   deny`, `hooks`, `defaultMode`, `disableClaudeAiConnectors`) plus `enabledPlugins`. settings.json
@@ -115,6 +117,9 @@
   constrain Bash arguments, and a plugin MCP deny must be `mcp__plugin_<plugin>_<server>__<tool>`
   or it silently fails open with no warning. Verify the matcher against the live tool surface
   before scoping any rule in `settings.json` (see `home/.claude/settings.README.md`).
+  PreToolUse hooks evaluate BEFORE permissions.deny, so a hook exit-2 masks whether a deny rule
+  would also have fired — test each layer via stdin (`printf '{...}' | python3 <hook>`), never by
+  observing which one blocked a live call.
 - **A `hooks.PreToolUse` `matcher` string is a THIRD, separate gotcha from the two above** (#260,
   verified live against the Claude Code hooks docs): it's an unanchored regex whenever it contains
   any character outside `[A-Za-z0-9_\- ,|]`, but plain `mcp__<server>` (no regex metacharacter)
@@ -308,6 +313,9 @@
   tool's docs describe the value as a plain argument or as something that gets re-interpreted
   (split, expanded, re-exec'd) — the latter needs a splice-and-reprocess handler like
   `_hookutil._env_split_string()`, not a skip.
+  Re-hit in claude-config#427: ssh's `-o` value looked opaque but `ProxyJump=`/`ProxyCommand=`/
+  `LocalCommand=` values reroute the transport or run a command — a private-destination check
+  that skips `-o` blind validates the wrong host.
 - **Changing a rail's internal helper SIGNATURE (not just its `check()` contract) can silently
   break `tests/fuzz_argv_canon.py`** (#241): that fuzzer calls some rail internals directly
   (`BLOCK_CHECKOUT.checkout_target(...)`) rather than only through the hook's stdin JSON contract
