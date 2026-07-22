@@ -1,0 +1,19 @@
+name: PR auto-update
+
+# Keeps open PR branches from going stale/CONFLICTING as parallel PRs land on main —
+# auto-updates each armed-but-BEHIND PR's branch against main so the queue self-drains
+# instead of requiring a manual "Update branch" every time an earlier PR merges.
+# Reusable workflow: SuxOS/.github/.github/workflows/pr-auto-update.yml
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pr-auto-update:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: SuxOS/.github/.github/workflows/pr-auto-update.yml@main
+    secrets: inherit
