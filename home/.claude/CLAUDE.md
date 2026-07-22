@@ -134,6 +134,13 @@
   2026-07-23 despite the above being written: it does NOT split into positional params, so `$2`
   was empty and four `gh pr view` calls died on "could not determine current branch". Whenever a
   value must become multiple words in zsh, route it through `$(...)`.
+- **A literal single quote inside a single-quoted bash string needs the close-escape-reopen
+  trick (`'"'"'`), not a backslash escape** — `\'`/`\x27`/etc. are not interpreted inside single
+  quotes at all (single quotes preserve everything literally); they pass through as literal
+  backslash-plus-characters instead of a quote, which silently breaks embedded JSON/awk/jq
+  payloads (cost one failed test run authoring a `test_hooks.sh` case with an embedded awk
+  script). `printf '%s'` with a heredoc, or restructuring to avoid the inner quote, are both
+  cleaner than the trick when the string is more than a one-off.
 - **Bash-tool cwd can reset to the session's primary working dir between calls** when working
   in a repo outside it (observed: every call in a SuxOS-session editing ~/Code/colinxs/vault),
   despite the tool doc claiming persistence. Prefix every command in an outside repo with an
@@ -163,6 +170,11 @@
     unrepresentable), **stdlib-only Python** for standalone repo scripts (precedent `vault-lint.py`,
     no build), **Go static musl** only when a binary must ship to the box, **Rust** only where its
     guarantees are the point.
+- **`gh ... list --limit N` caps silently, no error, no warning.** A result count landing
+  exactly on N is not proof N is the true count — it's the signature of truncation (hit live:
+  `--limit 300` on a busy repo's issue history returned exactly 300; the true count was 492).
+  Always pass a generous `--limit` (1000+) for anything that isn't obviously small, and treat an
+  exact-N result as unverified until re-run higher.
 - **A `SessionStart` hook (`check-settings-drift.py`) warns when live `~/.claude/settings.json`
   has drifted from the claude-config repo source** on the safety-critical fields (`permissions.
   deny`, `hooks`, `defaultMode`, `disableClaudeAiConnectors`) plus `enabledPlugins`. settings.json
