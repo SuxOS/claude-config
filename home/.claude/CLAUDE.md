@@ -252,7 +252,11 @@
 - **`install.sh` symlinks every entry under `home/.claude/` into `~/.claude/`** (except
   `settings.json`, which is copied because Claude Code rewrites it in place), so repo-/CI-only
   tooling must NOT live there or it lands in the user's live config — put linters, CI scripts,
-  etc. under `.github/` instead. Adding a new
+  etc. under `.github/` instead. Editing any symlinked file directly by its `~/.claude/` path
+  fails outright — the `Edit` tool refuses to write through a symlink. `readlink -f
+  ~/.claude/<file>` first to get the real path under `~/Code/SuxOS/claude-config/home/.claude/`,
+  then edit/commit/PR there like any other repo change (worktree + branch, not a direct edit on
+  the primary checkout's `main`). Adding a new
   required CI check also needs the main-branch ruleset AND `automerge.yml` `required-gates` updated
   in lockstep, or the automerge reusable refuses to arm (it verifies the ruleset first). Because of
   that, the config-integrity linters (settings/hooks/json/evals) run as STEPS INSIDE the one
