@@ -9,6 +9,7 @@
         "suxlib",
         "suxrouter",
         "claude-config",
+        "vault",
         "suxvault",
         "suxos-net",
         ".github",
