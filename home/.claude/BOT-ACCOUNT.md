@@ -31,9 +31,12 @@ dir again — that dual-account clobber is what wiped the live safety layer (see
 `install.sh` ships both identities from one source tree:
 
 - `home/.claude/settings.json` — **human** (m@): full interactive plugin set, notifications, theme.
-- `home/.claude/settings.bot.json` — **bot** (claude@): **identical `permissions.deny` (62 rules)
-  and the same PreToolUse/PostToolUse hook rails** ("guards-in-both" — the rails protect the
-  autonomous agent under `bypassPermissions` regardless of identity), but a lean headless plugin
+- `home/.claude/settings.bot.json` — **bot** (claude@): **the same PreToolUse/PostToolUse hook
+  rails** as the human config ("guards-in-both" — the rails protect the autonomous agent under
+  `bypassPermissions` regardless of identity). The `permissions.deny` list itself is being emptied
+  per the 2026-07-22 owner decision (see [`docs/security-model.md`](../../docs/security-model.md))
+  — the old "identical `permissions.deny`" exact-parity claim no longer holds; tracked by #440.
+  Otherwise a lean headless plugin
   set (sux, superpowers, security-guidance, semgrep, commit-commands, claude-md-management,
   code-review, typescript-lsp, cloudflare, grafana), connectors off, and no notification/theme
   keys (nobody watches a bot's screen). Both reference the shared `$HOME/.claude/hooks` copies.
