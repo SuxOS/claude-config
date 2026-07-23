@@ -16,8 +16,8 @@
         "nix",
         "metal",
         "suxdash",
-        "sux-fileops",
-        "dotfiles"
+        "dotfiles",
+        "metal"
       ],
       "pipeline": {
         "repo": ".github",
