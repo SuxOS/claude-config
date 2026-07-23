@@ -41,6 +41,9 @@
 ## Dev-speed tactics (not rules — the concrete moves that make the above fast)
 - Batch independent tool calls into one message; never poll in a loop — block on one
   `--watch`/`wait` call instead.
+- **Every Agent delegation must set an explicit `model=`** — the `require-delegation-model.py`
+  PreToolUse hook rejects inherit-the-model calls (Cardinal #1 enforced mechanically; fork is
+  exempt). Pick the tier per task at call-time, don't discover the hook by bouncing off it.
 - Isolate parallel git mutators in detached scratch worktrees + explicit refspec pushes —
   and a push creating a NEW remote branch from a detached worktree needs the fully qualified
   `HEAD:refs/heads/<br>` (short `HEAD:<br>` errors with "not a full refname" unless the branch
