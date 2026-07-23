@@ -49,6 +49,12 @@
   worktree` error, exit 128, not the silent no-op earlier notes here claimed; the rule to avoid it
   stands regardless, since hitting that fatal error mid-sequence still wastes a turn re-diagnosing
   and re-planning around it.)
+- **Under a squash-merge pipeline `merge-base --is-ancestor` cannot answer "did this branch
+  land"** — squashed tips are never ancestors of main, so every landed branch reads UNMERGED.
+  The real predicates: PR state by head branch (`gh pr list --head <br> --state all`), and for an
+  uncommitted file, blob-hash membership in main's history
+  (`git log origin/main --find-object=$(git hash-object <file>)`) — this pair safely cleared a
+  21-worktree sweep (2026-07-22) that ancestry checks would have stalled or deleted blind.
 - Don't suppress a command's stderr if you might need it to diagnose — `2>/dev/null` on a
   step you'll have to re-debug just moves the cost, it doesn't remove it.
 - Verify shell/OS assumptions before looping a command across N items (zsh glob rules ≠
@@ -73,6 +79,13 @@
   zsh-specific idioms.
   Same family: an unquoted word starting with `=` (`echo ===`) triggers zsh's `=cmd` filename
   expansion and errors — quote it in any Bash-tool command.
+- **zsh does NOT word-split an unquoted parameter expansion** — `for x in ${csv//,/ }` loops
+  ONCE with the whole string where bash splits it (live hit: 9/12 `gh issue create` calls got one
+  bogus multi-word `--label` and died). Split via command substitution
+  (`for x in $(printf '%s' "$csv" | tr ',' ' ')`) — zsh does split those. The same incident's twin
+  trap: `|| fallback` chained off a pipeline ending in `| tail -1` never fires — the pipeline's
+  exit status is tail's 0, not the failing command's; test the real command's exit before piping
+  its output.
 - **Bash-tool cwd can reset to the session's primary working dir between calls** when working
   in a repo outside it (observed: every call in a SuxOS-session editing ~/Code/colinxs/vault),
   despite the tool doc claiming persistence. Prefix every command in an outside repo with an
@@ -108,7 +121,9 @@
   and errors (2026-07-22: a false "landscape COMPLETED" from file timestamps propagated into the v3
   handoff and broke the next session, which caught it by reading `journal.jsonl` per Cardinal #3).
   Recover an aborted fan-out from the per-item agent returns (journal.jsonl) or re-run only the
-  synthesis phase — don't re-run the whole thing.
+  synthesis phase — don't re-run the whole thing. A `gh --watch` exiting is not settledness
+  either — watchers die mid-flight on transient GitHub 504s with exit 0; re-read the watched
+  state after ANY watcher exit.
 - **Prefer deferring heavy/async work to the cloud pipeline or the `claude@` bot to keep the
   interactive (m@) quota free** — file issues for the build loop (`dispatch`) or hand sustained
   drudge to bot-owned cloud routines, rather than burning the foreground session on long autonomous
