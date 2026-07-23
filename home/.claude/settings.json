@@ -95,9 +95,9 @@
   "autoMode": {
     "allow": [
       "$defaults",
-      "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, python3, node, grep/find/sed/awk/cat/ls), including setting non-secret configuration — except the network-egress and destructive/write subcommands (curl/wget/scp/tar, gh api writes / gh secret / gh auth / gh repo delete·edit·transfer, wrangler deploy/secret/delete) that were formerly denied by name in permissions.deny — owner decision 2026-07-22 emptied that deny list entirely (the same order that removed Bash(ssh *) and left block-egress.py unregistered from pretooluse-bash.py: false-positive friction on routine interactive work outweighed the speed-bump value), so those subcommands are now UNENFORCED at the permissions layer; to restore, re-add deny rules here and re-arm block-egress.py via _RAIL_MODULES",
-      "Read- and list-shaped MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian); destructive Cloudflare MCP tools (create/update/edit/delete for d1, kv, r2, hyperdrive) and destructive GitHub MCP tools (merge_pull_request, delete_file, delete_project_item, push_files) are Tier A — their exact-name permissions.deny entries were removed with the rest of the deny list (owner decision 2026-07-22), so block-destructive-mcp.py's verb-pattern rail (#260), which covers these unconditionally, is now the ONLY gate (was belt-and-suspenders; note Claude Code's deny matches exact names, not patterns, if entries are ever restored)",
-      "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and inspecting Cloudflare Worker state via read-only wrangler subcommands (tail, deployments list, kv key get) — deploy, secret, and delete subcommands are Tier A and require human hands (formerly deny-listed; deny emptied 2026-07-22 — the PreToolUse hook rails are the remaining automated guard)"
+      "Any read-only or standard developer shell command (git, gh, npm/npx including wrangler, python3, node, grep/find/sed/awk/cat/ls), including setting non-secret configuration \u2014 except the network-egress and destructive/write subcommands (curl/wget/scp/tar, gh api writes / gh secret / gh auth / gh repo delete\u00b7edit\u00b7transfer, wrangler deploy/secret/delete) that were formerly denied by name in permissions.deny \u2014 owner decision 2026-07-22 emptied that deny list entirely (the same order that removed Bash(ssh *) and left block-egress.py unregistered from pretooluse-bash.py: false-positive friction on routine interactive work outweighed the speed-bump value), so those subcommands are now UNENFORCED at the permissions layer; to restore, re-add deny rules here and re-arm block-egress.py via _RAIL_MODULES",
+      "Read- and list-shaped MCP tool calls to the user's own connected servers (sux, cloudflare, grafana, scheduled-tasks, session management, browser automation, obsidian); destructive Cloudflare MCP tools (create/update/edit/delete for d1, kv, r2, hyperdrive) and destructive GitHub MCP tools (merge_pull_request, delete_file, delete_project_item, push_files) are Tier A \u2014 their exact-name permissions.deny entries were removed with the rest of the deny list (owner decision 2026-07-22), so block-destructive-mcp.py's verb-pattern rail (#260), which covers these unconditionally, is now the ONLY gate (was belt-and-suspenders; note Claude Code's deny matches exact names, not patterns, if entries are ever restored)",
+      "Reading, editing, and writing files in the user's Code repos and .claude config; opening PRs; pushing branches; and inspecting Cloudflare Worker state via read-only wrangler subcommands (tail, deployments list, kv key get) \u2014 deploy, secret, and delete subcommands are Tier A and require human hands (formerly deny-listed; deny emptied 2026-07-22 \u2014 the PreToolUse hook rails are the remaining automated guard)"
     ]
   },
   "disableClaudeAiConnectors": true,
@@ -106,7 +106,10 @@
       {
         "matcher": "startup|resume|clear|compact",
         "hooks": [
-          { "type": "command", "command": "$HOME/.claude/hooks/check-settings-drift.py" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/check-settings-drift.py"
+          }
         ]
       }
     ],
@@ -114,31 +117,46 @@
       {
         "matcher": "Agent|Task",
         "hooks": [
-          { "type": "command", "command": "$HOME/.claude/hooks/require-delegation-model.py" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/require-delegation-model.py"
+          }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "$HOME/.claude/hooks/pretooluse-bash.py" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/pretooluse-bash.py"
+          }
         ]
       },
       {
         "matcher": "mcp__.*__.*",
         "hooks": [
-          { "type": "command", "command": "$HOME/.claude/hooks/block-destructive-mcp.py" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/block-destructive-mcp.py"
+          }
         ]
       },
       {
         "matcher": "WebFetch|WebSearch",
         "hooks": [
-          { "type": "command", "command": "$HOME/.claude/hooks/block-web-egress.py" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/block-web-egress.py"
+          }
         ]
       },
       {
         "matcher": "Write",
         "hooks": [
-          { "type": "command", "command": "$HOME/.claude/hooks/block-write-overwrite.py" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/block-write-overwrite.py"
+          }
         ]
       }
     ],
@@ -146,7 +164,10 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "$HOME/.claude/hooks/audit-git-consequences.py" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/audit-git-consequences.py"
+          }
         ]
       }
     ]

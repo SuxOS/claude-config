@@ -1,8 +1,15 @@
 # Security model of this config
 
-`home/.claude/settings.json` runs under `"defaultMode": "bypassPermissions"`. In that mode
-Claude Code does **not** prompt before tool calls, so the `permissions.deny` list is the
-*only* enforced control — `allow` is advisory and everything not denied runs silently.
+`home/.claude/settings.json` (human, m@) and `home/.claude/settings.bot.json` (bot, claude@ —
+see `BOT-ACCOUNT.md`) both run under `"defaultMode": "bypassPermissions"` with identical
+`permissions` blocks. In that mode Claude Code does **not** prompt before tool calls, so the
+`permissions.deny` list would be the *only* enforced control from this block — `allow` is
+advisory and everything not denied runs silently. Both files' `deny` arrays are now empty
+(see below), which leaves the `permissions` block with no enforcing control at all; the
+PreToolUse hook rails are the remaining automated guard, in both identities. `allow` is
+retained unchanged in both — inert under `bypassPermissions`, but it is the layer that
+would take effect if `defaultMode` were ever narrowed, so emptying it would silently
+change behaviour on that switch.
 
 ## What the deny list is — and isn't
 
