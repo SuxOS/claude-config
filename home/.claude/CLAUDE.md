@@ -131,7 +131,16 @@
   Recover an aborted fan-out from the per-item agent returns (journal.jsonl) or re-run only the
   synthesis phase — don't re-run the whole thing. A `gh --watch` exiting is not settledness
   either — watchers die mid-flight on transient GitHub 504s with exit 0; re-read the watched
-  state after ANY watcher exit.
+  state after ANY watcher exit. The same discipline applies to a MERGED "fix" PR for an
+  intermittent/triggered failure: **merged ≠ verified — if the fix's triggering condition has not
+  re-fired since the merge, the fix is untested code** (2026-07-23 deep audit: SuxOS/.github#704
+  "fixed" the vault gardener cross-repo checkout, issue #686, at 01:19Z, but the trigger — a vault
+  main-push — last fired 23:00Z the prior evening, so the fix never ran; it was in fact still
+  broken — `create-github-app-token` minted with no `owner`/`repositories` is scoped to the
+  CALLING repo only, so it still couldn't read SuxOS/.github; completed by #708 minting a second
+  token scoped `owner=SuxOS, repositories=.github` per issue-build.yml's helper-token pattern).
+  Before trusting any merged fix for a triggered failure, compare the fix's merge time against
+  the trigger's last firing — if the trigger hasn't re-fired, treat the fix as unproven.
 - **Prefer deferring heavy/async work to the cloud pipeline or the `claude@` bot to keep the
   interactive (m@) quota free** — file issues for the build loop (`dispatch`) or hand sustained
   drudge to bot-owned cloud routines, rather than burning the foreground session on long autonomous
