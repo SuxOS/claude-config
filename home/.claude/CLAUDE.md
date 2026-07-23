@@ -63,6 +63,9 @@
   (a token, a base64 blob) through it truncates with NO error (this silently cut an 856-char
   service-account token → a cryptic downstream decode failure). Use `"$(cmd)"` command-
   substitution or a here-string for anything that can exceed 255 chars, never `xargs -I`.
+  More BSD/alias traps: `cp -b` (GNU backup flag) is illegal on macOS cp, and an interactive
+  alias (`cp -i`/`mv -i`) in the non-tty Bash tool auto-answers "n" — the overwrite silently
+  doesn't happen (exit 1). For a deliberate overwrite, keep a manual copy then `cat src > dest`.
 - **The Bash tool runs a zsh login shell (macOS); CI/workflows run bash — a standing drift
   source.** NEVER name a variable with a zsh-reserved name in any script the Bash tool runs:
   `status`, `path`, `cdpath`, `argv`, `pipestatus` are special/read-only in zsh (`status` is
@@ -99,6 +102,11 @@
   noticed. The hook fails OPEN, normalizes plugin `false`≡absent (Code drops disabled keys on
   rewrite), and points at `install.sh --apply` to reconcile. This drift is live and ongoing — Code
   re-enabled `chrome-devtools-mcp` mid-session in the very session the hook shipped.
+  **Drift can be INTENTIONAL** — 2026-07-22 the whole deny list was gone because Colin removed
+  it deliberately ("rails off for now"), and an eager `install.sh --apply` re-armed it against his
+  intent. The hook can't tell clobber from choice: when the user is reachable, confirm before
+  reconciling security-critical drift; acting autonomously, reconcile but say so loudly and name
+  the backup path so the choice is one command to restore.
 - **A fail-OPEN hook can silently DIE and nobody notices it stopped running.** On 2026-07-22
   `check-settings-drift.py` was dead for an unknown span: `install.sh` had turned the repo's own
   `home/.claude/hooks/check-settings-drift.py` into a self-referential symlink (points at itself
@@ -123,7 +131,16 @@
   Recover an aborted fan-out from the per-item agent returns (journal.jsonl) or re-run only the
   synthesis phase — don't re-run the whole thing. A `gh --watch` exiting is not settledness
   either — watchers die mid-flight on transient GitHub 504s with exit 0; re-read the watched
-  state after ANY watcher exit.
+  state after ANY watcher exit. The same discipline applies to a MERGED "fix" PR for an
+  intermittent/triggered failure: **merged ≠ verified — if the fix's triggering condition has not
+  re-fired since the merge, the fix is untested code** (2026-07-23 deep audit: SuxOS/.github#704
+  "fixed" the vault gardener cross-repo checkout, issue #686, at 01:19Z, but the trigger — a vault
+  main-push — last fired 23:00Z the prior evening, so the fix never ran; it was in fact still
+  broken — `create-github-app-token` minted with no `owner`/`repositories` is scoped to the
+  CALLING repo only, so it still couldn't read SuxOS/.github; completed by #708 minting a second
+  token scoped `owner=SuxOS, repositories=.github` per issue-build.yml's helper-token pattern).
+  Before trusting any merged fix for a triggered failure, compare the fix's merge time against
+  the trigger's last firing — if the trigger hasn't re-fired, treat the fix as unproven.
 - **Prefer deferring heavy/async work to the cloud pipeline or the `claude@` bot to keep the
   interactive (m@) quota free** — file issues for the build loop (`dispatch`) or hand sustained
   drudge to bot-owned cloud routines, rather than burning the foreground session on long autonomous
