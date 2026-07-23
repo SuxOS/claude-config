@@ -2,17 +2,16 @@ name: Auto-merge
 
 # Enables GitHub NATIVE auto-merge on eligible, trusted-author PRs; never force-merges.
 # Uses pull_request_target (base-repo context, write token) but never checks out PR code
-# — only reads the event payload and calls the API. required-gates is overridden to this
-# repo's real check names (shellcheck + security-review); the reusable's default names a
-# Worker "npm audit & SBOM" gate that doesn't exist here. The main-branch ruleset must
-# actually require these same checks or the reusable refuses to arm (it verifies the
-# ruleset first, so an auto-merge can't win the race against fast CI as an advisory check).
+# — only reads the event payload and calls the API. Org rulesets (SuxOS/.github#669)
+# require only `security-review` fleet-wide — no per-repo CI job (e.g. shellcheck) is a
+# required status check anymore.
 #
-# ROUTING: because required-gates must match the main-branch ruleset EXACTLY, adding or renaming a
-# required gate here is NOT a code-only change — it needs a paired repo-admin ruleset edit that
-# lives outside this tree, or the reusable stops arming and auto-merge stalls. Any issue that asks
-# to add a required check must route to `needs-human` (or be split so the required-gates edit lands
-# in the same window as the admin ruleset change); an autonomous code-only builder cannot finish it.
+# ROUTING: required-gates must match the org ruleset EXACTLY. Adding or renaming a required
+# gate here is NOT a code-only change — it needs a paired repo-admin ruleset edit that lives
+# outside this tree, or the reusable stops arming and auto-merge stalls (see .github#700). Any
+# issue that asks to add a required check must route to `needs-human` (or be split so the
+# required-gates edit lands in the same window as the admin ruleset change); an autonomous
+# code-only builder cannot finish it.
 # Reusable workflow: SuxOS/.github/.github/workflows/automerge.yml
 
 on:
@@ -31,6 +30,5 @@ jobs:
     uses: SuxOS/.github/.github/workflows/automerge.yml@main
     with:
       required-gates: |
-        shellcheck
         security-review
     secrets: inherit
