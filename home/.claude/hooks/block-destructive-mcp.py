@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """PreToolUse hook (matcher: `mcp__.*__.*`) — extend the Tier-A cardinal rail to MCP tool calls.
 
-Every destructive-action guard in this repo — `block-destructive-git.py`, the `permissions.deny`
-list, docs/security-model.md — only inspects Bash argv text. None of them look at MCP `tool_use`
-calls at all (#260). `home/.claude/settings.json` enables a dozen+ MCP-bundling plugins, and the
-GitHub plugin's server exposes tools like `merge_pull_request`, `push_files`, `delete_file` — none
-of which appear anywhere in `permissions.deny`. Under `defaultMode: bypassPermissions` an MCP tool
-call with no matching deny rule and no PreToolUse hook watching it sails through with zero
-enforcement, the exact gap work/SKILL.md's Tier-A cardinal rule ("never force-push, merge/publish
-without confirmation, hard-delete... without an explicit yes") is supposed to close.
+Every other destructive-action guard in this repo — `block-destructive-git.py`,
+docs/security-model.md — only inspects Bash argv text. None of them look at MCP `tool_use` calls at
+all (#260). `home/.claude/settings.json` enables a dozen+ MCP-bundling plugins, and the GitHub
+plugin's server exposes tools like `merge_pull_request`, `push_files`, `delete_file`. Under
+`defaultMode: bypassPermissions` an MCP tool call with no PreToolUse hook watching it sails through
+with zero enforcement, the exact gap work/SKILL.md's Tier-A cardinal rule ("never force-push,
+merge/publish without confirmation, hard-delete... without an explicit yes") is supposed to close.
 
-Rather than hand-enumerate `mcp__plugin_<plugin>_<server>__<tool>` denies per plugin (the Cloudflare
-pattern, settings.json:81-89 — accurate only for the one plugin someone audited live, and silently
-stale for every other plugin, exactly the gap that let the GitHub plugin go completely unenumerated)
-this generalizes the "cardinal rails as code" pattern (#163) the Bash rails already use: pattern-match
+As of the 2026-07-22 owner decision `permissions.deny` is EMPTY, so this rail is the only automated
+guard on MCP calls — there is no second layer behind it. The docstring below previously described
+deny rules as a co-guard; every such claim has been removed rather than left to read as coverage
+that exists.
+
+Rather than hand-enumerate `mcp__plugin_<plugin>_<server>__<tool>` denies per plugin (the approach
+`settings.json` once took for Cloudflare — accurate only for the one plugin someone audited live,
+and silently stale for every other plugin, exactly the gap that let the GitHub plugin go completely
+unenumerated) this generalizes the "cardinal rails as code" pattern (#163) the Bash rails already use: pattern-match
 Tier-A verbs in the tool name itself, the way `block-destructive-git.py` pattern-matches Bash argv.
 This scales to every current and future MCP plugin with no hand-maintained enumeration to drift.
 
@@ -27,8 +31,13 @@ that never equals a bare verb. Split into tokens and block if any token is an ex
 Tier-A verb: merge, delete, push, force, publish, deploy — the same verb set work/SKILL.md's
 cardinal rule names ("force-push, merge/publish, hard-delete... irreversible/destructive").
 `create`/`update`/`edit`/`list`/`get` tools are deliberately NOT in scope here (not Tier-A on their
-own); the Cloudflare plugin's explicit per-tool denies remain the belt for creates until a broader
-audit widens this rail's verb set.
+own). This used to add "the Cloudflare plugin's explicit per-tool denies remain the belt for
+creates" — that belt NO LONGER EXISTS. The 2026-07-22 owner decision emptied `permissions.deny`
+entirely, including the `d1_database_create` / `kv_namespace_create`·`update` / `r2_bucket_create` /
+`hyperdrive_config_edit` exact-name denies that sentence relied on. So creates/updates/edits are now
+unguarded in BOTH layers, not one — a deliberate accepted risk, no longer a covered case. Do not
+read the create/update/edit exclusion here as "handled elsewhere"; nothing handles it. Tracked in
+claude-config#462, which decides whether to widen this rail's verb set or leave it accepted.
 
 Unlike the Bash rails, there is no repo state to consult that would prove a merge/delete/push/force/
 publish/deploy MCP call safe (mirrors `block-destructive-git.py`'s `_merge_publish_hit`, #242) and no
