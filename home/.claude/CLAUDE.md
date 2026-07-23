@@ -167,6 +167,15 @@
   explicit trailing `.*` after each `__` (`mcp__memory__.*`, or `mcp__.*__.*` for all servers/tools)
   — this is a different mechanism from `permissions.deny`'s glob syntax, so don't assume the two
   share a wildcard convention.
+- **`gh pr merge` (any form), `gh release create` (non-`--draft`), and `npm publish`
+  (non-`--dry-run`) are blocked UNCONDITIONALLY by `block-destructive-git.py`** — verified from
+  source: no repo state gates this predicate, so it fires on every match regardless of prior
+  chat confirmation, since a PreToolUse hook only ever sees the current command's envelope,
+  never conversation history. No amount of "yes" in chat changes the outcome — hand the exact
+  command to the user instead of re-attempting. Separately, `gh api -X *`/`gh api --method *`
+  (any verb) is hard-denied via `permissions.deny`, same non-negotiable class, different
+  mechanism (a harness-level deny list, not a hook script) — don't conflate the two when
+  diagnosing which layer blocked a call.
 - **An issue-build branch can itself lag `origin/main`**, not just an issue's cited line
   numbers — when a sibling build merges first, the branch this build was cut from predates
   that merge. Before editing a shared file (e.g. `block-egress.py`, `tests/test_hooks.sh`),
@@ -260,7 +269,11 @@
 - **`install.sh` symlinks every entry under `home/.claude/` into `~/.claude/`** (except
   `settings.json`, which is copied because Claude Code rewrites it in place), so repo-/CI-only
   tooling must NOT live there or it lands in the user's live config — put linters, CI scripts,
-  etc. under `.github/` instead. Adding a new
+  etc. under `.github/` instead. Editing any symlinked file directly by its `~/.claude/` path
+  fails outright — the `Edit` tool refuses to write through a symlink. `readlink -f
+  ~/.claude/<file>` first to get the real path under `~/Code/SuxOS/claude-config/home/.claude/`,
+  then edit/commit/PR there like any other repo change (worktree + branch, not a direct edit on
+  the primary checkout's `main`). Adding a new
   required CI check also needs the main-branch ruleset AND `automerge.yml` `required-gates` updated
   in lockstep, or the automerge reusable refuses to arm (it verifies the ruleset first). Because of
   that, the config-integrity linters (settings/hooks/json/evals) run as STEPS INSIDE the one
