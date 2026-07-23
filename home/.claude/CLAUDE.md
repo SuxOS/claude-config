@@ -63,6 +63,9 @@
   (a token, a base64 blob) through it truncates with NO error (this silently cut an 856-char
   service-account token → a cryptic downstream decode failure). Use `"$(cmd)"` command-
   substitution or a here-string for anything that can exceed 255 chars, never `xargs -I`.
+  More BSD/alias traps: `cp -b` (GNU backup flag) is illegal on macOS cp, and an interactive
+  alias (`cp -i`/`mv -i`) in the non-tty Bash tool auto-answers "n" — the overwrite silently
+  doesn't happen (exit 1). For a deliberate overwrite, keep a manual copy then `cat src > dest`.
 - **The Bash tool runs a zsh login shell (macOS); CI/workflows run bash — a standing drift
   source.** NEVER name a variable with a zsh-reserved name in any script the Bash tool runs:
   `status`, `path`, `cdpath`, `argv`, `pipestatus` are special/read-only in zsh (`status` is
@@ -99,6 +102,11 @@
   noticed. The hook fails OPEN, normalizes plugin `false`≡absent (Code drops disabled keys on
   rewrite), and points at `install.sh --apply` to reconcile. This drift is live and ongoing — Code
   re-enabled `chrome-devtools-mcp` mid-session in the very session the hook shipped.
+  **Drift can be INTENTIONAL** — 2026-07-22 the whole deny list was gone because Colin removed
+  it deliberately ("rails off for now"), and an eager `install.sh --apply` re-armed it against his
+  intent. The hook can't tell clobber from choice: when the user is reachable, confirm before
+  reconciling security-critical drift; acting autonomously, reconcile but say so loudly and name
+  the backup path so the choice is one command to restore.
 - **A fail-OPEN hook can silently DIE and nobody notices it stopped running.** On 2026-07-22
   `check-settings-drift.py` was dead for an unknown span: `install.sh` had turned the repo's own
   `home/.claude/hooks/check-settings-drift.py` into a self-referential symlink (points at itself
