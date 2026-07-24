@@ -18,7 +18,7 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   non-string `tool_input.command` ONCE, then runs a registered list of pure `check(command, cwd) ->
   message | None` predicates — one per rail, defined in and testable from the rail's own module —
   and prints+exits 2 on the first hit. This is the only entry wired in settings.json under
-  `hooks.PreToolUse` for the `Bash` matcher; the six rails below are loaded by it (via
+  `hooks.PreToolUse` for the `Bash` matcher; the seven rails below are loaded by it (via
   `importlib`, since their filenames are hyphenated) rather than run as separate hook processes.
   Each stays directly runnable via stdin for the manual-test recipe below and its own entry in
   `tests/test_hooks.sh`. Add a new rail by giving its module a `check(command, cwd)` function and
@@ -114,6 +114,17 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   the pass can't confidently resolve (a substitution only knowable at shell-run time, an over-wide
   brace range, an unset `$var`, an empty glob) is treated as unsafe — fail-SAFE toward block.
   Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
+- **`prefer-structured-tools.py`** — flags two Bash-tool mistake shapes CLAUDE.md already
+  documented in prose but that kept recurring anyway (three times in one session, 2026-07-22):
+  (1) the classic zsh unquoted-parameter-expansion word-split footgun (`for x in $var` / `set --
+  $var` with `$var` not double-quoted — zsh loops ONCE over the whole string where bash would
+  split it), checked as a raw-text regex since `pieces()`'s `shlex`-based tokenizer strips quotes
+  and so can't tell after the fact whether the original text quoted the expansion; (2) a
+  hand-rolled `while`/`until`/`for` loop combined with `jq`/`awk` in the same command — the
+  "manual loop aggregating JSON/text" shape `nu -c '... | reduce ...'` or a short `python3`
+  script does in one shot with no shell-loop machinery. A single one-shot `... | jq '.foo'` with
+  no loop keyword anywhere is left alone. Registered with `pretooluse-bash.py` via its
+  `check(command, cwd)`; fails open on any error.
 - **`block-destructive-mcp.py`** — PreToolUse (matcher `mcp__.*__.*`). Extends the Tier-A cardinal
   rail to MCP tool calls (#260): every other destructive-action guard here only inspects Bash argv
   text, so an MCP tool call (e.g. the GitHub plugin's `merge_pull_request`/`push_files`/
@@ -220,6 +231,8 @@ Pipe synthetic hook-input JSON to the script and check the exit code (2 = block,
 This recipe is now automated: `tests/test_hooks.sh` (run in CI inside the required `shellcheck` job) byte-compiles
 every hook and asserts each one's exit-code contract — block, fork/model exemptions, malformed-JSON
 fail-open. Add a case there when you add or change a hook so the contract stays enforced, not just prose.
+Run it with a modern bash, not macOS's system one — the script uses `mapfile` (bash 4+), which macOS's
+frozen bash 3.2 doesn't have: `/opt/homebrew/bin/bash tests/test_hooks.sh`, not a bare `bash tests/test_hooks.sh`.
 
 The synthetic JSON above is hand-authored, so it shares whatever shape the author guessed — the exact
 trap behind the recurring parse-shape bugs (#62/#80/#105/#108/#111/#112). Layer 3 of the same script

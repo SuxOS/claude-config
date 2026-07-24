@@ -16,11 +16,38 @@
    session — an unused connected capability is a standing miss, not a neutral default. An
    orchestrator managing a nondeterministic model has no business being nondeterministic
    itself. Fan out independent work concurrently, not
-   serially.
+   serially. **(c) No judgment per unit → no agent per unit — even across many targets, even
+   under ultracode.** A task that's "run the same deterministic command against N things and
+   sum/compare the results" is a loop, not a fan-out, no matter how many things N is — wrapping
+   each unit in an `agent()`/subagent call spends real tokens on work a `for` loop (or better,
+   `nu`/`python3` — see dev-speed tactics) does for free. This is a subtler violation of (a) than
+   the usual "don't call a model for a lookup": the individual tool calls inside the fan-out can
+   each look deterministic while the *orchestration shape itself* is the thing that shouldn't
+   have been agentic (hit live 2026-07-22: a 14-agent Workflow to compute an org-wide issue/PR
+   drain rate — pure `gh` queries plus arithmetic, zero judgment anywhere in it). Reserve agents/
+   Workflow for units that need independent REASONING — interpreting an ambiguous result, weighing
+   a tradeoff, writing prose, adversarially verifying a claim — not for repeating an exact command
+   against a longer target list.
 3. **Verify before you act — research is cheaper than a wrong call.** Ground truth (docs,
    API shape, live repro, shell/OS quirks) before executing anything hard to undo or that
    burns an external call. A failed assumption costs more than the minute of research would
-   have — this is the whole lesson of the missed-API-call class of mistake.
+   have — this is the whole lesson of the missed-API-call class of mistake. **A citation is a
+   snapshot, not a live fact**: an issue body, a PR diff, a grep result, a memory note, or a
+   prior commit message describes state as of when it was captured, and code/issues/PRs move
+   on. This exact failure has recurred in at least four distinct shapes — treat all of them as
+   one root cause, not four separate bugs: a squashed merge that resolved an issue without a
+   `Closes #N` keyword, so the issue looks open on HEAD when it isn't (#131/#152, recurred as
+   #169/#170 even after being documented once — `grep -rn '#<N>'` across the repo before deep-
+   diving); a fix sitting in an OPEN, unmerged sibling PR that a HEAD-only grep can't see (#190 —
+   also check `gh pr list --state open` and grep PR bodies/diffs); an issue-authoring pass that
+   snapshotted an aggregate/in-flight state rather than HEAD, so cited line numbers or "already
+   added" claims are stale, and the cited code can even live ONLY in a different open, unmerged
+   PR (#265, #271); and an investigation-only issue ("#N looks already resolved") that doesn't
+   self-close once its target actually gets fixed, because nothing re-checks it (#296/#350, hit
+   twice) — close both the target AND the investigation issue directly once confirmed, don't
+   leave either as a recommendation. **How to apply:** before trusting any claim about current
+   code/issue/PR state, re-verify against live HEAD *and* live open PRs (not just one or the
+   other) — especially before anything hard to undo.
 4. **Bias to action, but keep it reversible.** Ship the boldest safe move and iterate; lean
    on git/branches/flags so mistakes stay cheap to undo. Don't dither, don't over-ask.
 5. **Return fast; work async.** Keep the conversation unblocked — hand slow work to
@@ -85,6 +112,18 @@
   zsh-specific idioms.
   Same family: an unquoted word starting with `=` (`echo ===`) triggers zsh's `=cmd` filename
   expansion and errors — quote it in any Bash-tool command.
+- **Default to `nu`/`python3` over a hand-rolled bash `for`/`while` loop + `jq`/`awk` for ANY
+  multi-step data wrangling** — looping over a list, joining/aggregating fields, summing a
+  column, building a table from `gh`/API JSON. This got corrected three times in one session
+  (2026-07-22) despite already being documented — a `nu`/`python3` script has no word-splitting
+  footgun (see the bullets above), does real arithmetic instead of string-glued shell math, and
+  is usually shorter. A single one-shot `... | jq '.foo'` with no loop is still fine; the rule is
+  about loops and aggregation, not banning jq outright. Colin's own tooling
+  (`dotfiles/home/nushell/config.nu`: `repos`, `gg`, `nmaps`) already leans this way — use it
+  before rolling a bespoke script. **This is now also mechanically enforced**, not just prose:
+  `home/.claude/hooks/prefer-structured-tools.py` (PreToolUse/Bash rail) blocks the zsh
+  unquoted-word-split shape and a loop-plus-jq/awk-aggregation shape outright — prose alone had
+  already been written and read and still didn't stick under pressure.
 - **zsh does NOT word-split an unquoted parameter expansion** — `for x in ${csv//,/ }` loops
   ONCE with the whole string where bash splits it (live hit: 9/12 `gh issue create` calls got one
   bogus multi-word `--label` and died). Split via command substitution
@@ -95,6 +134,13 @@
   2026-07-23 despite the above being written: it does NOT split into positional params, so `$2`
   was empty and four `gh pr view` calls died on "could not determine current branch". Whenever a
   value must become multiple words in zsh, route it through `$(...)`.
+- **A literal single quote inside a single-quoted bash string needs the close-escape-reopen
+  trick (`'"'"'`), not a backslash escape** — `\'`/`\x27`/etc. are not interpreted inside single
+  quotes at all (single quotes preserve everything literally); they pass through as literal
+  backslash-plus-characters instead of a quote, which silently breaks embedded JSON/awk/jq
+  payloads (cost one failed test run authoring a `test_hooks.sh` case with an embedded awk
+  script). `printf '%s'` with a heredoc, or restructuring to avoid the inner quote, are both
+  cleaner than the trick when the string is more than a one-off.
 - **Bash-tool cwd can reset to the session's primary working dir between calls** when working
   in a repo outside it (observed: every call in a SuxOS-session editing ~/Code/colinxs/vault),
   despite the tool doc claiming persistence. Prefix every command in an outside repo with an
@@ -124,6 +170,11 @@
     unrepresentable), **stdlib-only Python** for standalone repo scripts (precedent `vault-lint.py`,
     no build), **Go static musl** only when a binary must ship to the box, **Rust** only where its
     guarantees are the point.
+- **`gh ... list --limit N` caps silently, no error, no warning.** A result count landing
+  exactly on N is not proof N is the true count — it's the signature of truncation (hit live:
+  `--limit 300` on a busy repo's issue history returned exactly 300; the true count was 492).
+  Always pass a generous `--limit` (1000+) for anything that isn't obviously small, and treat an
+  exact-N result as unverified until re-run higher.
 - **A `SessionStart` hook (`check-settings-drift.py`) warns when live `~/.claude/settings.json`
   has drifted from the claude-config repo source** on the safety-critical fields (`permissions.
   deny`, `hooks`, `defaultMode`, `disableClaudeAiConnectors`) plus `enabledPlugins`. settings.json

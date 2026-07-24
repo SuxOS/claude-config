@@ -67,6 +67,7 @@ _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 _RAIL_MODULES = (
     "block-checkout-held-branch",
     "block-destructive-fs",
+    "prefer-structured-tools",
 )
 
 
