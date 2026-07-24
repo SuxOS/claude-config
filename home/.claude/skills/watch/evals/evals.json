@@ -1,0 +1,23 @@
+{
+  "skill_name": "watch",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "watch the Bozeman Health patient portal until it lets me link my account, expiring in 90 days if it never does",
+      "expected_output": "Derives a deterministic shell probe (HTTP status/body-marker check against the portal, not a bare grep count) and a hard expiry date rather than an open-ended cadence. Dry-runs check.sh in-thread and reads its output before arming. Calls create_scheduled_task exactly once with taskId watch-<slug>, places check.sh in the created task dir, and confirms back one line: what it watches, trips on, expires when, fires how often — matching the courier-prompt template, not a hand-rolled loop.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "set up a watch that keeps an eye on my inbox and lets me know when anything important comes in",
+      "expected_output": "Refuses — 'anything important' is not a deterministic shell-decidable predicate (it requires judgment on each item), and mail can push an event rather than needing a poll. Routes to routine/timer or in-thread handling instead of arming a watch, per the skill's own rule that a goal needing judgment or producing work-product each run is not a watch.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "start a watch for when the new GitHub Actions run for SuxOS/claude-config finishes",
+      "expected_output": "Refuses — GitHub can emit an event for this (a workflow completion), so per 'if the system can emit an event for it, wire the event — refuse the watch' this should not become a polling watch. Routes to the appropriate event-driven mechanism (dispatch/pipeline) instead of arming a scheduled probe.",
+      "files": []
+    }
+  ]
+}
