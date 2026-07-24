@@ -10,14 +10,12 @@
         "suxrouter",
         "claude-config",
         "vault",
-        "suxvault",
         "suxos-net",
         ".github",
         "nix",
         "metal",
         "suxdash",
-        "dotfiles",
-        "metal"
+        "dotfiles"
       ],
       "pipeline": {
         "repo": ".github",
