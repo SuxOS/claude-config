@@ -297,9 +297,13 @@ jobs:
           echo "install.sh missing-settings.json hard-fail test passed (#334)"
 
       # #293: install.sh detected settings.json drift (missing_deny/missing_hooks) but only ever
-      # printed it. Proves --apply actually patches the live settings.json: restores a rule/hook
+      # printed it. Proves --apply actually patches the live settings.json: restores a hook
       # removed from a scratch copy, keeps a rule the "user" added that isn't in the repo
       # reference, and a second --apply is a no-op (no second backup, no further changes).
+      # permissions.deny reference is [] since the 2026-07-22 owner decision (#449) — there is
+      # no longer a reference rule to test "restored", so this only exercises the union-merge's
+      # preservation of a user-added rule against an empty reference; hook restoration still
+      # covers the missing-vs-reference merge path.
       - name: install.sh --apply merges missing settings.json drift, preserving user rules
         if: ${{ !cancelled() }}
         run: |
@@ -312,8 +316,6 @@ jobs:
           import json, sys
           path = sys.argv[1]
           data = json.load(open(path))
-          assert "Bash(tar *)" in data["permissions"]["deny"]
-          data["permissions"]["deny"] = [r for r in data["permissions"]["deny"] if r != "Bash(tar *)"]
           data["permissions"]["deny"].append("Bash(my-custom-user-rule *)")
           data["hooks"]["PreToolUse"] = [g for g in data["hooks"]["PreToolUse"] if g["matcher"] != "Write"]
           json.dump(data, open(path, "w"), indent=2)
@@ -325,7 +327,6 @@ jobs:
           import json, sys
           data = json.load(open(sys.argv[1]))
           deny = data["permissions"]["deny"]
-          assert "Bash(tar *)" in deny, "missing deny rule was not restored"
           assert "Bash(my-custom-user-rule *)" in deny, "user-added deny rule was dropped"
           matchers = [g["matcher"] for g in data["hooks"]["PreToolUse"]]
           assert "Write" in matchers, "missing hook matcher group was not restored"

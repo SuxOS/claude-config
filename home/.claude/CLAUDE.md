@@ -91,12 +91,39 @@
   (`for x in $(printf '%s' "$csv" | tr ',' ' ')`) — zsh does split those. The same incident's twin
   trap: `|| fallback` chained off a pipeline ending in `| tail -1` never fires — the pipeline's
   exit status is tail's 0, not the failing command's; test the real command's exit before piping
-  its output.
+  its output. **`set -- $spec` is the same rule on a different surface** and bit again on
+  2026-07-23 despite the above being written: it does NOT split into positional params, so `$2`
+  was empty and four `gh pr view` calls died on "could not determine current branch". Whenever a
+  value must become multiple words in zsh, route it through `$(...)`.
 - **Bash-tool cwd can reset to the session's primary working dir between calls** when working
   in a repo outside it (observed: every call in a SuxOS-session editing ~/Code/colinxs/vault),
   despite the tool doc claiming persistence. Prefix every command in an outside repo with an
   explicit `cd <repo> &&` — never rely on a prior call's cd; most git/grep commands still
   "succeed" in the wrong repo, so the failure is silent.
+- **Every field access across an untyped boundary is an unverified assumption — and it fails
+  SILENTLY, returning a plausible scalar instead of an error.** This is the real shape of the
+  "jq + bash always fucks you up" class; it is not about bash. Cardinal #2's *deterministic beats
+  LLM* is necessary but NOT sufficient: `jq '.label'` is perfectly deterministic and was perfectly
+  wrong (the records' keys were `{type,key,agentId}`). The property to want is **deterministic AND
+  schema-checked**. Four separate silent hits in one session (2026-07-23) — full derivation in
+  sux `docs/design/2026-07-23-tooling-and-language-doctrine.md`:
+  - **Never `jq … | wc -l`** — it counts lines of PRETTY-PRINTED JSON, not records. Reported 1722
+    agents instead of 22, and it was stated to Colin as fact before being caught. Count inside the
+    tool: `jq 'length'`, or `jq -r '.type' | grep -c '^started$'`.
+  - **Inspect the schema before filtering** — `jq -r 'keys' | head -1` (nu: `columns`). One call
+    prevents the silent-empty-result class.
+  - **Never field-index a `git`/`ls` line format from memory** — in `git ls-tree -l` size is `$4`
+    and path is `$5`; guessing printed `0` and exited 0. Use a `--format`/porcelain flag that names
+    its fields, or read one line first.
+  - **Typed languages are not immune** — `beforeEach(() => mock.mockClear())` returns the mock, and
+    a function returned from `beforeEach` is a TEARDOWN callback, so vitest invoked it with no args
+    and every test in the block failed inside its own cleanup. Use a block body. An implicit return
+    across a framework contract is the same unchecked boundary.
+  - Language by context, when replacing glue: **TypeScript** inside sux/suxlib (tsc+LSP catch a bad
+    field at author time), **nushell** interactively (structured pipelines make the `wc -l` class
+    unrepresentable), **stdlib-only Python** for standalone repo scripts (precedent `vault-lint.py`,
+    no build), **Go static musl** only when a binary must ship to the box, **Rust** only where its
+    guarantees are the point.
 - **A `SessionStart` hook (`check-settings-drift.py`) warns when live `~/.claude/settings.json`
   has drifted from the claude-config repo source** on the safety-critical fields (`permissions.
   deny`, `hooks`, `defaultMode`, `disableClaudeAiConnectors`) plus `enabledPlugins`. settings.json
