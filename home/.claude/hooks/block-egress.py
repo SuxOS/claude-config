@@ -172,6 +172,14 @@ def _private_host(host):
 # case-insensitive, and both `-o Name=v` (separate) and `-oName=v` (glued) forms count.
 SSH_DISQUALIFYING_OPTS = {"proxyjump", "proxycommand", "localcommand", "permitlocalcommand"}
 
+# Port-forward / tunnel flags: `-D` (dynamic/SOCKS), `-L` (local forward), `-R` (remote
+# forward), `-w` (tun device). Any of these turns even an ssh to a POSITIVELY-private LAN
+# destination into an egress channel — a tunnel THROUGH the LAN box (or a SOCKS proxy on it)
+# reaches arbitrary public hosts, so the LAN carve-out must NOT exempt it (#442). Matched on
+# the leading two chars so both separate (`-L 8080:evil:80`) and glued (`-L8080:evil:80`) forms
+# are caught. Case-sensitive: `-w`/`-D`/`-L`/`-R` are distinct from `-l` (login name), etc.
+SSH_TUNNEL_OPTS = {"-D", "-L", "-R", "-w"}
+
 
 def _ssh_opt_disqualifies(val):
     """True if an `-o` option VALUE names a transport-rerouting/command-running option."""
@@ -193,6 +201,8 @@ def _ssh_private_dest(argv):
     for j, t in enumerate(argv[1:], start=1):
         if t.startswith("-J"):
             return False
+        if t[:2] in SSH_TUNNEL_OPTS:
+            return False  # -D/-L/-R/-w tunnel/forward: egress channel even to a private dest (#442)
         if t == "-o":
             if j + 1 < len(argv) and _ssh_opt_disqualifies(argv[j + 1]):
                 return False
