@@ -40,13 +40,32 @@ _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 # (2026-07-22): their false-positive rate on routine interactive work (LAN ssh, inline
 # python reading local JSON, commit messages that merely MENTION ssh, stderr redirects)
 # outweighed the speed-bump value on this account. The modules and their standalone tests
-# remain in the tree — re-arm either by adding its name back to this tuple. The data-loss
-# rails (destructive-git/fs, checkout-held-branch) stay armed: they guard irreversible
-# local state, not network policy, and have no comparable false-positive record.
+# remain in the tree — re-arm either by adding its name back to this tuple.
+#
+# `block-destructive-git` is UNREGISTERED by Colin's direct order (2026-07-23), same
+# order-family. Its `gh pr merge` / `gh release create` / `npm publish` predicate is
+# unconditional by construction: a PreToolUse hook sees only the current command's
+# envelope, never the conversation, so it cannot distinguish "merge this, I just said so"
+# from an unprompted merge. On an account where the user IS the reviewer and merges are
+# routine, that makes every merge a hand-off to a human who already said yes — friction
+# with no decision behind it. What it also guarded (force-push, reset --hard, branch -D)
+# goes with it; those are recoverable from reflog, unlike the deletes `block-destructive-fs`
+# covers. Re-arm by adding the name back to this tuple.
+#
+# `block-sleep-loop` is UNREGISTERED by Colin's direct order (2026-07-23), same
+# order-family. Unlike the others it never guarded state at all — it enforced a
+# dev-speed preference ("never poll in a loop, block on one --watch/wait call"), so
+# its worst case is a slower command, not a lost byte. It also cannot tell a status
+# poll from a legitimately rate-limited retry loop, which its own block message
+# concedes. A rail whose entire downside is inefficiency does not earn the right to
+# hard-fail a command. Re-arm by adding the name back to this tuple.
+#
+# Still armed: `block-destructive-fs` (unrecoverable local deletes — no reflog for a
+# deleted file) and `block-checkout-held-branch` (worktree corruption). With
+# `permissions.deny` now empty and the org security-review ruleset disabled, these two
+# are the ONLY automated Bash guard left anywhere in the stack.
 _RAIL_MODULES = (
     "block-checkout-held-branch",
-    "block-sleep-loop",
-    "block-destructive-git",
     "block-destructive-fs",
 )
 
