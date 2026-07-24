@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """PreToolUse hook (matcher: Bash) — raise the egress speed bump the security stream points at.
 
+STATUS: this rail is UNREGISTERED (not in `pretooluse-bash.py`'s `_RAIL_MODULES`) and
+`permissions.deny` is EMPTY as of the 2026-07-22 owner decision. There is therefore NO egress
+enforcement on Bash at all right now — neither this hook nor a deny rule. The docstring below is
+written as if both existed; read it as a description of what re-arming this would buy, not of
+current coverage. Re-arm by adding this module's name back to `_RAIL_MODULES`.
+
 Under `defaultMode: bypassPermissions` only `permissions.deny` enforces, and per-binary denies
 CANNOT be a real network-egress boundary while `python3`/`node`/`npx` stay on the allow list
 (see docs/security-model.md and settings.README.md — the interpreters open sockets themselves,
