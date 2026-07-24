@@ -2,9 +2,11 @@ name: PR drain (close-stale + reconcile)
 
 # CLOSE-STALE + DIRTY-CONFLICT + RECONCILE, via the shared reusable.
 # Reusable: SuxOS/.github/.github/workflows/pr-drain.yml
-# Org rulesets (SuxOS/.github#669) require only `security-review` fleet-wide — no
-# per-repo CI job is a required status check anymore. required-gates matches that, so
-# RECONCILE's branch-protection assertion never re-arms auto-merge when it's missing.
+# required-gates lists only the org-wide ruleset gate (`security-review`). This repo's
+# own required check (`shellcheck`) is STILL independently enforced by a live per-repo
+# ruleset, not by this assertion — #669 meant to retire that once a canonical CI gate
+# joined the org ruleset, but that part never landed (tracked in #717). Must stay in
+# lock-step with automerge.yml's list.
 
 on:
   schedule:

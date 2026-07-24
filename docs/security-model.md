@@ -1,43 +1,50 @@
 # Security model of this config
 
-`home/.claude/settings.json` runs under `"defaultMode": "bypassPermissions"`. In that mode
-Claude Code does **not** prompt before tool calls, so the `permissions.deny` list is the
-*only* enforced control — `allow` is advisory and everything not denied runs silently.
+`home/.claude/settings.json` (human, m@) and `home/.claude/settings.bot.json` (bot, claude@ —
+see `BOT-ACCOUNT.md`) both run under `"defaultMode": "bypassPermissions"` with identical
+`permissions` blocks. In that mode Claude Code does **not** prompt before tool calls, so the
+`permissions.deny` list would be the *only* enforced control from this block — `allow` is
+advisory and everything not denied runs silently. Both files' `deny` arrays are now empty
+(see below), which leaves the `permissions` block with no enforcing control at all; the
+PreToolUse hook rails are the remaining automated guard, in both identities. `allow` is
+retained unchanged in both — inert under `bypassPermissions`, but it is the layer that
+would take effect if `defaultMode` were ever narrowed, so emptying it would silently
+change behaviour on that switch.
 
 ## What the deny list is — and isn't
 
-<!-- doc-fact: settings-deny "Bash(curl *)" -->
-<!-- doc-fact: settings-deny "Bash(wget *)" -->
-<!-- doc-fact: settings-deny "Bash(scp *)" -->
-<!-- doc-fact: settings-deny "Bash(tar *)" -->
-<!-- doc-fact: settings-deny "Bash(gh api -X *)" -->
-<!-- doc-fact: settings-deny "Bash(gh api --method *)" -->
-The deny list (`Bash(curl *)`, `Bash(wget *)`, `Bash(scp *)`, `Bash(tar *)`,
-`Bash(gh api -X *)`, `Bash(gh api --method *)`) is **defense-in-depth against casual or
-accidental misuse — a speed bump, not a boundary.** `Bash(ssh *)` was removed from the
-deny list by owner decision (Colin, 2026-07-22): ssh to the home gateway and other LAN
-boxes is routine interactive administration on this account, and the same order
-unregistered the `block-egress.py` / `block-suppressed-stderr.py` rails from
-`pretooluse-bash.py` — so **ssh (and the bypass-shaped egress forms those rails caught)
-is currently unenforced, deliberately**. The rails and a fail-closed LAN-destination
-ssh carve-out remain in the tree, dormant; re-arm via `_RAIL_MODULES`. It is deliberately *not* a real
-network-egress or exfiltration boundary, and must not be mistaken for one. Two structural
-reasons it cannot be, as long as the current allow-list stands:
+The deny list is now **empty** — owner decision (Colin, 2026-07-22) removed all 61
+rules (the wrangler deploy/delete/secret family, `curl`/`wget`/`scp`/`tar`, the `gh api`
+write-method / `gh secret` / `gh auth` / `gh repo delete·edit·transfer` set, and the
+destructive Cloudflare/GitHub MCP exact tool names), extending the same-day order that
+removed `Bash(ssh *)` and unregistered the `block-egress.py` /
+`block-suppressed-stderr.py` rails from `pretooluse-bash.py`. The rationale is this
+document's own thesis: the deny layer was **defense-in-depth against casual or
+accidental misuse — a speed bump, not a boundary** — and its false-positive friction on
+routine interactive work outweighed that speed-bump value. The remaining automated
+guards are the PreToolUse hook rails still registered under `pretooluse-bash.py` (e.g.
+`block-destructive-mcp.py`, destructive-git protections); the disarmed rails and the
+fail-closed LAN-destination ssh carve-out remain in the tree, dormant — re-arm via
+`_RAIL_MODULES`, and restore deny rules from git history if ever wanted. The deny layer
+was deliberately *not* a real network-egress or exfiltration boundary, and must not be
+mistaken for one. Two structural reasons it could not be, as long as the current
+allow-list stands:
 
 1. **Allowed interpreters subsume every denied capability.** `Bash(python3 *)`,
    `Bash(node *)`, `Bash(npm *)`, and `npx` are general-purpose runtimes: they open
    arbitrary sockets and extract archives directly, with no denied binary involved.
    `python3 -c 'import urllib.request; ...'` and `node -e 'fetch(...)'` reproduce exactly
    the HTTP fetch / data exfil that denying `curl`/`wget` is meant to stop; an
-   npx-installed tool reproduces anything else. Denying `tar` (already done) is undone the
+   npx-installed tool reproduces anything else. Denying `tar` (as the old list did) is undone the
    same way. So per-binary network/archive denies are porous by construction. (#63, #69)
 
 2. **`gh api` is a generic escape hatch, and pattern denies are order-sensitive.**
    `gh api -X DELETE /repos/O/R` ≈ `gh repo delete`; `gh api -X PUT
    /repos/O/R/actions/secrets/X` ≈ `gh secret set`. The two `gh api` write-method denies
-   above catch the common `-X …` / `--method …`-first forms, but a **prefix** deny cannot
-   see a flag that comes after the URL: `gh api /repos/O/R -X DELETE` slips straight
-   through. Treat them as a speed bump for the obvious form, not a seal. Read-only
+   the old list carried caught the common `-X …` / `--method …`-first forms, but a
+   **prefix** deny cannot see a flag that comes after the URL: `gh api /repos/O/R -X
+   DELETE` slips straight through. They were a speed bump for the obvious form, not a
+   seal. Read-only
    `gh api repos/...` GETs (used by the skills) are unaffected. (#68)
 
 ## The durable lesson

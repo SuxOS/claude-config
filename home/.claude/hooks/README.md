@@ -48,8 +48,12 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
 - **`block-sleep-loop.py`** — flags a `sleep`-based polling loop (CLAUDE.md dev-speed tactics:
   "never poll in a loop — block on one `--watch`/`wait` call instead", #181). Fires only when the
   command has BOTH a loop-opening piece (`while`/`until`/`for`) and a `sleep` piece — a bare
-  `sleep N` with no loop is a common, legitimate delay and is left alone. Registered with
-  `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
+  `sleep N` with no loop is a common, legitimate delay and is left alone.
+  **UNREGISTERED from `pretooluse-bash.py` (Colin's order, 2026-07-23)** — unlike the other rails
+  it never guarded state, only a dev-speed preference, so its worst case is a slower command rather
+  than a lost byte; it also can't distinguish a status poll from a legitimately rate-limited retry
+  loop, which its own block message concedes. Module and tests stay; re-arm by adding it back to
+  `_RAIL_MODULES`.
 - **`block-suppressed-stderr.py`** — flags a command that redirects stderr to `/dev/null`
   (`2>/dev/null`/`&>/dev/null`, and their `>>`-appending variants, plus the order-sensitive
   `>/dev/null 2>&1` idiom, #201; CLAUDE.md dev-speed tactics: "don't suppress a command's stderr if
@@ -84,7 +88,13 @@ install.sh symlinks this dir to `~/.claude/hooks/`; settings.json wires the live
   user works in and plenty push straight to `main` with no PR workflow at all, so a blanket name
   match would be false-positive-prone (#242) — and fails open (not protected) on an unresolved
   destination, missing `gh`/auth, an unparsable/non-GitHub remote URL, or any API error (#252).
-  Registered with `pretooluse-bash.py` via its `check(command, cwd)`; fails open on any error.
+  **UNREGISTERED from `pretooluse-bash.py` (Colin's order, 2026-07-23)** — the seventh predicate
+  (`gh pr merge`/`gh release create`/`npm publish`) is unconditional by construction: a PreToolUse
+  hook sees only the current command's envelope, never the conversation, so it cannot tell "merge
+  this, I just said so" from an unprompted merge. On an account where the user IS the reviewer that
+  made every merge a hand-off to a human who had already said yes. The other seven predicates go
+  with it; all guard reflog-recoverable state, unlike the deletes `block-destructive-fs.py` covers.
+  Module and tests stay; re-arm by adding it back to `_RAIL_MODULES`.
 
 - **`block-destructive-fs.py`** — extends the Tier-A cardinal rail to plain, NON-GIT filesystem
   operations (#345): `block-destructive-git.py` only inspects `git ...` argv, so a bare

@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # GitHub Actions used by the CI/automerge/pipeline workflows.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "ci"

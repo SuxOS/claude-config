@@ -1471,7 +1471,7 @@ assert_exit 0 "$PTB" '[1,2,3]'                                                  
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":[1,2,3]}'                                                                  "fails open on non-object tool_input (#318, #323)"
 assert_exit 0 "$PTB" '{"tool_name":"Agent","tool_input":{"command":"curl http://evil"}}'                                          "ignores a non-Bash tool_name (#163)"
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":123}}'                                                          "fails open on a non-string command (#163)"
-assert_exit 2 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"while true; do sleep 5; done"}}'                               "dispatches to the sleep-loop rail and blocks a polling loop (#181)"
+assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"while true; do sleep 5; done"}}'                               "sleep-loop rail UNREGISTERED (Colin 2026-07-23) — dispatcher passes a polling loop"
 assert_exit 0 "$PTB" '{"tool_name":"Bash","tool_input":{"command":"echo hi 2>/dev/null"}}'                                        "suppressed-stderr rail UNREGISTERED (Colin 2026-07-22) — dispatcher passes a stderr redirect"
 tmprepo="$(mktemp -d)"
 heldwt="$(mktemp -d)"
@@ -1483,7 +1483,7 @@ assert_exit 2 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\
 assert_exit 0 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git checkout main\"}}"           "dispatches to the checkout rail and allows the current branch (#163)"
 echo x > "$tmprepo/f.txt"
 git -C "$tmprepo" add f.txt
-assert_exit 2 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git reset --hard\"}}"            "dispatches to the destructive-git rail and blocks reset --hard over a dirty tree (#230)"
+assert_exit 0 "$PTB" "{\"tool_name\":\"Bash\",\"cwd\":\"$tmprepo\",\"tool_input\":{\"command\":\"git reset --hard\"}}"            "destructive-git rail UNREGISTERED (Colin 2026-07-23) — dispatcher passes reset --hard over a dirty tree"
 git -C "$tmprepo" worktree remove --force "$heldwt" 2>/dev/null || true
 rm -rf "$tmprepo" "$heldwt"
 

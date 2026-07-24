@@ -31,9 +31,13 @@ dir again — that dual-account clobber is what wiped the live safety layer (see
 `install.sh` ships both identities from one source tree:
 
 - `home/.claude/settings.json` — **human** (m@): full interactive plugin set, notifications, theme.
-- `home/.claude/settings.bot.json` — **bot** (claude@): **identical `permissions.deny` (62 rules)
-  and the same PreToolUse/PostToolUse hook rails** ("guards-in-both" — the rails protect the
-  autonomous agent under `bypassPermissions` regardless of identity), but a lean headless plugin
+- `home/.claude/settings.bot.json` — **bot** (claude@): **an empty `permissions.deny` and the same
+  PreToolUse/PostToolUse hook rails** as the human config ("guards-in-both" — the rails protect the
+  autonomous agent under `bypassPermissions` regardless of identity, and since the 2026-07-22 owner
+  decision emptied `deny` in both identities they are now the only automated gate; see
+  [`docs/security-model.md`](../../docs/security-model.md)). The old "identical `permissions.deny`
+  (62 rules)" exact-parity claim no longer holds — parity is now "both empty". `permissions.allow`
+  is unchanged and stays inert under `bypassPermissions`. Otherwise a lean headless plugin
   set (sux, superpowers, security-guidance, semgrep, commit-commands, claude-md-management,
   code-review, typescript-lsp, cloudflare, grafana), connectors off, and no notification/theme
   keys (nobody watches a bot's screen). Both reference the shared `$HOME/.claude/hooks` copies.
@@ -52,8 +56,8 @@ CLAUDE_CONFIG_DIR="$HOME/.claude-bot" ./install.sh --bot   # bot → ~/.claude-b
 
 The bot is trusted like the interactive session — *"I trust the bot as much as I trust you in this
 session where you're running largely unsupervised."* So it keeps the SAME **painless** guards as
-the human (identical `permissions.deny` + the hook rails — these protect the agent regardless of
-identity) but is deliberately NOT extra-locked-down: marketplaces `autoUpdate:true` (trusted
+the human (identical empty `permissions.deny` + the hook rails, now the sole automated gate —
+these protect the agent regardless of identity) but is deliberately NOT extra-locked-down: marketplaces `autoUpdate:true` (trusted
 vendors), allow-dangerous (`skipDangerousModePermissionPrompt`), and **no config-tamper guard**.
 Friction hardening that would make the owner babysit the bot was explicitly declined — see
 `suxos-security-friction-principle`. (Residual risk accepted knowingly: an unattended bot with
