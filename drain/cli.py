@@ -110,19 +110,31 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_global_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--config", default=None, help="path to drain.config.json")
+    parser.add_argument("--fabric", default=None, help="path to fabric.json (default ~/.claude/fabric.json)")
+    parser.add_argument("--source", action="append", help="limit to adapter(s): local|github|mock (repeatable)")
+    parser.add_argument("--limit", type=int, default=None, help="cap items acted on")
+    parser.add_argument("--log", default=DEFAULT_LOG, help="audit-log path")
+    parser.add_argument("--json", action="store_true", help="emit JSON instead of markdown")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="drain", description="continuous audit-and-drain orchestrator")
-    p.add_argument("--config", default=None, help="path to drain.config.json")
-    p.add_argument("--fabric", default=None, help="path to fabric.json (default ~/.claude/fabric.json)")
-    p.add_argument("--source", action="append", help="limit to adapter(s): local|github|mock (repeatable)")
-    p.add_argument("--limit", type=int, default=None, help="cap items acted on")
-    p.add_argument("--log", default=DEFAULT_LOG, help="audit-log path")
-    p.add_argument("--json", action="store_true", help="emit JSON instead of markdown")
+    # Globals live on a shared parent so they are accepted both before AND after the
+    # subcommand (argparse otherwise only honors main-parser options before the subcommand).
+    common = argparse.ArgumentParser(add_help=False)
+    _add_global_args(common)
+
+    p = argparse.ArgumentParser(
+        prog="drain", description="continuous audit-and-drain orchestrator", parents=[common]
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
     for name, fn in (("audit", _cmd_audit), ("plan", _cmd_plan), ("run", _cmd_run), ("report", _cmd_report)):
-        sp = sub.add_parser(name, help=f"{name} mode")
+        sp = sub.add_parser(name, help=f"{name} mode", parents=[common])
         sp.set_defaults(func=fn)
-    av = sub.add_parser("apply-verdicts", help="feed an external classification (eval verdicts) into the drain")
+    av = sub.add_parser(
+        "apply-verdicts", help="feed an external classification (eval verdicts) into the drain", parents=[common]
+    )
     av.add_argument("--verdicts", default=None, help="path to verdicts JSON (default: bundled 69-issue eval)")
     av.add_argument("--mode", default="plan", choices=("audit", "plan", "run"), help="drain mode (default plan)")
     av.set_defaults(func=_cmd_apply_verdicts)
