@@ -110,30 +110,35 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
-def _add_global_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", default=None, help="path to drain.config.json")
-    parser.add_argument("--fabric", default=None, help="path to fabric.json (default ~/.claude/fabric.json)")
-    parser.add_argument("--source", action="append", help="limit to adapter(s): local|github|mock (repeatable)")
-    parser.add_argument("--limit", type=int, default=None, help="cap items acted on")
-    parser.add_argument("--log", default=DEFAULT_LOG, help="audit-log path")
-    parser.add_argument("--json", action="store_true", help="emit JSON instead of markdown")
+def _add_global_args(parser: argparse.ArgumentParser, suppress: bool = False) -> None:
+    # ``suppress`` copies (on the subparsers) use SUPPRESS defaults so that an option NOT
+    # repeated after the subcommand does not clobber the value the main parser already
+    # parsed before it. The main parser holds the real defaults.
+    d = argparse.SUPPRESS if suppress else None
+    logd = argparse.SUPPRESS if suppress else DEFAULT_LOG
+    jsond = argparse.SUPPRESS if suppress else False
+    parser.add_argument("--config", default=d, help="path to drain.config.json")
+    parser.add_argument("--fabric", default=d, help="path to fabric.json (default ~/.claude/fabric.json)")
+    parser.add_argument("--source", action="append", default=d, help="limit to adapter(s): local|github|mock")
+    parser.add_argument("--limit", type=int, default=d, help="cap items acted on")
+    parser.add_argument("--log", default=logd, help="audit-log path")
+    parser.add_argument("--json", action="store_true", default=jsond, help="emit JSON instead of markdown")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    # Globals live on a shared parent so they are accepted both before AND after the
-    # subcommand (argparse otherwise only honors main-parser options before the subcommand).
-    common = argparse.ArgumentParser(add_help=False)
-    _add_global_args(common)
+    # Globals are accepted both before AND after the subcommand: real-default copies on the
+    # main parser, SUPPRESS-default copies (via a shared parent) on every subparser.
+    sub_common = argparse.ArgumentParser(add_help=False)
+    _add_global_args(sub_common, suppress=True)
 
-    p = argparse.ArgumentParser(
-        prog="drain", description="continuous audit-and-drain orchestrator", parents=[common]
-    )
+    p = argparse.ArgumentParser(prog="drain", description="continuous audit-and-drain orchestrator")
+    _add_global_args(p, suppress=False)
     sub = p.add_subparsers(dest="cmd", required=True)
     for name, fn in (("audit", _cmd_audit), ("plan", _cmd_plan), ("run", _cmd_run), ("report", _cmd_report)):
-        sp = sub.add_parser(name, help=f"{name} mode", parents=[common])
+        sp = sub.add_parser(name, help=f"{name} mode", parents=[sub_common])
         sp.set_defaults(func=fn)
     av = sub.add_parser(
-        "apply-verdicts", help="feed an external classification (eval verdicts) into the drain", parents=[common]
+        "apply-verdicts", help="feed an external classification (eval verdicts) into the drain", parents=[sub_common]
     )
     av.add_argument("--verdicts", default=None, help="path to verdicts JSON (default: bundled 69-issue eval)")
     av.add_argument("--mode", default="plan", choices=("audit", "plan", "run"), help="drain mode (default plan)")
