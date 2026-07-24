@@ -1,0 +1,12 @@
+[
+  {"source": "mock", "native_id": "A1", "title": "plain actionable task", "kind": "issue", "status": "open", "created_at": "2026-07-01T00:00:00Z", "next_action": "implement the thing"},
+  {"source": "mock", "native_id": "D1", "title": "duplicate of #10", "kind": "issue", "status": "open", "created_at": "2026-07-10T00:00:00Z", "evidence": "superseded by #10 (merged)", "signals": {"duplicate": true, "confidence": "high", "superseded_by": "#10"}},
+  {"source": "mock", "native_id": "B1", "title": "blocked on a dependency", "kind": "issue", "status": "open", "dependencies": ["#5"], "next_action": "waits on #5"},
+  {"source": "mock", "native_id": "B2", "title": "failing idempotent check", "kind": "pr", "status": "open", "signals": {"failed_check": true, "idempotent_check": true, "check": "ci/build"}},
+  {"source": "mock", "native_id": "W1", "title": "waiting on external review", "kind": "pr", "status": "open", "signals": {"waiting_external": true}},
+  {"source": "mock", "native_id": "R1", "title": "looks done, no evidence", "kind": "issue", "status": "open", "signals": {"completed_unverified": true}},
+  {"source": "mock", "native_id": "C1", "title": "already closed", "kind": "issue", "status": "closed"},
+  {"source": "mock", "native_id": "G1", "title": "needs a force-push", "kind": "branch", "status": "diverged", "signals": {"gated": true, "gate_reason": "force-push history rewrite", "gate_action": "force_push"}},
+  {"source": "mock", "native_id": "U1", "title": "mystery item, no next action", "kind": "issue", "status": "open"},
+  {"source": "mock", "native_id": "L1", "title": "cleared for build", "kind": "issue", "status": "open", "labels": ["needs-human"], "next_action": "decision recorded", "signals": {"clear_label": "needs-human"}}
+]

@@ -104,6 +104,16 @@ jobs:
           fi
           python3 -m ruff check --select F "${files[@]}"
 
+      # drain orchestrator tests: the audit-and-drain orchestrator under drain/ ships its own
+      # stdlib unittest suite (normalization / classification / prioritization / gate handling /
+      # idempotency / retries + circuit breaker / dry-run-no-mutation / completion detection).
+      # Run it here so a change that breaks the orchestrator can't merge silently — folded into
+      # this one required job for the same auto-merge-gating reason as the other integrity steps
+      # (CLAUDE.md). Stdlib-only, no install step.
+      - name: run the drain orchestrator test suite
+        if: ${{ !cancelled() }}
+        run: python3 -m unittest discover -s drain/tests -t .
+
       # argv-canon fuzzer (#199): tests/test_hooks.sh only covers hand-picked bypass shapes;
       # this generates the combinatorial wrapper/flag/env/grouping space from an independent
       # reference grammar and asserts strip_prefixes()/block-egress's offending() recover the

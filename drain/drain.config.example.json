@@ -1,0 +1,12 @@
+{
+  "org": "SuxOS",
+  "adapters": ["local", "github"],
+  "max_rounds": 3,
+  "limit": null,
+  "retries": 2,
+  "backoff_base": 0.2,
+  "breaker_threshold": 3,
+  "concurrency": 4,
+  "github_limit": 200,
+  "mock_fixture": null
+}
