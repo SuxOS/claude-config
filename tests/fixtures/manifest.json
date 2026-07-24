@@ -170,8 +170,8 @@
     {
       "hook": "pretooluse-bash.py",
       "stdin": "pretooluse/bash-sleep-loop.json",
-      "expect_exit": 2,
-      "desc": "dispatcher (#163) routes a real envelope into block-sleep-loop.py and blocks it (#191)"
+      "expect_exit": 0,
+      "desc": "dispatcher (#163) rail UNREGISTERED (Colin 2026-07-23): real envelope passes through despite matching block-sleep-loop.py (#191)"
     },
     {
       "hook": "pretooluse-bash.py",
