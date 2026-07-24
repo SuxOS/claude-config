@@ -70,6 +70,32 @@ _RAIL_MODULES = (
     "prefer-structured-tools",
 )
 
+# Identity-aware arming (#440). block-egress was unregistered above for the INTERACTIVE human
+# (~/.claude) because its false-positive rate on routine interactive work outweighed the
+# speed-bump value — a deliberate 2026-07-22 order. But the AUTONOMOUS bot (~/.claude-bot,
+# claude@) shares this exact file via the symlinked hooks tree, so that same order silently
+# left the bot with no egress enforcement — and the bot runs unattended under bypassPermissions
+# with reach into PHI-adjacent data, with no human to catch a false positive OR a prompt-injected
+# exfiltration. Per the trust doctrine, egress is *agent-protection* for the bot (keep), not
+# *user-babysitting friction* for the human (drop). So the bot ARMS block-egress on top of the
+# shared set; the human's relaxed set is unchanged. Detected via CLAUDE_CONFIG_DIR ending in
+# `-bot` — the same selector install.sh --bot / the launch env uses (see settings.bot.json).
+# Fail-safe: if the env var is absent the bot degrades to the human set (today's state — no
+# regression), never the other way.
+_BOT_ONLY_RAIL_MODULES = ("block-egress",)
+
+
+def _is_bot_identity():
+    """True when running under the autonomous bot config dir (~/.claude-bot)."""
+    return os.environ.get("CLAUDE_CONFIG_DIR", "").rstrip("/").endswith("-bot")
+
+
+def _active_rail_modules():
+    """The rail set for this identity: the shared set, plus bot-only rails when running as the bot."""
+    if _is_bot_identity():
+        return _RAIL_MODULES + _BOT_ONLY_RAIL_MODULES
+    return _RAIL_MODULES
+
 
 def _load(module_name):
     """Load a sibling hook module by filename (hyphenated, so not a normal `import`)."""
@@ -83,7 +109,7 @@ def _load(module_name):
 def _load_checks():
     """Load every rail module's `check`, skipping (not crashing on) one that fails to load."""
     checks = []
-    for module_name in _RAIL_MODULES:
+    for module_name in _active_rail_modules():
         try:
             checks.append(_load(module_name).check)
         except Exception as e:
