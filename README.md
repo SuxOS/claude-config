@@ -63,3 +63,6 @@ git clone git@github.com:SuxOS/claude-config.git ~/Code/SuxOS/claude-config
 `settings.json`, a re-run only prints any deny rules / hook commands it's missing relative
 to the repo reference — pass `--apply` (or `--merge`) to patch them in directly, preserving
 anything you've added yourself.
+
+For a reproducible dev toolchain (python3 + ruff + shellcheck + shfmt, matching CI), run
+`nix develop` (or let direnv pick up `.envrc` automatically).
