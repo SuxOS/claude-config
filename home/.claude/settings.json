@@ -33,7 +33,6 @@
   },
   "enabledPlugins": {
     "cloudflare@cloudflare": true,
-    "grafana-cloud-mcp@grafana-ai-marketplace": true,
     "commit-commands@claude-plugins-official": true,
     "mcp-server-dev@claude-plugins-official": false,
     "frontend-design@claude-plugins-official": true,
@@ -46,7 +45,6 @@
     "typescript-lsp@claude-plugins-official": true,
     "context7@claude-plugins-official": true,
     "security-guidance@claude-plugins-official": true,
-    "chrome-devtools-mcp@claude-plugins-official": true,
     "explanatory-output-style@claude-plugins-official": true,
     "code-review@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
